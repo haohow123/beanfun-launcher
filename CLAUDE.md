@@ -47,8 +47,11 @@ beanfun-launcher/
 
 ## Development workflow
 
-- `wails3 dev` — run with hot reload
-- `wails3 build` — produce Windows binary
+Use `task` (go-task) as the canonical entry point — it wraps `wails3` with this project's `build/config.yml` and a pinned Vite port (9245). Bare `wails3 dev` works as a fallback but skips both.
+
+- `task dev` — run with hot reload
+- `task build` — build for the current OS
+- `task windows:build` — cross-compile Windows binary (the deploy target)
 - All Go code passes `gofmt` and `golangci-lint run`
 - Tests are table-driven; use `httptest` for HTTP, mocks for keyring
 
