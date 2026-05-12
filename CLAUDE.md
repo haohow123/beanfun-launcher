@@ -55,6 +55,42 @@ Use `task` (go-task) as the canonical entry point — it wraps `wails3` with thi
 - All Go code passes `gofmt` and `golangci-lint run`
 - Tests are table-driven; use `httptest` for HTTP, mocks for keyring
 
+## Git workflow
+
+When making changes, Claude Code should:
+
+1. Make working-tree changes.
+2. Stage relevant files (`git add <paths>`).
+3. Run `git status` and `git diff --cached`, show me the diff.
+4. Propose commit message(s), splitting into atomic commits when logically separate.
+5. Wait for explicit "ok commit" / "ok push" before executing.
+
+## Branching workflow
+
+This repo follows GitHub Flow. All changes — features, fixes, docs, chores — go through a feature branch and PR, never directly to `main`.
+
+When starting a task:
+
+1. Sync local main: `git switch main && git pull --ff-only`
+2. Branch off main: `git switch -c <prefix>/<short-name>`
+   - Prefixes: `feat/`, `fix/`, `chore/`, `docs/`, `refactor/`
+   - Short-name in kebab-case (e.g. `feat/beanfun-login`, `fix/keychain-error-handling`)
+3. Do the work; commits follow the Git workflow above.
+4. Push with upstream tracking: `git push -u origin <branch>`
+5. Open PR: `gh pr create --base main --head <branch> --title "..." --body "..."`. Title imperative, single line; body explains the why.
+6. Wait for the human to review and merge — Claude Code never merges PRs.
+
+After merge:
+
+7. `git switch main && git pull --ff-only`
+8. `git branch -d <merged-branch>` (origin's copy is usually auto-deleted by GitHub)
+
+Rules:
+
+- Never commit directly to `main`.
+- Never force-push to any branch shared with origin.
+- One PR = one logical change. Split unrelated work into separate branches/PRs.
+
 ## Subagents
 
 Three custom subagents live in `.claude/agents/`:
