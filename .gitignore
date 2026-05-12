@@ -4,3 +4,14 @@ frontend/dist
 frontend/node_modules
 build/linux/appimage/build
 build/windows/nsis/MicrosoftEdgeWebview2Setup.exe
+
+# Claude Code local state
+.claude/settings.local.json
+.claude/cache/
+.claude/sessions/
+.claude/state/
+
+# macOS / editor
+.DS_Store
+.vscode/
+.idea/
