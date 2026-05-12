@@ -7,6 +7,60 @@
 import { Create as $Create } from "@wailsio/runtime";
 
 /**
+ * Account is one game account under the user's Beanfun ID. The
+ * frontend uses these to render the post-login game list. See
+ * docs/beanfun-login-protocol.md § 8.
+ */
+export class Account {
+    /**
+     * Creates a new Account instance.
+     * @param {Partial<Account>} [$$source = {}] - The source object to create the Account.
+     */
+    constructor($$source = {}) {
+        if (!("sid" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["sid"] = "";
+        }
+        if (!("ssn" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["ssn"] = "";
+        }
+        if (!("sname" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["sname"] = "";
+        }
+        if (!("enabled" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["enabled"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new Account instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {Account}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new Account(/** @type {Partial<Account>} */($$parsedSource));
+    }
+}
+
+/**
  * QRStart is the payload returned to the frontend when QR login begins.
  * BitmapBase64 is the QR PNG bytes encoded as base64 (no data: prefix).
  * Deeplink is the Beanfun mobile-app URL the QR encodes; surfaced so

@@ -8,6 +8,7 @@ export {
 };
 
 export {
+    Account,
     QRStart,
     QRStatus
 } from "./models.js";

@@ -140,3 +140,27 @@ func (s *LoginService) CheckQRLogin() (QRStatus, error) {
 		return "", &LoginError{Kind: KindUnknown, Msg: "unknown poll outcome"}
 	}
 }
+
+// GetAccounts returns the list of game accounts under the active
+// session. Requires StartQRLogin → CheckQRLogin to have completed
+// successfully (session != nil). See docs/beanfun-login-protocol.md § 8.
+func (s *LoginService) GetAccounts() ([]Account, error) {
+	s.mu.Lock()
+	client := s.client
+	session := s.session
+	s.mu.Unlock()
+
+	if client == nil || session == nil {
+		return nil, ErrLoginRequired()
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	accounts, err := client.GetAccounts(ctx, session)
+	if err != nil {
+		slog.Error("GetAccounts failed", "err", err)
+		return nil, err
+	}
+	return accounts, nil
+}

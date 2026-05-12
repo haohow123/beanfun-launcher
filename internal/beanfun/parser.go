@@ -1,8 +1,10 @@
 package beanfun
 
 import (
+	"html"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -39,6 +41,29 @@ var (
 	})
 	submitTypeRE = sync.OnceValue(func() *regexp.Regexp {
 		return regexp.MustCompile(`(?i)type\s*=\s*["']submit["']`)
+	})
+
+	// Each row in game_server_account_list.aspx looks like:
+	//
+	//   <li class="" title="..." onclick="GameAccount.StartGame('SN'); return false;">
+	//     <div id="SID" sn="SN" name="NAME" inherited="false" visible="1" ...>NAME</div>
+	//     <span class="StartButtonSmall">…</span>
+	//   </li>
+	//
+	// The regex deliberately does NOT anchor on the wrapping tag — it
+	// starts at `onclick="..."><div id="..." sn="..." name="..."`. This
+	// matches the live HTML (li-wrapped) and also stays compatible with
+	// pungin's older a-wrapped fixture. We do NOT match the JS template
+	// in <script> blocks (line 148 of the live page) because there the
+	// id value is `'<single-quote>+strServiceAccountID+'<single-quote>`,
+	// which fails `(\w+)`.
+	//
+	// An empty onclick captures the heuristic pungin used for "row
+	// server-disabled" — in current production HTML every rendered row
+	// carries an onclick, so this stays true for the foreseeable future
+	// but the field is exposed in case the portal regresses.
+	accountRowRE = sync.OnceValue(func() *regexp.Regexp {
+		return regexp.MustCompile(`onclick="([^"]*)">\s*<div\s+id="(\w+)"\s+sn="(\d+)"\s+name="([^"]+)"`)
 	})
 )
 
@@ -83,6 +108,29 @@ func extractHiddenInputs(html string) url.Values {
 		}
 		out.Add(nameM[1], valM[1])
 	}
+	return out
+}
+
+// extractAccounts scrapes account rows from
+// game_server_account_list.aspx HTML. Names are HTML-entity decoded
+// (Chinese display names can land as numeric entities); the result is
+// sorted ascending by SSN — fixed-width digit strings, so lexicographic
+// order matches numeric order.
+func extractAccounts(htmlBody string) []Account {
+	matches := accountRowRE().FindAllStringSubmatch(htmlBody, -1)
+	out := make([]Account, 0, len(matches))
+	for _, m := range matches {
+		// m[1] = onclick, m[2] = id, m[3] = sn, m[4] = name
+		out = append(out, Account{
+			SID:     m[2],
+			SSN:     m[3],
+			SName:   html.UnescapeString(m[4]),
+			Enabled: m[1] != "",
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].SSN < out[j].SSN
+	})
 	return out
 }
 
