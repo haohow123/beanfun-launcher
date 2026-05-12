@@ -23,10 +23,11 @@ func (c *BeanfunClient) getSessionKey(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", ErrHTTP(err)
 	}
-	// Drain the body to release the connection back to the pool, even
-	// though we only care about resp.Request.URL (the final URL after
-	// redirects).
-	if _, err := c.boundedRead(resp); err != nil {
+	// Keep the body around — if the pSKey regex misses we want to log
+	// a preview so we can tell "Beanfun changed the redirect target"
+	// apart from "we hit a 200 page directly".
+	body, err := c.boundedRead(resp)
+	if err != nil {
 		return "", err
 	}
 	if resp.StatusCode >= 400 {
@@ -35,12 +36,25 @@ func (c *BeanfunClient) getSessionKey(ctx context.Context) (string, error) {
 
 	finalURL := resp.Request.URL.String()
 	slog.Info("getSessionKey: portal redirect resolved",
-		"final_host", resp.Request.URL.Hostname(),
-		"status", resp.StatusCode)
+		"final_url", finalURL,
+		"status", resp.StatusCode,
+		"body_bytes", len(body))
 	key, ok := sessionKeyFromURL(finalURL)
 	if !ok {
-		slog.Warn("getSessionKey: regex did not match final URL")
+		slog.Warn("getSessionKey: regex did not match final URL",
+			"final_url", finalURL,
+			"body_preview", truncate(string(body), 500))
 		return "", ErrMissingSessionKey()
 	}
 	return key, nil
+}
+
+// truncate returns up to n bytes of s with a "…" marker if it was
+// shortened. Used for body previews in diagnostic logs — small enough
+// to fit on one terminal line, big enough to identify the page.
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
 }

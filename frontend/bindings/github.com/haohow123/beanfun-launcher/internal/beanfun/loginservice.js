@@ -17,9 +17,9 @@ import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Cr
 import * as $models from "./models.js";
 
 /**
- * CheckQRLogin returns Pending for the first two polls, then Approved.
- * That simulates a user scanning the QR around the 6-second mark
- * (3 polls × 2 s — matching pungin/Beanfun's cadence).
+ * CheckQRLogin is still mocked: returns Pending for the first two
+ * polls, then Approved on the third. Day 4 replaces this with the real
+ * POST /QRLogin/CheckLoginStatus + ResultMessage dispatch.
  * @returns {$CancellablePromise<$models.QRStatus>}
  */
 export function CheckQRLogin() {
@@ -27,8 +27,10 @@ export function CheckQRLogin() {
 }
 
 /**
- * StartQRLogin resets the mock state machine and returns a placeholder
- * QR bitmap + deeplink so the frontend has something to render.
+ * StartQRLogin runs the full init flow (getSessionKey → initQRLogin)
+ * and returns the QR + deeplink for the frontend to render. The
+ * internal session state (skey, verification token) is stashed for
+ * Day 4's poll + finalize to consume.
  * @returns {$CancellablePromise<$models.QRStart>}
  */
 export function StartQRLogin() {
