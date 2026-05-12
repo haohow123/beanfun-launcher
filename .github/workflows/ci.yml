@@ -55,7 +55,9 @@ jobs:
 
   go-lint:
     name: Go lint
-    needs: frontend
+    # No dependency on `frontend`: this job lints only `./internal/...`,
+    # which doesn't import the embedded frontend assets, so it can run
+    # in parallel with the frontend job.
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -66,34 +68,28 @@ jobs:
 
       - name: gofmt
         run: |
-          unformatted=$(find . -name '*.go' -not -path './build/*' -print0 | xargs -0 gofmt -l)
+          unformatted=$(find . -name '*.go' -print0 | xargs -0 gofmt -l)
           if [ -n "$unformatted" ]; then
             echo "::error::gofmt found unformatted files:"
             echo "$unformatted"
             exit 1
           fi
 
-      - name: Install Wails Linux deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libgtk-3-dev \
-            libwebkit2gtk-4.1-dev \
-            pkg-config
-
-      - name: Download frontend dist
-        uses: actions/download-artifact@v4
-        with:
-          name: frontend-dist
-          path: frontend/dist
+      # `go vet` and `golangci-lint` are intentionally scoped to
+      # `./internal/...` so we don't compile `main.go`. main.go imports
+      # Wails, and Wails on Linux needs `libgtk-3-dev` + `libwebkit2gtk`
+      # via cgo — installing those via apt is slow and flaky on GHA
+      # runners (37s–37min observed). `main.go` itself is validated by
+      # the Windows cross-compile step in the go-test job below.
 
       - name: go vet
-        run: go vet $(go list ./... | grep -v '/build/')
+        run: go vet ./internal/...
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v7
         with:
           version: v2.9.0
+          args: ./internal/...
 
   go-test:
     name: Go test
@@ -105,14 +101,6 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-
-      - name: Install Wails Linux deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libgtk-3-dev \
-            libwebkit2gtk-4.1-dev \
-            pkg-config
 
       - name: Download frontend dist
         uses: actions/download-artifact@v4
@@ -129,4 +117,18 @@ jobs:
           fi
 
       - name: go test
-        run: go test -race $(go list ./... | grep -v '/build/')
+        # Scoped to ./internal/... so we don't recompile main.go (which
+        # imports Wails and needs GTK on Linux). Every existing test
+        # lives under internal/beanfun anyway. main.go is validated by
+        # the Windows cross-compile step below.
+        run: go test -race ./internal/...
+
+      - name: Windows cross-compile (smoke test)
+        # Pure-Go cross-compile to the actual deploy target. Wails on
+        # Windows uses Win32 + WebView2 with no cgo, so CGO_ENABLED=0
+        # is enough — no apt packages needed.
+        env:
+          GOOS: windows
+          GOARCH: amd64
+          CGO_ENABLED: "0"
+        run: go build -o /tmp/launcher.exe ./
