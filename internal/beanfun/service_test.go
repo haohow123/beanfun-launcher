@@ -30,11 +30,7 @@ func TestLoginService_StartQRLogin(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(fullInitMux())
 	t.Cleanup(srv.Close)
-	c, err := NewBeanfunClientWithEndpoints(stubEndpoints(t, srv))
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := NewLoginServiceWithClient(c)
+	s := NewLoginServiceWithEndpoints(stubEndpoints(t, srv))
 
 	got, err := s.StartQRLogin()
 	if err != nil {
@@ -63,14 +59,11 @@ func TestLoginService_CheckQRLogin(t *testing.T) {
 	}
 
 	// CheckQRLogin doesn't touch pendingQR in Day 3, so we can skip
-	// StartQRLogin. The httptest server is a placeholder.
+	// StartQRLogin. The httptest server is a placeholder for the
+	// endpoints constructor.
 	srv := httptest.NewServer(http.NewServeMux())
 	t.Cleanup(srv.Close)
-	c, err := NewBeanfunClientWithEndpoints(stubEndpoints(t, srv))
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := NewLoginServiceWithClient(c)
+	s := NewLoginServiceWithEndpoints(stubEndpoints(t, srv))
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -89,11 +82,7 @@ func TestLoginService_StartQRLogin_ResetsPolls(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(fullInitMux())
 	t.Cleanup(srv.Close)
-	c, err := NewBeanfunClientWithEndpoints(stubEndpoints(t, srv))
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := NewLoginServiceWithClient(c)
+	s := NewLoginServiceWithEndpoints(stubEndpoints(t, srv))
 
 	if _, err := s.StartQRLogin(); err != nil {
 		t.Fatalf("first StartQRLogin: %v", err)

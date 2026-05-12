@@ -37,50 +37,57 @@ const (
 // StartQRLogin once, then polls CheckQRLogin every 2 seconds.
 type LoginService struct {
 	mu        sync.Mutex
-	client    *BeanfunClient
+	endpoints Endpoints
+	client    *BeanfunClient // minted fresh on each StartQRLogin
 	pendingQR *qrLoginInit
 	polls     int // mock state for CheckQRLogin (Day 4 will replace)
 }
 
-// NewLoginService returns a LoginService backed by a fresh
-// BeanfunClient pointed at production TW endpoints. Tests should use
-// NewLoginServiceWithClient instead.
+// NewLoginService returns a LoginService configured for production TW
+// endpoints. The HTTP client is minted lazily inside StartQRLogin.
 func NewLoginService() *LoginService {
-	c, err := NewBeanfunClient()
-	if err != nil {
-		// cookiejar.New(nil) never errors in practice; panic so this
-		// surfaces at startup rather than silently in a goroutine.
-		panic(err)
-	}
-	return &LoginService{client: c}
+	return &LoginService{endpoints: DefaultEndpoints()}
 }
 
-// NewLoginServiceWithClient injects a caller-provided client. Tests
-// build a BeanfunClient pointed at an httptest.Server and pass it here.
-func NewLoginServiceWithClient(c *BeanfunClient) *LoginService {
-	return &LoginService{client: c}
+// NewLoginServiceWithEndpoints injects caller-provided endpoints. Tests
+// build them from an httptest.Server and pass them in.
+func NewLoginServiceWithEndpoints(endpoints Endpoints) *LoginService {
+	return &LoginService{endpoints: endpoints}
 }
 
 // StartQRLogin runs the full init flow (getSessionKey → initQRLogin)
-// and returns the QR + deeplink for the frontend to render. The
-// internal session state (skey, verification token) is stashed for
-// Day 4's poll + finalize to consume.
+// and returns the QR + deeplink for the frontend to render.
+//
+// A fresh BeanfunClient (clean cookie jar) is minted on every call —
+// pungin observed, and we confirmed via dev testing, that re-using a
+// jar across attempts causes the portal to route subsequent requests
+// differently and sometimes land on a URL with no session key at all.
+//
+// The internal session state (skey, verification token) is stashed
+// for Day 4's poll + finalize to consume.
 func (s *LoginService) StartQRLogin() (QRStart, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	skey, err := s.client.getSessionKey(ctx)
+	client, err := NewBeanfunClientWithEndpoints(s.endpoints)
+	if err != nil {
+		slog.Error("StartQRLogin: new client failed", "err", err)
+		return QRStart{}, err
+	}
+
+	skey, err := client.getSessionKey(ctx)
 	if err != nil {
 		slog.Error("StartQRLogin: getSessionKey failed", "err", err)
 		return QRStart{}, err
 	}
-	init, err := s.client.initQRLogin(ctx, skey)
+	init, err := client.initQRLogin(ctx, skey)
 	if err != nil {
 		slog.Error("StartQRLogin: initQRLogin failed", "err", err)
 		return QRStart{}, err
 	}
 
 	s.mu.Lock()
+	s.client = client
 	s.pendingQR = init
 	s.polls = 0
 	s.mu.Unlock()
