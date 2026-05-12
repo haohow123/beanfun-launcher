@@ -9,8 +9,8 @@ import { Create as $Create } from "@wailsio/runtime";
 /**
  * QRStart is the payload returned to the frontend when QR login begins.
  * BitmapBase64 is the QR PNG bytes encoded as base64 (no data: prefix).
- * Deeplink is the Beanfun mobile-app URL the QR encodes; surfaced so the
- * frontend can offer a "copy / open on phone" action.
+ * Deeplink is the Beanfun mobile-app URL the QR encodes; surfaced so
+ * the frontend can offer a "copy / open on phone" action.
  */
 export class QRStart {
     /**
@@ -48,9 +48,9 @@ export class QRStart {
 }
 
 /**
- * QRStatus mirrors the four outcomes pungin/Beanfun observed from
- * CheckLoginStatus, mapped to lower-case string tags so the TS side gets
- * a clean discriminated union.
+ * QRStatus mirrors the four outcomes Beanfun returns from
+ * CheckLoginStatus, mapped to lower-case string tags so the TS side
+ * gets a clean discriminated union.
  * @readonly
  * @enum {string}
  */

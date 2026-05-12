@@ -38,9 +38,9 @@ func TestExtractVerificationToken(t *testing.T) {
 		want string
 	}{
 		{"happy path", `<input name="__RequestVerificationToken" type="hidden" value="TKN123" />`, "TKN123"},
-		// Reordered attributes don't match (regex requires name before value);
-		// this mirrors pungin's regex and is fine because production servers
-		// always put name first.
+		// Reordered attributes don't match — the regex requires name
+		// before value. Production responses always put name first so
+		// this is a non-issue in practice.
 		{"attributes reordered (no match)", `<input value="TKN456" name="__RequestVerificationToken" type="hidden" />`, ""},
 		{"missing input", `<html><body></body></html>`, ""},
 		{"different token", `<input name="__RequestVerificationToken" type="hidden" value="abc/def+ghi=" />`, "abc/def+ghi="},

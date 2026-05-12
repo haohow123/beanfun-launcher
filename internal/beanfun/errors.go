@@ -14,6 +14,9 @@ const (
 	KindBodyTooLarge
 	KindMissingSessionKey
 	KindQRInitResult
+	KindServerMessage
+	KindSendLoginNoFormData
+	KindMissingWebToken
 )
 
 // LoginError is the typed error returned by every Beanfun login step.
@@ -51,4 +54,36 @@ func ErrMissingSessionKey() *LoginError {
 
 func ErrQRInitResult(msg string) *LoginError {
 	return &LoginError{Kind: KindQRInitResult, Msg: "QR init failed: " + msg}
+}
+
+// ErrServerMessage is returned when CheckLoginStatus replies with an
+// unrecognised ResultMessage (or none). Body preview included for
+// operator diagnostics.
+func ErrServerMessage(rawBody string) *LoginError {
+	return &LoginError{Kind: KindServerMessage, Msg: "unexpected server message: " + truncate(rawBody, 200)}
+}
+
+// ErrSendLoginNoFormData is returned when Login/SendLogin's HTML body
+// has zero usable hidden inputs (typical when an anti-bot interstitial
+// or error page was served instead).
+func ErrSendLoginNoFormData() *LoginError {
+	return &LoginError{Kind: KindSendLoginNoFormData, Msg: "Login/SendLogin returned no form data"}
+}
+
+// ErrMissingWebToken is returned when the canonical bfWebToken cookie
+// is absent from the jar after the finalize step 4 redirect chain
+// settles. Fatal — login cannot complete without it.
+func ErrMissingWebToken() *LoginError {
+	return &LoginError{Kind: KindMissingWebToken, Msg: "bfWebToken cookie missing after finalize"}
+}
+
+// truncate returns up to n bytes of s with a "…" marker if it was
+// shortened. Used for body previews in diagnostic logs and error
+// messages — small enough to fit on one terminal line, big enough to
+// identify the page.
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
 }

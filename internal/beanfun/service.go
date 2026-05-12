@@ -1,8 +1,6 @@
 // Package beanfun is the Gamania Beanfun API client.
 //
-// Day 3: real init flow lands (getSessionKey + Login/Index + InitLogin).
-// CheckQRLogin stays mocked (3 polls → Approved) until Day 4 wires up
-// the real poll + finalize handshake.
+// The QR-login flow is documented in docs/beanfun-login-protocol.md.
 package beanfun
 
 import (
@@ -14,16 +12,16 @@ import (
 
 // QRStart is the payload returned to the frontend when QR login begins.
 // BitmapBase64 is the QR PNG bytes encoded as base64 (no data: prefix).
-// Deeplink is the Beanfun mobile-app URL the QR encodes; surfaced so the
-// frontend can offer a "copy / open on phone" action.
+// Deeplink is the Beanfun mobile-app URL the QR encodes; surfaced so
+// the frontend can offer a "copy / open on phone" action.
 type QRStart struct {
 	BitmapBase64 string `json:"bitmapBase64"`
 	Deeplink     string `json:"deeplink"`
 }
 
-// QRStatus mirrors the four outcomes pungin/Beanfun observed from
-// CheckLoginStatus, mapped to lower-case string tags so the TS side gets
-// a clean discriminated union.
+// QRStatus mirrors the four outcomes Beanfun returns from
+// CheckLoginStatus, mapped to lower-case string tags so the TS side
+// gets a clean discriminated union.
 type QRStatus string
 
 const (
@@ -40,7 +38,7 @@ type LoginService struct {
 	endpoints Endpoints
 	client    *BeanfunClient // minted fresh on each StartQRLogin
 	pendingQR *qrLoginInit
-	polls     int // mock state for CheckQRLogin (Day 4 will replace)
+	session   *Session // populated when finalize succeeds
 }
 
 // NewLoginService returns a LoginService configured for production TW
@@ -55,16 +53,9 @@ func NewLoginServiceWithEndpoints(endpoints Endpoints) *LoginService {
 	return &LoginService{endpoints: endpoints}
 }
 
-// StartQRLogin runs the full init flow (getSessionKey → initQRLogin)
-// and returns the QR + deeplink for the frontend to render.
-//
-// A fresh BeanfunClient (clean cookie jar) is minted on every call —
-// pungin observed, and we confirmed via dev testing, that re-using a
-// jar across attempts causes the portal to route subsequent requests
-// differently and sometimes land on a URL with no session key at all.
-//
-// The internal session state (skey, verification token) is stashed
-// for Day 4's poll + finalize to consume.
+// StartQRLogin runs the init flow (getSessionKey → initQRLogin) and
+// returns the QR + deeplink for the frontend to render. A fresh
+// BeanfunClient (clean cookie jar) is minted on every call.
 func (s *LoginService) StartQRLogin() (QRStart, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -89,7 +80,7 @@ func (s *LoginService) StartQRLogin() (QRStart, error) {
 	s.mu.Lock()
 	s.client = client
 	s.pendingQR = init
-	s.polls = 0
+	s.session = nil
 	s.mu.Unlock()
 
 	return QRStart{
@@ -98,15 +89,54 @@ func (s *LoginService) StartQRLogin() (QRStart, error) {
 	}, nil
 }
 
-// CheckQRLogin is still mocked: returns Pending for the first two
-// polls, then Approved on the third. Day 4 replaces this with the real
-// POST /QRLogin/CheckLoginStatus + ResultMessage dispatch.
+// CheckQRLogin polls /QRLogin/CheckLoginStatus once and, on Approved,
+// runs the 4-call finalize handshake synchronously to acquire
+// bfWebToken. The frontend never sees the finalize step explicitly —
+// from its perspective a single CheckQRLogin call either stays Pending
+// or completes the login.
 func (s *LoginService) CheckQRLogin() (QRStatus, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.polls++
-	if s.polls >= 3 {
-		return QRStatusApproved, nil
+	pendingQR := s.pendingQR
+	client := s.client
+	s.mu.Unlock()
+
+	if pendingQR == nil || client == nil {
+		// No active session — caller should StartQRLogin again. Surface
+		// as Expired so the frontend's retry path is the natural next
+		// step.
+		return QRStatusExpired, nil
 	}
-	return QRStatusPending, nil
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	outcome, err := client.pollQRLoginStatus(ctx, pendingQR)
+	if err != nil {
+		return "", err
+	}
+
+	switch outcome {
+	case pollOutcomeWaitLogin:
+		return QRStatusPending, nil
+	case pollOutcomeFailed:
+		return QRStatusRetry, nil
+	case pollOutcomeTokenExpired:
+		s.mu.Lock()
+		s.pendingQR = nil
+		s.mu.Unlock()
+		return QRStatusExpired, nil
+	case pollOutcomeApproved:
+		sess, err := client.finalizeQRLogin(ctx, pendingQR)
+		if err != nil {
+			return "", err
+		}
+		s.mu.Lock()
+		s.session = sess
+		s.pendingQR = nil
+		s.mu.Unlock()
+		slog.Info("LoginService: login complete", "session", sess)
+		return QRStatusApproved, nil
+	default:
+		return "", &LoginError{Kind: KindUnknown, Msg: "unknown poll outcome"}
+	}
 }

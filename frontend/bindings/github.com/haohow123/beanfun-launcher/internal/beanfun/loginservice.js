@@ -17,9 +17,11 @@ import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Cr
 import * as $models from "./models.js";
 
 /**
- * CheckQRLogin is still mocked: returns Pending for the first two
- * polls, then Approved on the third. Day 4 replaces this with the real
- * POST /QRLogin/CheckLoginStatus + ResultMessage dispatch.
+ * CheckQRLogin polls /QRLogin/CheckLoginStatus once and, on Approved,
+ * runs the 4-call finalize handshake synchronously to acquire
+ * bfWebToken. The frontend never sees the finalize step explicitly —
+ * from its perspective a single CheckQRLogin call either stays Pending
+ * or completes the login.
  * @returns {$CancellablePromise<$models.QRStatus>}
  */
 export function CheckQRLogin() {
@@ -27,10 +29,9 @@ export function CheckQRLogin() {
 }
 
 /**
- * StartQRLogin runs the full init flow (getSessionKey → initQRLogin)
- * and returns the QR + deeplink for the frontend to render. The
- * internal session state (skey, verification token) is stashed for
- * Day 4's poll + finalize to consume.
+ * StartQRLogin runs the init flow (getSessionKey → initQRLogin) and
+ * returns the QR + deeplink for the frontend to render. A fresh
+ * BeanfunClient (clean cookie jar) is minted on every call.
  * @returns {$CancellablePromise<$models.QRStart>}
  */
 export function StartQRLogin() {

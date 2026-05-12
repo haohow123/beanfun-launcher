@@ -1,15 +1,12 @@
-import { useState } from "react";
+import { useAtomValue } from "jotai";
 
 import { HomePage } from "@/pages/HomePage";
 import { LoginPage } from "@/pages/LoginPage";
+import { loggedInAtom } from "@/state/auth";
 
 function App() {
-  const [loggedIn, setLoggedIn] = useState(false);
-
-  if (loggedIn) {
-    return <HomePage onLogout={() => setLoggedIn(false)} />;
-  }
-  return <LoginPage onApproved={() => setLoggedIn(true)} />;
+  const loggedIn = useAtomValue(loggedInAtom);
+  return loggedIn ? <HomePage /> : <LoginPage />;
 }
 
 export default App;

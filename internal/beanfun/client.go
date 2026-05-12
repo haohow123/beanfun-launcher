@@ -11,12 +11,12 @@ import (
 )
 
 const (
-	// Chrome 130 UA — the HK portal hard-checks UA shape; TW is less
-	// strict but we match pungin's setting for parity.
+	// Chrome 130 UA — keeps us aligned with the browser shape Beanfun's
+	// portal expects. Some endpoints fingerprint the UA shape.
 	defaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
 	defaultTimeout   = 30 * time.Second
-	// 16 MiB cap on any response body, matching pungin. Defends the
-	// process against a hostile server streaming forever.
+	// 16 MiB cap on any response body. Defends the process against a
+	// hostile server streaming forever.
 	maxResponseBodyBytes int64 = 16 << 20
 )
 
@@ -44,9 +44,15 @@ func DefaultEndpoints() Endpoints {
 	}
 }
 
-// BeanfunClient wraps an http.Client + cookie jar for a single Beanfun
-// login session. A new instance starts a fresh jar — no leftover
-// cookies from a prior login.
+// BeanfunClient wraps a redirect-following http.Client plus a cookie
+// jar for a single Beanfun login session. A new instance starts a
+// fresh jar — no leftover cookies from a prior attempt.
+//
+// Pungin/Beanfun maintains a second no-redirect client variant for
+// flows that need to read `Set-Cookie` directly from a 302 response.
+// Our QR-only flow doesn't: step 6 of finalize discards the response,
+// and step 7 reads `bfWebToken` from the jar after the redirect chain
+// settles. So one client is enough. See docs/beanfun-login-protocol.md.
 type BeanfunClient struct {
 	endpoints Endpoints
 	http      *http.Client
