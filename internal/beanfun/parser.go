@@ -43,12 +43,27 @@ var (
 		return regexp.MustCompile(`(?i)type\s*=\s*["']submit["']`)
 	})
 
-	// Each row in game_server_account_list.aspx looks like
-	//   <a onclick="onAccountClick(...)"><div id="abc" sn="000111" name="Char">…
-	// An empty onclick handler means the row is server-disabled (e.g.
-	// a frozen account) — we keep it with Enabled=false.
+	// Each row in game_server_account_list.aspx looks like:
+	//
+	//   <li class="" title="..." onclick="GameAccount.StartGame('SN'); return false;">
+	//     <div id="SID" sn="SN" name="NAME" inherited="false" visible="1" ...>NAME</div>
+	//     <span class="StartButtonSmall">…</span>
+	//   </li>
+	//
+	// The regex deliberately does NOT anchor on the wrapping tag — it
+	// starts at `onclick="..."><div id="..." sn="..." name="..."`. This
+	// matches the live HTML (li-wrapped) and also stays compatible with
+	// pungin's older a-wrapped fixture. We do NOT match the JS template
+	// in <script> blocks (line 148 of the live page) because there the
+	// id value is `'<single-quote>+strServiceAccountID+'<single-quote>`,
+	// which fails `(\w+)`.
+	//
+	// An empty onclick captures the heuristic pungin used for "row
+	// server-disabled" — in current production HTML every rendered row
+	// carries an onclick, so this stays true for the foreseeable future
+	// but the field is exposed in case the portal regresses.
 	accountRowRE = sync.OnceValue(func() *regexp.Regexp {
-		return regexp.MustCompile(`<a\s+onclick="([^"]*)"><div\s+id="(\w+)"\s+sn="(\d+)"\s+name="([^"]+)"`)
+		return regexp.MustCompile(`onclick="([^"]*)">\s*<div\s+id="(\w+)"\s+sn="(\d+)"\s+name="([^"]+)"`)
 	})
 )
 

@@ -21,10 +21,16 @@ func accountsListHTML(rows ...string) string {
 	return b.String()
 }
 
+// accountRow renders one rendered account row using the live HTML
+// shape — <li> with several attributes before onclick, then an inner
+// <div id=... sn=... name=...>. See real-world dump captured during
+// Milestone 5 dev: /tmp/beanfun-account-list-dump.html line 56.
 func accountRow(onclick, sid, ssn, name string) string {
 	return fmt.Sprintf(
-		`<a onclick="%s"><div id="%s" sn="%s" name="%s">row</div></a>`,
-		onclick, sid, ssn, name,
+		`<li class="" title="使用這個帳戶啟動遊戲" onclick="%s">`+
+			`<div id="%s" sn="%s" name="%s" inherited="false" visible="1" class="Account">%s</div>`+
+			`</li>`,
+		onclick, sid, ssn, name, name,
 	)
 }
 
@@ -101,6 +107,34 @@ func TestExtractAccounts(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestExtractAccounts_RealBeanfunShape regression-tests against the
+// exact production HTML shape captured 2026-05-13. The fixture mirrors
+// the live page's ul → li → div structure AND the JS template inside a
+// <script> block — the latter exists to confirm the regex does NOT
+// match templated rows where attribute values are JS concatenations.
+func TestExtractAccounts_RealBeanfunShape(t *testing.T) {
+	t.Parallel()
+	fixture := `<ul id="ulServiceAccountList" class="ServiceAccountList">
+<li class="" title="使用這個帳戶啟動遊戲" onclick="GameAccount.StartGame('1234567'); return false;"><div id="T9abcdef0123456789ab" sn="1234567" name="TestUser" inherited="false" visible="1" class="Account" title="編輯帳戶" onclick="GameAccount.ShowEditAcountDialog(event, 'T9abcdef0123456789ab'); return false;">TestUser</div><span class="StartButtonSmall"><input type="button" value="開始遊戲" /></span></li></ul>
+<script type="text/javascript">
+function AddServiceAccountToList(strServiceAccountSN, strServiceAccountID, strServiceAccountDisplayName, strServiceAccountCurtailName) {
+  $('#ulServiceAccountList').prepend('<li class="" title="t" onclick="GameAccount.StartGame(' + strServiceAccountSN + '); return false;"><div id="' + strServiceAccountID + '" sn="' + strServiceAccountSN + '" name="' + strServiceAccountDisplayName + '" inherited="false" visible="1" class="Account">' + strServiceAccountCurtailName + '</div></li>');
+}
+</script>`
+	got := extractAccounts(fixture)
+	want := []Account{
+		{SID: "T9abcdef0123456789ab", SSN: "1234567", SName: "TestUser", Enabled: true},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d rows, want %d: %+v", len(got), len(want), got)
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			t.Errorf("row %d: got %+v, want %+v", i, got[i], want[i])
+		}
 	}
 }
 
