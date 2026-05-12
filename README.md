@@ -1,59 +1,68 @@
-# Welcome to Your New Wails3 Project!
+# beanfun-launcher
 
-Congratulations on generating your Wails3 application! This README will guide you through the next steps to get your project up and running.
+> ⚠️ **個人實驗性專案 / Personal experimental project** — pre-alpha, not yet usable.
 
-## Getting Started
+第三方 [Beanfun!](https://tw.beanfun.com/) 啟動器，從零打造、以「每行 code 都自己審過」為前提。
 
-1. Navigate to your project directory in the terminal.
+A personal third-party launcher for Beanfun (遊戲橘子) games, rewritten from scratch
+so every line that touches my Gamania credentials is something I audit and own.
 
-2. To run your application in development mode, use the following command:
+## Disclaimer
 
-   ```
-   wails3 dev
-   ```
+本專案為**個人**第三方專案，**並非** Gamania / Beanfun 官方產品。
+Beanfun™、樂豆™、Gamania™ 商標屬其各自擁有者。
+使用本工具登入 Gamania 帳號時，使用者需自行確認是否符合 Gamania 服務條款。
 
-   This will start your application and enable hot-reloading for both frontend and backend changes.
+This project is **not** affiliated with, endorsed by, or sponsored by Gamania.
+All trademarks belong to their respective owners. Use is at your own risk and
+discretion regarding Gamania's Terms of Service.
 
-3. To build your application for production, use:
+## Why this exists
 
-   ```
-   wails3 build
-   ```
+Community launchers exist and work, but I want to audit every line that touches
+my Gamania credentials. This is a personal rewrite for that reason — not a
+replacement product, and not maintained as such. If you want a polished
+community launcher, look at [pungin/Beanfun](https://github.com/pungin/Beanfun).
 
-   This will create a production-ready executable in the `build` directory.
+## Security principles (non-negotiable)
 
-## Exploring Wails3 Features
+1. **No plaintext passwords** — OS keyring only (macOS Keychain / Windows DPAPI).
+   In practice this launcher uses QR-code login, so passwords are never typed.
+2. **Network requests only to Gamania-owned domains** (`bfweb.gamania.com`,
+   `tw.beanfun.com`, `login.beanfun.com`).
+3. **Tokens cleared from memory immediately after use.**
+4. **No third-party login providers.** Direct to Gamania only.
+5. **No telemetry. No analytics. No auto-updater without signature checks.**
 
-Now that you have your project set up, it's time to explore the features that Wails3 offers:
+See [`CLAUDE.md`](./CLAUDE.md) for the full project conventions and threat model.
 
-1. **Check out the examples**: The best way to learn is by example. Visit the `examples` directory in the `v3/examples` directory to see various sample applications.
+## Stack
 
-2. **Run an example**: To run any of the examples, navigate to the example's directory and use:
+- [Wails v3](https://v3.wails.io) (alpha) — desktop shell, uses native WebView2 on Windows
+- Go — backend (Beanfun API client, OS keyring, Win32 DLL injection for locale emulation)
+- React + TypeScript + Vite + Tailwind v4 + shadcn/ui — frontend
+- [Locale_Remulator](https://github.com/InWILL/Locale_Remulator) — pre-built C++ DLL for
+  region emulation so games with locale dependencies run on a TW system. We integrate
+  via injection; we do **not** author the DLL.
 
-   ```
-   go run .
-   ```
+## Platforms
 
-   Note: Some examples may be under development during the alpha phase.
+- **Development**: macOS
+- **Target**: Windows 10 / 11 only
 
-3. **Explore the documentation**: Visit the [Wails3 documentation](https://v3.wails.io/) for in-depth guides and API references.
+Linux and macOS as launch targets are out of scope.
 
-4. **Join the community**: Have questions or want to share your progress? Join the [Wails Discord](https://discord.gg/JDdSxwjhGf) or visit the [Wails discussions on GitHub](https://github.com/wailsapp/wails/discussions).
+## Build
 
-## Project Structure
+Uses [Task](https://taskfile.dev) as the canonical entry point (wraps `wails3` with
+the project's `build/config.yml` and pinned Vite port):
 
-Take a moment to familiarize yourself with your project structure:
+```
+task dev               # Hot reload dev server
+task build             # Build for current OS
+task windows:build     # Cross-compile Windows binary (the deploy target)
+```
 
-- `frontend/`: Contains your frontend code (HTML, CSS, JavaScript/TypeScript)
-- `main.go`: The entry point of your Go backend
-- `app.go`: Define your application structure and methods here
-- `wails.json`: Configuration file for your Wails project
+## License
 
-## Next Steps
-
-1. Modify the frontend in the `frontend/` directory to create your desired UI.
-2. Add backend functionality in `main.go`.
-3. Use `wails3 dev` to see your changes in real-time.
-4. When ready, build your application with `wails3 build`.
-
-Happy coding with Wails3! If you encounter any issues or have questions, don't hesitate to consult the documentation or reach out to the Wails community.
+[MIT](./LICENSE)
