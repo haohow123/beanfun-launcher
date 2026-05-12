@@ -1,5 +1,3 @@
-import { useEffect } from "react";
-
 import { AppShell } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,14 +14,9 @@ interface LoginPageProps {
 }
 
 export function LoginPage({ onApproved }: LoginPageProps) {
-  const { state, start } = useQRPolling();
-
-  // Lift approval up to the App router so it can swap pages.
-  useEffect(() => {
-    if (state.kind === "approved") {
-      onApproved();
-    }
-  }, [state, onApproved]);
+  // The hook fires onApproved directly on transition — no useEffect
+  // needed to translate state changes into parent callbacks.
+  const { state, start } = useQRPolling({ onApproved });
 
   return (
     <AppShell>
@@ -31,7 +24,7 @@ export function LoginPage({ onApproved }: LoginPageProps) {
         <CardHeader>
           <CardTitle>登入 Beanfun</CardTitle>
           <CardDescription>
-            點下方按鈕產生 QR code，用 Beanfun! 手機 app 掃描完成登入
+            點下方按鈕產生 QR code,用 Beanfun! 手機 app 掃描完成登入
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col items-center gap-4">
@@ -64,13 +57,13 @@ export function LoginPage({ onApproved }: LoginPageProps) {
           {state.kind === "error" && (
             <>
               <p className="text-sm text-destructive">
-                登入失敗：{state.message}
+                登入失敗:{state.message}
               </p>
               <Button onClick={() => start()}>重試</Button>
             </>
           )}
           {state.kind === "approved" && (
-            <p className="text-sm text-foreground">登入成功，載入中…</p>
+            <p className="text-sm text-foreground">登入成功,載入中…</p>
           )}
         </CardContent>
       </Card>

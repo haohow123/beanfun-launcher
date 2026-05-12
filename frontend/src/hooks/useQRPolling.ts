@@ -12,19 +12,33 @@ export type QRPollingState =
   | { kind: "approved" }
   | { kind: "error"; message: string };
 
+export interface UseQRPollingOptions {
+  /**
+   * Called once when the poll loop transitions to `approved`. Lets the
+   * caller swap pages / kick off post-login work without subscribing
+   * to state changes via useEffect — the React docs flag that as
+   * an anti-pattern for "notify parent about state changes".
+   */
+  onApproved?: () => void;
+}
+
 /**
- * useQRPolling drives the QR-login state machine pungin/Beanfun observed:
- * start → poll every 2s → flip to approved / expired / error.
+ * useQRPolling drives the QR-login state machine that pungin/Beanfun
+ * observed: start → poll every 2s → flip to approved / expired / error.
  *
- * It is intentionally backend-agnostic — Day 2 backs onto a mocked Go
- * service; Day 3+ replaces the bindings' implementation with real HTTP
- * to login.beanfun.com without changing this hook.
+ * It is intentionally backend-agnostic — Day 2 backed onto a mocked Go
+ * service; later milestones replace the bindings' implementation with
+ * real HTTP without changing this hook.
  */
-export function useQRPolling() {
+export function useQRPolling({ onApproved }: UseQRPollingOptions = {}) {
   const [state, setState] = useState<QRPollingState>({ kind: "idle" });
-  // cancelled is a ref so the recursive poll closure sees the latest value
-  // (a state-based flag would be stale-captured between renders).
+  // cancelled is a ref so the recursive poll closure sees the latest
+  // value (a state-based flag would be stale-captured between renders).
   const cancelled = useRef(false);
+  // Stable ref to the latest onApproved so start()'s closure can fire
+  // the most recent callback without re-creating itself on every render.
+  const onApprovedRef = useRef(onApproved);
+  onApprovedRef.current = onApproved;
 
   const start = useCallback(async () => {
     cancelled.current = false;
@@ -48,6 +62,7 @@ export function useQRPolling() {
         switch (status) {
           case QRStatus.QRStatusApproved:
             setState({ kind: "approved" });
+            onApprovedRef.current?.();
             return;
           case QRStatus.QRStatusExpired:
             setState({ kind: "expired" });
