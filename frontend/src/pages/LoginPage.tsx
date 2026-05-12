@@ -18,11 +18,6 @@ interface LoginPageProps {
 export function LoginPage({ onApproved }: LoginPageProps) {
   const { state, start } = useQRPolling();
 
-  // Kick the flow off on mount.
-  useEffect(() => {
-    start();
-  }, [start]);
-
   // Lift approval up to the App router so it can swap pages.
   useEffect(() => {
     if (state.kind === "approved") {
@@ -36,10 +31,13 @@ export function LoginPage({ onApproved }: LoginPageProps) {
         <CardHeader>
           <CardTitle>登入 Beanfun</CardTitle>
           <CardDescription>
-            打開 Beanfun! 手機 app，掃描下方 QR code 完成登入
+            點下方按鈕產生 QR code，用 Beanfun! 手機 app 掃描完成登入
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col items-center gap-4">
+          {state.kind === "idle" && (
+            <Button onClick={() => start()}>登入</Button>
+          )}
           {state.kind === "starting" && (
             <p className="text-sm text-muted-foreground">
               產生 QR code 中…
