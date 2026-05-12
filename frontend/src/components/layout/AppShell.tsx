@@ -14,7 +14,7 @@ import { type ReactNode } from "react";
 export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-screen flex-col bg-background">
-      <header className="app-titlebar flex h-[50px] shrink-0 items-center px-4">
+      <header className="app-titlebar flex h-[50px] shrink-0 items-center pl-24 pr-4">
         <span className="text-xs font-medium text-muted-foreground">
           Beanfun Launcher
         </span>
