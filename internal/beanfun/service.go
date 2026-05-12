@@ -1,18 +1,15 @@
 // Package beanfun is the Gamania Beanfun API client.
 //
-// Day 2: this file holds a mock LoginService so the frontend QR-login UI
-// shell can be wired end-to-end without hitting real Gamania endpoints.
-// Day 3+ will replace the mocks with a real HTTP client following the
-// 5-step flow documented in docs/qr-login.md (init → poll → finalize).
+// Day 3: real init flow lands (getSessionKey + Login/Index + InitLogin).
+// CheckQRLogin stays mocked (3 polls → Approved) until Day 4 wires up
+// the real poll + finalize handshake.
 package beanfun
 
 import (
-	"bytes"
-	"encoding/base64"
-	"image"
-	"image/color"
-	"image/png"
+	"context"
+	"log/slog"
 	"sync"
+	"time"
 )
 
 // QRStart is the payload returned to the frontend when QR login begins.
@@ -39,30 +36,64 @@ const (
 // LoginService is the Wails-bound login facade. The frontend calls
 // StartQRLogin once, then polls CheckQRLogin every 2 seconds.
 type LoginService struct {
-	mu    sync.Mutex
-	polls int
+	mu        sync.Mutex
+	client    *BeanfunClient
+	pendingQR *qrLoginInit
+	polls     int // mock state for CheckQRLogin (Day 4 will replace)
 }
 
-// NewLoginService returns a LoginService ready to serve mock responses.
+// NewLoginService returns a LoginService backed by a fresh
+// BeanfunClient pointed at production TW endpoints. Tests should use
+// NewLoginServiceWithClient instead.
 func NewLoginService() *LoginService {
-	return &LoginService{}
+	c, err := NewBeanfunClient()
+	if err != nil {
+		// cookiejar.New(nil) never errors in practice; panic so this
+		// surfaces at startup rather than silently in a goroutine.
+		panic(err)
+	}
+	return &LoginService{client: c}
 }
 
-// StartQRLogin resets the mock state machine and returns a placeholder
-// QR bitmap + deeplink so the frontend has something to render.
+// NewLoginServiceWithClient injects a caller-provided client. Tests
+// build a BeanfunClient pointed at an httptest.Server and pass it here.
+func NewLoginServiceWithClient(c *BeanfunClient) *LoginService {
+	return &LoginService{client: c}
+}
+
+// StartQRLogin runs the full init flow (getSessionKey → initQRLogin)
+// and returns the QR + deeplink for the frontend to render. The
+// internal session state (skey, verification token) is stashed for
+// Day 4's poll + finalize to consume.
 func (s *LoginService) StartQRLogin() (QRStart, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	skey, err := s.client.getSessionKey(ctx)
+	if err != nil {
+		slog.Error("StartQRLogin: getSessionKey failed", "err", err)
+		return QRStart{}, err
+	}
+	init, err := s.client.initQRLogin(ctx, skey)
+	if err != nil {
+		slog.Error("StartQRLogin: initQRLogin failed", "err", err)
+		return QRStart{}, err
+	}
+
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.pendingQR = init
 	s.polls = 0
+	s.mu.Unlock()
+
 	return QRStart{
-		BitmapBase64: mockQRBitmap(),
-		Deeplink:     "beanfun://mock-deeplink",
+		BitmapBase64: init.BitmapBase64,
+		Deeplink:     init.Deeplink,
 	}, nil
 }
 
-// CheckQRLogin returns Pending for the first two polls, then Approved.
-// That simulates a user scanning the QR around the 6-second mark
-// (3 polls × 2 s — matching pungin/Beanfun's cadence).
+// CheckQRLogin is still mocked: returns Pending for the first two
+// polls, then Approved on the third. Day 4 replaces this with the real
+// POST /QRLogin/CheckLoginStatus + ResultMessage dispatch.
 func (s *LoginService) CheckQRLogin() (QRStatus, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -71,28 +102,4 @@ func (s *LoginService) CheckQRLogin() (QRStatus, error) {
 		return QRStatusApproved, nil
 	}
 	return QRStatusPending, nil
-}
-
-// mockQRBitmap renders a 200×200 checkerboard PNG and returns it as
-// base64. Visually it looks nothing like a real QR — the point is just
-// to prove the wire format (Go → TS binding → <img src=data:...>) works
-// end-to-end so Day 3 only has to swap the bytes.
-func mockQRBitmap() string {
-	const (
-		size = 200
-		cell = 10
-	)
-	img := image.NewRGBA(image.Rect(0, 0, size, size))
-	for y := range size {
-		for x := range size {
-			if ((x/cell)+(y/cell))%2 == 0 {
-				img.Set(x, y, color.Black)
-			} else {
-				img.Set(x, y, color.White)
-			}
-		}
-	}
-	var buf bytes.Buffer
-	_ = png.Encode(&buf, img)
-	return base64.StdEncoding.EncodeToString(buf.Bytes())
 }
