@@ -29,7 +29,8 @@ type qrCheckResponse struct {
 
 // pollQRLoginStatus runs one POST /QRLogin/CheckLoginStatus and
 // returns the dispatched outcome. The caller drives the poll cadence
-// (every 2 s, matching pungin/WPF). Pungin reference: qr_poll.rs:89-130.
+// (every 2 seconds is what the frontend uses). See
+// docs/beanfun-login-protocol.md § Step 3.
 func (c *BeanfunClient) pollQRLoginStatus(ctx context.Context, init *qrLoginInit) (qrPollOutcome, error) {
 	indexURL, err := c.loginURLWithSKey("Login/Index", init.SKey)
 	if err != nil {
@@ -40,10 +41,10 @@ func (c *BeanfunClient) pollQRLoginStatus(ctx context.Context, init *qrLoginInit
 		return 0, err
 	}
 
-	// Empty body with explicit Content-Length: 0 — without that
-	// header Go picks chunked transfer-encoding, which the Beanfun
-	// server rejects with HTTP 411. Both the field and the header
-	// must be set (qr_poll.rs:184, test qr_poll.rs:315-317).
+	// Empty body with explicit Content-Length: 0 — without that header
+	// Go picks chunked transfer-encoding, which the Beanfun server
+	// rejects with HTTP 411. Both the field on the request struct AND
+	// the header must be set.
 	req, err := http.NewRequestWithContext(ctx, "POST", pollURL.String(), strings.NewReader(""))
 	if err != nil {
 		return 0, ErrHTTP(fmt.Errorf("NewRequestWithContext: %w", err))

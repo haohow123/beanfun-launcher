@@ -1,9 +1,6 @@
 // Package beanfun is the Gamania Beanfun API client.
 //
-// Milestone 4: real CheckQRLogin lands. CheckQRLogin POSTs to
-// /QRLogin/CheckLoginStatus, dispatches on ResultMessage, and on
-// "Success" runs the 4-call finalize handshake to acquire bfWebToken
-// and stash a Session.
+// The QR-login flow is documented in docs/beanfun-login-protocol.md.
 package beanfun
 
 import (
@@ -15,16 +12,16 @@ import (
 
 // QRStart is the payload returned to the frontend when QR login begins.
 // BitmapBase64 is the QR PNG bytes encoded as base64 (no data: prefix).
-// Deeplink is the Beanfun mobile-app URL the QR encodes; surfaced so the
-// frontend can offer a "copy / open on phone" action.
+// Deeplink is the Beanfun mobile-app URL the QR encodes; surfaced so
+// the frontend can offer a "copy / open on phone" action.
 type QRStart struct {
 	BitmapBase64 string `json:"bitmapBase64"`
 	Deeplink     string `json:"deeplink"`
 }
 
-// QRStatus mirrors the four outcomes pungin/Beanfun observed from
-// CheckLoginStatus, mapped to lower-case string tags so the TS side gets
-// a clean discriminated union.
+// QRStatus mirrors the four outcomes Beanfun returns from
+// CheckLoginStatus, mapped to lower-case string tags so the TS side
+// gets a clean discriminated union.
 type QRStatus string
 
 const (
@@ -56,8 +53,8 @@ func NewLoginServiceWithEndpoints(endpoints Endpoints) *LoginService {
 	return &LoginService{endpoints: endpoints}
 }
 
-// StartQRLogin runs the full init flow (getSessionKey → initQRLogin)
-// and returns the QR + deeplink for the frontend to render. A fresh
+// StartQRLogin runs the init flow (getSessionKey → initQRLogin) and
+// returns the QR + deeplink for the frontend to render. A fresh
 // BeanfunClient (clean cookie jar) is minted on every call.
 func (s *LoginService) StartQRLogin() (QRStart, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -95,8 +92,8 @@ func (s *LoginService) StartQRLogin() (QRStart, error) {
 // CheckQRLogin polls /QRLogin/CheckLoginStatus once and, on Approved,
 // runs the 4-call finalize handshake synchronously to acquire
 // bfWebToken. The frontend never sees the finalize step explicitly —
-// from its perspective, a single CheckQRLogin call either stays
-// Pending or completes the login.
+// from its perspective a single CheckQRLogin call either stays Pending
+// or completes the login.
 func (s *LoginService) CheckQRLogin() (QRStatus, error) {
 	s.mu.Lock()
 	pendingQR := s.pendingQR
@@ -105,8 +102,8 @@ func (s *LoginService) CheckQRLogin() (QRStatus, error) {
 
 	if pendingQR == nil || client == nil {
 		// No active session — caller should StartQRLogin again. Surface
-		// as Expired so the frontend's "retry" button is the natural
-		// next step.
+		// as Expired so the frontend's retry path is the natural next
+		// step.
 		return QRStatusExpired, nil
 	}
 

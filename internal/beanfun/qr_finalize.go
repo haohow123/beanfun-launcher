@@ -10,15 +10,15 @@ import (
 )
 
 // finalizeQRLogin runs the 4-call handshake that swaps an approved QR
-// scan for a bfWebToken session cookie. Pungin reference:
-// qr_finalize.rs:149-250.
+// scan for a bfWebToken session cookie. See
+// docs/beanfun-login-protocol.md §§ Step 4–7.
 func (c *BeanfunClient) finalizeQRLogin(ctx context.Context, init *qrLoginInit) (*Session, error) {
 	indexURL, err := c.loginURLWithSKey("Login/Index", init.SKey)
 	if err != nil {
 		return nil, err
 	}
 
-	// ---- Step 1: GET /QRLogin/QRLogin (handshake) ----
+	// ---- Step 4: GET /QRLogin/QRLogin (handshake) ----
 	qrLoginURL, err := c.loginURL("QRLogin/QRLogin")
 	if err != nil {
 		return nil, err
@@ -39,9 +39,9 @@ func (c *BeanfunClient) finalizeQRLogin(ctx context.Context, init *qrLoginInit) 
 	if resp1.StatusCode >= 400 {
 		return nil, ErrHTTP(fmt.Errorf("QRLogin/QRLogin returned HTTP %d", resp1.StatusCode))
 	}
-	slog.Info("finalizeQRLogin step 1: handshake ok", "status", resp1.StatusCode)
+	slog.Info("finalizeQRLogin step 4: handshake ok", "status", resp1.StatusCode)
 
-	// ---- Step 2: GET /Login/SendLogin (scrape hidden form) ----
+	// ---- Step 5: GET /Login/SendLogin (scrape hidden form) ----
 	sendLoginURL, err := c.loginURL("Login/SendLogin")
 	if err != nil {
 		return nil, err
@@ -50,8 +50,8 @@ func (c *BeanfunClient) finalizeQRLogin(ctx context.Context, init *qrLoginInit) 
 	if err != nil {
 		return nil, err
 	}
-	// QR-specific Accept (differs from non-QR by the image/* tokens);
-	// pungin qr_finalize.rs:168.
+	// QR-specific Accept (differs from the non-QR variant by the
+	// image/* tokens).
 	req2.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
 	req2.Header.Set("Referer", indexURL.String())
 	resp2, err := c.http.Do(req2)
@@ -71,14 +71,13 @@ func (c *BeanfunClient) finalizeQRLogin(ctx context.Context, init *qrLoginInit) 
 			"body_preview", truncate(string(body2), 500))
 		return nil, ErrSendLoginNoFormData()
 	}
-	slog.Info("finalizeQRLogin step 2: scraped form", "field_count", len(form))
+	slog.Info("finalizeQRLogin step 5: scraped form", "field_count", len(form))
 
-	// ---- Step 3: POST return.aspx (NO REDIRECT, result discarded) ----
-	// Pungin's QR finalize uses the no-redirect client so it could read
-	// Set-Cookie from the 302 — but the captured value is discarded
-	// because step 4 is canonical. We mirror the no-redirect call (still
-	// matters because the server may not auto-handle the follow-up),
-	// but skip the Set-Cookie scrape entirely.
+	// ---- Step 6: POST return.aspx (no-redirect; result discarded) ----
+	// The no-redirect client lets us observe the 302 directly rather
+	// than chasing it. The bfWebToken cookie from this response is
+	// intentionally not consumed — the canonical token comes from
+	// step 7. Missing cookie here is tolerated.
 	returnURL, err := c.portalURL("beanfun_block/bflogin/return.aspx")
 	if err != nil {
 		return nil, err
@@ -100,13 +99,13 @@ func (c *BeanfunClient) finalizeQRLogin(ctx context.Context, init *qrLoginInit) 
 	}
 	// No-redirect client surfaces 302 directly; accept any 2xx or 3xx.
 	if resp3.StatusCode < 200 || resp3.StatusCode >= 400 {
-		return nil, ErrHTTP(fmt.Errorf("return.aspx step 3 returned HTTP %d", resp3.StatusCode))
+		return nil, ErrHTTP(fmt.Errorf("return.aspx step 6 returned HTTP %d", resp3.StatusCode))
 	}
-	slog.Info("finalizeQRLogin step 3: return.aspx (no-redirect) ok", "status", resp3.StatusCode)
+	slog.Info("finalizeQRLogin step 6: return.aspx (no-redirect) ok", "status", resp3.StatusCode)
 
-	// ---- Step 4: POST return.aspx with AuthKey=OK (follow redirects) ----
-	// 5-field form exactly per pungin completed.rs:216-222. SessionKey
-	// is the OUTER skey (not the inner one from the SendLogin form).
+	// ---- Step 7: POST return.aspx with AuthKey=OK (follow redirects) ----
+	// Exact 5-field body. SessionKey here is the OUTER skey from
+	// getSessionKey, NOT the inner SessionKey scraped in step 5.
 	step4Body := url.Values{
 		"SessionKey":       {init.SKey},
 		"AuthKey":          {"OK"},
@@ -129,17 +128,16 @@ func (c *BeanfunClient) finalizeQRLogin(ctx context.Context, init *qrLoginInit) 
 		return nil, err
 	}
 	if resp4.StatusCode >= 400 {
-		return nil, ErrHTTP(fmt.Errorf("return.aspx step 4 returned HTTP %d", resp4.StatusCode))
+		return nil, ErrHTTP(fmt.Errorf("return.aspx step 7 returned HTTP %d", resp4.StatusCode))
 	}
-	slog.Info("finalizeQRLogin step 4: LoginCompleted ok", "status", resp4.StatusCode)
+	slog.Info("finalizeQRLogin step 7: LoginCompleted ok", "status", resp4.StatusCode)
 
 	// Read bfWebToken from the shared cookie jar (not resp4.Cookies()).
-	// Pungin's 2026-04-16 hotfix (completed.rs:46-49) observed that the
-	// cookie can be set on a later redirect hop, not just the immediate
-	// 302 — only the jar sees all of them.
+	// The cookie can be set on a later redirect hop rather than the
+	// immediate 302, and only the jar sees all hops.
 	webToken := readCookieFromJar(c.jar, c.endpoints.PortalBase, "bfWebToken")
 	if webToken == "" {
-		slog.Error("finalizeQRLogin: bfWebToken cookie missing after step 4")
+		slog.Error("finalizeQRLogin: bfWebToken cookie missing after step 7")
 		return nil, ErrMissingWebToken()
 	}
 	return &Session{

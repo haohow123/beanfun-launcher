@@ -11,12 +11,12 @@ import (
 )
 
 const (
-	// Chrome 130 UA — the HK portal hard-checks UA shape; TW is less
-	// strict but we match pungin's setting for parity.
+	// Chrome 130 UA — keeps us aligned with the browser shape Beanfun's
+	// portal expects. Some endpoints fingerprint the UA shape.
 	defaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
 	defaultTimeout   = 30 * time.Second
-	// 16 MiB cap on any response body, matching pungin. Defends the
-	// process against a hostile server streaming forever.
+	// 16 MiB cap on any response body. Defends the process against a
+	// hostile server streaming forever.
 	maxResponseBodyBytes int64 = 16 << 20
 )
 
@@ -47,11 +47,14 @@ func DefaultEndpoints() Endpoints {
 // BeanfunClient wraps an http.Client (and a no-redirect twin) plus a
 // shared cookie jar for a single Beanfun login session. A new
 // instance starts a fresh jar — no leftover cookies from a prior
-// login. Pungin's pattern: two clients, one jar (client.rs:228-271).
+// attempt. The two clients share the same jar so cookies observed
+// by either are visible to both; the no-redirect variant is used
+// for the step-6 return.aspx POST where we need the 302 response
+// directly. See docs/beanfun-login-protocol.md.
 type BeanfunClient struct {
 	endpoints      Endpoints
 	http           *http.Client // default — follows redirects
-	httpNoRedirect *http.Client // surfaces 302 as-is (for finalize step 3)
+	httpNoRedirect *http.Client // surfaces 302 as-is (for finalize step 6)
 	jar            *cookiejar.Jar
 	userAgent      string
 }
@@ -76,7 +79,7 @@ func NewBeanfunClientWithEndpoints(endpoints Endpoints) (*BeanfunClient, error) 
 		},
 		httpNoRedirect: &http.Client{
 			Timeout: defaultTimeout,
-			Jar:     jar, // SHARED — both clients see the same cookies
+			Jar:     jar, // shared — both clients see the same cookies
 			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 				return http.ErrUseLastResponse
 			},

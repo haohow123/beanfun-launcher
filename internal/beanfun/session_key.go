@@ -6,9 +6,9 @@ import (
 	"log/slog"
 )
 
-// getSessionKey performs the "step 0" portal handshake: GET the portal
-// default.aspx, follow redirects, scrape pSKey from the final URL.
-// Pungin reference: session_key.rs:33-60 (TW path).
+// getSessionKey performs the portal handshake: GET the portal
+// default.aspx, follow redirects, scrape the session key from the
+// final URL. See docs/beanfun-login-protocol.md § Step 0.
 func (c *BeanfunClient) getSessionKey(ctx context.Context) (string, error) {
 	u, err := c.portalURL("beanfun_block/bflogin/default.aspx?service=999999_T0")
 	if err != nil {
@@ -23,9 +23,9 @@ func (c *BeanfunClient) getSessionKey(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", ErrHTTP(err)
 	}
-	// Keep the body around — if the pSKey regex misses we want to log
-	// a preview so we can tell "Beanfun changed the redirect target"
-	// apart from "we hit a 200 page directly".
+	// Keep the body around — if the session-key regex misses we want
+	// to log a preview so the operator can tell "Beanfun changed the
+	// redirect target" apart from "we hit a 200 page directly".
 	body, err := c.boundedRead(resp)
 	if err != nil {
 		return "", err

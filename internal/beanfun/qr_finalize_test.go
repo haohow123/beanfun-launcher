@@ -11,9 +11,9 @@ import (
 	"testing"
 )
 
-// happySendLoginBody returns HTML with 5 hidden inputs that pungin's
-// extract_hidden_inputs (and ours) will scrape, plus one submit button
-// to verify the skip-submit logic.
+// happySendLoginBody returns HTML with 5 hidden inputs that our
+// extractHiddenInputs scrapes, plus one submit button to verify the
+// skip-submit logic.
 func happySendLoginBody() string {
 	return `<html><body>
 <form action="https://tw.beanfun.com/beanfun_block/bflogin/return.aspx" method="post">

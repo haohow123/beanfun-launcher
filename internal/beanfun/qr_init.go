@@ -7,9 +7,9 @@ import (
 	"log/slog"
 )
 
-// qrLoginInit is the internal state after Steps 1 + 2 succeed. The
+// qrLoginInit is the internal state after the init steps succeed. The
 // public QRStart only exposes BitmapBase64 and Deeplink; SKey and
-// VerificationToken are stashed by LoginService for the Day 4 poll +
+// VerificationToken are stashed by LoginService for the later poll +
 // finalize stages.
 type qrLoginInit struct {
 	SKey              string
@@ -18,9 +18,8 @@ type qrLoginInit struct {
 	VerificationToken string
 }
 
-// initQRLoginResponse mirrors the InitLogin JSON envelope.
-// Pungin reference: qr_init.rs:291-308. Pointer fields let us tell
-// "missing" apart from "zero value".
+// initQRLoginResponse mirrors the InitLogin JSON envelope. Pointer
+// fields let us tell "missing" apart from "zero value".
 type initQRLoginResponse struct {
 	Result     *int                   `json:"Result"`
 	ResultData *initQRLoginResultData `json:"ResultData"`
@@ -31,9 +30,8 @@ type initQRLoginResultData struct {
 	DeepLink *string `json:"DeepLink"`
 }
 
-// initQRLogin performs Step 1 (Login/Index) + Step 2 (Login/InitLogin)
-// of pungin's QR-login state machine. Pungin reference:
-// qr_init.rs:129-225.
+// initQRLogin performs Login/Index + Login/InitLogin to fetch a fresh
+// QR PNG + deeplink. See docs/beanfun-login-protocol.md §§ Step 1–2.
 func (c *BeanfunClient) initQRLogin(ctx context.Context, skey string) (*qrLoginInit, error) {
 	// ---- Step 1: GET Login/Index ----
 	indexURL, err := c.loginURLWithSKey("Login/Index", skey)
@@ -63,7 +61,7 @@ func (c *BeanfunClient) initQRLogin(ctx context.Context, skey string) (*qrLoginI
 
 	token := extractVerificationToken(string(indexBody))
 	if token == "" {
-		slog.Warn("initQRLogin: __RequestVerificationToken not found; continuing with empty token (pungin parity)")
+		slog.Warn("initQRLogin: __RequestVerificationToken not found; continuing with empty token")
 	}
 
 	// ---- Step 2: GET Login/InitLogin ----
