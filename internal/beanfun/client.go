@@ -44,19 +44,20 @@ func DefaultEndpoints() Endpoints {
 	}
 }
 
-// BeanfunClient wraps an http.Client (and a no-redirect twin) plus a
-// shared cookie jar for a single Beanfun login session. A new
-// instance starts a fresh jar — no leftover cookies from a prior
-// attempt. The two clients share the same jar so cookies observed
-// by either are visible to both; the no-redirect variant is used
-// for the step-6 return.aspx POST where we need the 302 response
-// directly. See docs/beanfun-login-protocol.md.
+// BeanfunClient wraps a redirect-following http.Client plus a cookie
+// jar for a single Beanfun login session. A new instance starts a
+// fresh jar — no leftover cookies from a prior attempt.
+//
+// Pungin/Beanfun maintains a second no-redirect client variant for
+// flows that need to read `Set-Cookie` directly from a 302 response.
+// Our QR-only flow doesn't: step 6 of finalize discards the response,
+// and step 7 reads `bfWebToken` from the jar after the redirect chain
+// settles. So one client is enough. See docs/beanfun-login-protocol.md.
 type BeanfunClient struct {
-	endpoints      Endpoints
-	http           *http.Client // default — follows redirects
-	httpNoRedirect *http.Client // surfaces 302 as-is (for finalize step 6)
-	jar            *cookiejar.Jar
-	userAgent      string
+	endpoints Endpoints
+	http      *http.Client
+	jar       *cookiejar.Jar
+	userAgent string
 }
 
 // NewBeanfunClient builds a client pointed at production TW endpoints.
@@ -76,13 +77,6 @@ func NewBeanfunClientWithEndpoints(endpoints Endpoints) (*BeanfunClient, error) 
 		http: &http.Client{
 			Timeout: defaultTimeout,
 			Jar:     jar,
-		},
-		httpNoRedirect: &http.Client{
-			Timeout: defaultTimeout,
-			Jar:     jar, // shared — both clients see the same cookies
-			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
 		},
 		jar:       jar,
 		userAgent: defaultUserAgent,

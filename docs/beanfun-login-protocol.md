@@ -24,8 +24,8 @@ Step 3  QRLogin/CheckLoginStatus    POST  login.beanfun.com/QRLogin/CheckLoginSt
         ──── when step 3 returns "Success", finalize runs ────
 Step 4  QRLogin/QRLogin       GET   login.beanfun.com/QRLogin/QRLogin
 Step 5  Login/SendLogin       GET   login.beanfun.com/Login/SendLogin
-Step 6  return.aspx (3rd)     POST  tw.beanfun.com/beanfun_block/bflogin/return.aspx   ← no-redirect
-Step 7  return.aspx (4th)     POST  tw.beanfun.com/beanfun_block/bflogin/return.aspx   ← redirect-following
+Step 6  return.aspx (3rd)     POST  tw.beanfun.com/beanfun_block/bflogin/return.aspx
+Step 7  return.aspx (4th)     POST  tw.beanfun.com/beanfun_block/bflogin/return.aspx   ← bfWebToken read from jar after
 ```
 
 Output: an authenticated session keyed by the `bfWebToken` cookie
@@ -193,7 +193,7 @@ ServiceAccountSN  "0"
 
 These are forwarded verbatim in step 6's POST.
 
-## Step 6 — `return.aspx` (no-redirect client)
+## Step 6 — `return.aspx` (first POST)
 
 ```
 POST https://tw.beanfun.com/beanfun_block/bflogin/return.aspx
@@ -201,19 +201,19 @@ Content-Type: application/x-www-form-urlencoded
 Referer: https://login.beanfun.com/
 User-Agent: …
 Body: <step-5 scraped fields, x-www-form-urlencoded>
-Client: BeanfunClient.httpNoRedirect
 ```
 
-**The no-redirect client is mandatory here.** The server replies 302
-with a `Set-Cookie: bfWebToken=…`. A redirect-following client would
-discard the original-response headers while chasing the redirect
-target — so we use the no-redirect variant to see the 302 directly.
+The response is discarded — we only need the server to accept the
+form and advance session state. Any `bfWebToken` cookie set by this
+response is not consumed; the canonical token comes from step 7.
 
-In QR flow the `bfWebToken` from this response is **intentionally
-discarded** — the canonical token comes from step 7. Missing cookie
-on step 6 is tolerated.
+Pungin keeps a separate no-redirect client just for this step (so
+they can read `Set-Cookie` directly from a 302). Our QR-only flow
+doesn't need that — we don't read the cookie here, and step 7's jar
+read captures it regardless. We use the default redirect-following
+client.
 
-Accept any 2xx or 3xx; 4xx/5xx → `KindHTTP`.
+4xx/5xx → `KindHTTP`.
 
 ## Step 7 — `return.aspx` (redirect-following, AuthKey=OK)
 
@@ -248,16 +248,10 @@ Missing `bfWebToken` from the jar → `KindMissingWebToken` (fatal).
 
 ## Cookie + client design
 
-`BeanfunClient` holds two `http.Client` instances sharing one
-`cookiejar.Jar`:
-
-| Field | Purpose | `CheckRedirect` |
-|---|---|---|
-| `http` | Default. Steps 0, 1, 2, 3, 4, 5, 7. | follow up to 10 hops |
-| `httpNoRedirect` | Step 6 only. | returns `http.ErrUseLastResponse` |
-
-The shared jar means cookies set on either client are visible to both
-— critical for the step-6 → step-7 handoff.
+`BeanfunClient` holds one redirect-following `http.Client` plus a
+`cookiejar.Jar`. All seven calls go through the same client; cookies
+set by any response (including via redirects) are visible to all
+subsequent calls.
 
 `LoginService.StartQRLogin` mints a **fresh** `BeanfunClient` (and a
 fresh jar) on every call. Re-using a jar across login attempts caused
@@ -295,7 +289,6 @@ A condensed list of things that look weird but are deliberate.
 | Permissive `[sp][Ss]?[Kk]ey=` regex | Step 0 | Portal toggles between `pSKey=` and `skey=` over time |
 | Empty `__RequestVerificationToken` tolerated | Step 1 | Production server allows it; we don't bail when scrape misses |
 | QR-specific Accept on SendLogin | Step 5 | Differs from non-QR flow; mirrors the upstream library byte-for-byte |
-| No-redirect client for one of seven calls | Step 6 | Need the 302 response visible so the cascade can record it |
 | Read cookie from jar, not response | Step 7 | `bfWebToken` may be `Set-Cookie`'d on a later redirect hop |
 | Fresh client per `StartQRLogin` | Service layer | Stale cookies in a re-used jar caused observably different redirects |
 | `AuthKey=OK` literal | Step 7 | QR-only approval sentinel |

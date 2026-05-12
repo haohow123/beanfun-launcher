@@ -73,11 +73,11 @@ func (c *BeanfunClient) finalizeQRLogin(ctx context.Context, init *qrLoginInit) 
 	}
 	slog.Info("finalizeQRLogin step 5: scraped form", "field_count", len(form))
 
-	// ---- Step 6: POST return.aspx (no-redirect; result discarded) ----
-	// The no-redirect client lets us observe the 302 directly rather
-	// than chasing it. The bfWebToken cookie from this response is
+	// ---- Step 6: POST return.aspx (response discarded) ----
+	// The bfWebToken cookie potentially set by this response is
 	// intentionally not consumed — the canonical token comes from
-	// step 7. Missing cookie here is tolerated.
+	// step 7's redirect chain. We just need the server to accept
+	// the form post and advance the session state.
 	returnURL, err := c.portalURL("beanfun_block/bflogin/return.aspx")
 	if err != nil {
 		return nil, err
@@ -90,18 +90,17 @@ func (c *BeanfunClient) finalizeQRLogin(ctx context.Context, init *qrLoginInit) 
 	req3.Header.Set("User-Agent", c.userAgent)
 	req3.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req3.Header.Set("Referer", c.endpoints.LoginBase.String())
-	resp3, err := c.httpNoRedirect.Do(req3)
+	resp3, err := c.http.Do(req3)
 	if err != nil {
 		return nil, ErrHTTP(err)
 	}
 	if _, err := c.boundedRead(resp3); err != nil {
 		return nil, err
 	}
-	// No-redirect client surfaces 302 directly; accept any 2xx or 3xx.
-	if resp3.StatusCode < 200 || resp3.StatusCode >= 400 {
+	if resp3.StatusCode >= 400 {
 		return nil, ErrHTTP(fmt.Errorf("return.aspx step 6 returned HTTP %d", resp3.StatusCode))
 	}
-	slog.Info("finalizeQRLogin step 6: return.aspx (no-redirect) ok", "status", resp3.StatusCode)
+	slog.Info("finalizeQRLogin step 6: return.aspx ok", "status", resp3.StatusCode)
 
 	// ---- Step 7: POST return.aspx with AuthKey=OK (follow redirects) ----
 	// Exact 5-field body. SessionKey here is the OUTER skey from
