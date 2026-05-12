@@ -15,11 +15,27 @@ var (
 		return regexp.MustCompile(`[sp][Ss]?[Kk]ey=([^&]+)`)
 	})
 	// pungin qr_init.rs:12 — extracts the `__RequestVerificationToken`
-	// hidden input value from the Login/Index HTML. The pattern is
-	// anchored on the name attribute appearing before the value
-	// attribute, matching the production response shape.
+	// hidden input value from the Login/Index HTML. Anchored on the
+	// name attribute appearing before the value attribute.
 	verificationTokenRE = sync.OnceValue(func() *regexp.Regexp {
 		return regexp.MustCompile(`__RequestVerificationToken[^>]+value="([^"]+)"`)
+	})
+
+	// pungin core/parser/form.rs — scrape every <input> tag, then pull
+	// name/value attrs. (?is) = case-insensitive + dot matches newline.
+	inputTagRE = sync.OnceValue(func() *regexp.Regexp {
+		return regexp.MustCompile(`(?is)<input[^>]+>`)
+	})
+	nameAttrRE = sync.OnceValue(func() *regexp.Regexp {
+		return regexp.MustCompile(`(?i)name\s*=\s*['"]([^'"]+)['"]`)
+	})
+	// `*` (not `+`) on the value group so empty `value=""` is preserved
+	// — matches pungin's regex.
+	valueAttrRE = sync.OnceValue(func() *regexp.Regexp {
+		return regexp.MustCompile(`(?i)value\s*=\s*['"]([^'"]*)['"]`)
+	})
+	submitTypeRE = sync.OnceValue(func() *regexp.Regexp {
+		return regexp.MustCompile(`(?i)type\s*=\s*["']submit["']`)
 	})
 )
 
@@ -42,6 +58,31 @@ func extractVerificationToken(html string) string {
 		return ""
 	}
 	return m[1]
+}
+
+// extractHiddenInputs scrapes every non-submit <input> tag that has
+// both name= and value= attributes, returning them as url.Values
+// (ready to be Encode()'d for an x-www-form-urlencoded POST body).
+//
+// Mirrors pungin's extract_hidden_inputs (core/parser/form.rs:52-57).
+// Pungin preserves document order via Vec<(String,String)>; Go's
+// url.Values sorts alphabetically on Encode(). The server doesn't
+// care about field order (per pungin's own comment on the Rust side),
+// so we accept the divergence for the simpler API.
+func extractHiddenInputs(html string) url.Values {
+	out := url.Values{}
+	for _, tag := range inputTagRE().FindAllString(html, -1) {
+		if submitTypeRE().MatchString(tag) {
+			continue
+		}
+		nameM := nameAttrRE().FindStringSubmatch(tag)
+		valM := valueAttrRE().FindStringSubmatch(tag)
+		if len(nameM) < 2 || len(valM) < 2 {
+			continue
+		}
+		out.Add(nameM[1], valM[1])
+	}
+	return out
 }
 
 // normalizeDeeplink unwraps the play.games.gamania.com deeplink wrapper,

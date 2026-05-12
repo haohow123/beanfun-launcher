@@ -48,13 +48,3 @@ func (c *BeanfunClient) getSessionKey(ctx context.Context) (string, error) {
 	}
 	return key, nil
 }
-
-// truncate returns up to n bytes of s with a "…" marker if it was
-// shortened. Used for body previews in diagnostic logs — small enough
-// to fit on one terminal line, big enough to identify the page.
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "…"
-}

@@ -44,14 +44,16 @@ func DefaultEndpoints() Endpoints {
 	}
 }
 
-// BeanfunClient wraps an http.Client + cookie jar for a single Beanfun
-// login session. A new instance starts a fresh jar — no leftover
-// cookies from a prior login.
+// BeanfunClient wraps an http.Client (and a no-redirect twin) plus a
+// shared cookie jar for a single Beanfun login session. A new
+// instance starts a fresh jar — no leftover cookies from a prior
+// login. Pungin's pattern: two clients, one jar (client.rs:228-271).
 type BeanfunClient struct {
-	endpoints Endpoints
-	http      *http.Client
-	jar       *cookiejar.Jar
-	userAgent string
+	endpoints      Endpoints
+	http           *http.Client // default — follows redirects
+	httpNoRedirect *http.Client // surfaces 302 as-is (for finalize step 3)
+	jar            *cookiejar.Jar
+	userAgent      string
 }
 
 // NewBeanfunClient builds a client pointed at production TW endpoints.
@@ -71,6 +73,13 @@ func NewBeanfunClientWithEndpoints(endpoints Endpoints) (*BeanfunClient, error) 
 		http: &http.Client{
 			Timeout: defaultTimeout,
 			Jar:     jar,
+		},
+		httpNoRedirect: &http.Client{
+			Timeout: defaultTimeout,
+			Jar:     jar, // SHARED — both clients see the same cookies
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
 		},
 		jar:       jar,
 		userAgent: defaultUserAgent,
