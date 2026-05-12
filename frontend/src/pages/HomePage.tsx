@@ -1,3 +1,4 @@
+import { AppShell } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -13,7 +14,7 @@ interface HomePageProps {
 
 export function HomePage({ onLogout }: HomePageProps) {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background p-6">
+    <AppShell>
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle>已登入 (mock)</CardTitle>
@@ -27,6 +28,6 @@ export function HomePage({ onLogout }: HomePageProps) {
           </Button>
         </CardContent>
       </Card>
-    </div>
+    </AppShell>
   );
 }

@@ -128,3 +128,16 @@
     @apply font-sans;
     }
 }
+
+/* macOS frameless-window draggable region — see AppShell.tsx and the
+   `InvisibleTitleBarHeight: 50` in main.go. The no-drag carve-out keeps
+   any interactive child (buttons, links, opt-in via [data-no-drag])
+   clickable instead of being swallowed by the drag handler. */
+.app-titlebar {
+  -webkit-app-region: drag;
+}
+.app-titlebar button,
+.app-titlebar a,
+.app-titlebar [data-no-drag] {
+  -webkit-app-region: no-drag;
+}
