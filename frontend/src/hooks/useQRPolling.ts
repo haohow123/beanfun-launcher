@@ -1,6 +1,8 @@
+import { useSetAtom } from "jotai";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { LoginService, QRStatus, type QRStart } from "@bindings/beanfun";
+import { loggedInAtom } from "@/state/auth";
 
 const POLL_INTERVAL_MS = 2000;
 
@@ -12,33 +14,21 @@ export type QRPollingState =
   | { kind: "approved" }
   | { kind: "error"; message: string };
 
-export interface UseQRPollingOptions {
-  /**
-   * Called once when the poll loop transitions to `approved`. Lets the
-   * caller swap pages / kick off post-login work without subscribing
-   * to state changes via useEffect — the React docs flag that as
-   * an anti-pattern for "notify parent about state changes".
-   */
-  onApproved?: () => void;
-}
-
 /**
- * useQRPolling drives the QR-login state machine that pungin/Beanfun
- * observed: start → poll every 2s → flip to approved / expired / error.
+ * useQRPolling drives the QR-login state machine: start → poll every 2s
+ * → flip to approved / expired / error. See docs/beanfun-login-protocol.md
+ * for the wire spec.
  *
- * It is intentionally backend-agnostic — Day 2 backed onto a mocked Go
- * service; later milestones replace the bindings' implementation with
- * real HTTP without changing this hook.
+ * The hook owns the "approved → loggedInAtom = true" transition because
+ * that is the only valid completion of a QR-login flow — pages that use
+ * it never need to handle approval themselves.
  */
-export function useQRPolling({ onApproved }: UseQRPollingOptions = {}) {
+export function useQRPolling() {
+  const setLoggedIn = useSetAtom(loggedInAtom);
   const [state, setState] = useState<QRPollingState>({ kind: "idle" });
   // cancelled is a ref so the recursive poll closure sees the latest
   // value (a state-based flag would be stale-captured between renders).
   const cancelled = useRef(false);
-  // Stable ref to the latest onApproved so start()'s closure can fire
-  // the most recent callback without re-creating itself on every render.
-  const onApprovedRef = useRef(onApproved);
-  onApprovedRef.current = onApproved;
 
   const start = useCallback(async () => {
     cancelled.current = false;
@@ -62,7 +52,7 @@ export function useQRPolling({ onApproved }: UseQRPollingOptions = {}) {
         switch (status) {
           case QRStatus.QRStatusApproved:
             setState({ kind: "approved" });
-            onApprovedRef.current?.();
+            setLoggedIn(true);
             return;
           case QRStatus.QRStatusExpired:
             setState({ kind: "expired" });
@@ -77,7 +67,7 @@ export function useQRPolling({ onApproved }: UseQRPollingOptions = {}) {
       }
     };
     window.setTimeout(tick, POLL_INTERVAL_MS);
-  }, []);
+  }, [setLoggedIn]);
 
   useEffect(() => {
     return () => {
