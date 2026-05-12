@@ -10,8 +10,39 @@ permissions:
   contents: read
 
 jobs:
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+
+      - name: typecheck
+        run: npm run typecheck
+
+      - name: build
+        run: npm run build
+
+      - name: Upload dist for go:embed
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+          retention-days: 1
+
   go-lint:
     name: Go lint
+    needs: frontend
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -37,6 +68,12 @@ jobs:
             libwebkit2gtk-4.1-dev \
             pkg-config
 
+      - name: Download frontend dist
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+
       - name: go vet
         run: go vet $(go list ./... | grep -v '/build/')
 
@@ -47,6 +84,7 @@ jobs:
 
   go-test:
     name: Go test
+    needs: frontend
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -63,6 +101,12 @@ jobs:
             libwebkit2gtk-4.1-dev \
             pkg-config
 
+      - name: Download frontend dist
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+
       - name: go mod tidy check
         run: |
           go mod tidy
@@ -73,26 +117,3 @@ jobs:
 
       - name: go test
         run: go test -race $(go list ./... | grep -v '/build/')
-
-  frontend:
-    name: Frontend
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      - run: npm ci
-
-      - name: typecheck
-        run: npm run typecheck
-
-      - name: build
-        run: npm run build
