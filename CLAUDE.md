@@ -55,6 +55,16 @@ Use `task` (go-task) as the canonical entry point — it wraps `wails3` with thi
 - All Go code passes `gofmt` and `golangci-lint run`
 - Tests are table-driven; use `httptest` for HTTP, mocks for keyring
 
+## Git workflow
+
+When making changes, Claude Code should:
+
+1. Make working-tree changes.
+2. Stage relevant files (`git add <paths>`).
+3. Run `git status` and `git diff --cached`, show me the diff.
+4. Propose commit message(s), splitting into atomic commits when logically separate.
+5. Wait for explicit "ok commit" / "ok push" before executing.
+
 ## Subagents
 
 Three custom subagents live in `.claude/agents/`:
