@@ -77,8 +77,10 @@ func fullFinalizeMux(t *testing.T, hooks *finalizeMuxHooks) *http.ServeMux {
 			if hooks.step3SetCookie {
 				http.SetCookie(w, &http.Cookie{Name: "bfWebToken", Value: "step3-token", Path: "/"})
 			}
-			// no-redirect client expects a 302 (or any 2xx/3xx)
-			w.WriteHeader(http.StatusFound)
+			// 200 is accepted by our finalize code (it accepts 2xx-3xx).
+			// Using 200 instead of 302 avoids a CI flake we observed
+			// with bare WriteHeader(302) responses (no Location set).
+			w.WriteHeader(http.StatusOK)
 			return
 		}
 		hooks.step4Recorder = r.Clone(r.Context())
@@ -291,7 +293,7 @@ func TestFinalizeQRLogin_Step2AcceptIsQRSpecific(t *testing.T) {
 	mux.HandleFunc("/beanfun_block/bflogin/return.aspx", func(w http.ResponseWriter, _ *http.Request) {
 		calls++
 		if calls == 1 {
-			w.WriteHeader(http.StatusFound)
+			w.WriteHeader(http.StatusOK)
 			return
 		}
 		http.SetCookie(w, &http.Cookie{Name: "bfWebToken", Value: "T", Path: "/"})

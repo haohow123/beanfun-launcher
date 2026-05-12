@@ -51,7 +51,7 @@ func serviceTestMux(pollResult string, setStep4Cookie bool) *http.ServeMux {
 	mux.HandleFunc("/beanfun_block/bflogin/return.aspx", func(w http.ResponseWriter, _ *http.Request) {
 		returnCalls++
 		if returnCalls == 1 {
-			w.WriteHeader(http.StatusFound)
+			w.WriteHeader(http.StatusOK)
 			return
 		}
 		if setStep4Cookie {
