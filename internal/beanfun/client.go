@@ -92,7 +92,7 @@ func (c *BeanfunClient) newRequest(ctx context.Context, method string, u *url.UR
 // boundedRead reads at most maxResponseBodyBytes from resp.Body, then
 // closes the body. Returns ErrBodyTooLarge if the limit was hit.
 func (c *BeanfunClient) boundedRead(resp *http.Response) ([]byte, error) {
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	lr := io.LimitReader(resp.Body, maxResponseBodyBytes+1)
 	body, err := io.ReadAll(lr)
 	if err != nil {
