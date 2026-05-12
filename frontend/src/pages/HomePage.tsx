@@ -1,3 +1,5 @@
+import { useSetAtom } from "jotai";
+
 import { AppShell } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/button";
 import {
@@ -7,12 +9,10 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { loggedInAtom } from "@/state/auth";
 
-interface HomePageProps {
-  onLogout: () => void;
-}
-
-export function HomePage({ onLogout }: HomePageProps) {
+export function HomePage() {
+  const setLoggedIn = useSetAtom(loggedInAtom);
   return (
     <AppShell>
       <Card className="w-full max-w-md">
@@ -23,7 +23,7 @@ export function HomePage({ onLogout }: HomePageProps) {
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col items-center gap-3">
-          <Button variant="outline" onClick={onLogout}>
+          <Button variant="outline" onClick={() => setLoggedIn(false)}>
             登出
           </Button>
         </CardContent>

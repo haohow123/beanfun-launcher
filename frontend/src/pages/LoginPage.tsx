@@ -1,3 +1,5 @@
+import { useSetAtom } from "jotai";
+
 import { AppShell } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/button";
 import {
@@ -8,15 +10,16 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { useQRPolling } from "@/hooks/useQRPolling";
+import { loggedInAtom } from "@/state/auth";
 
-interface LoginPageProps {
-  onApproved: () => void;
-}
-
-export function LoginPage({ onApproved }: LoginPageProps) {
-  // The hook fires onApproved directly on transition — no useEffect
-  // needed to translate state changes into parent callbacks.
-  const { state, start } = useQRPolling({ onApproved });
+export function LoginPage() {
+  const setLoggedIn = useSetAtom(loggedInAtom);
+  // Hook fires onApproved directly on the state transition; we wire
+  // it to the auth atom here so neither App.tsx nor the hook needs to
+  // know about the other.
+  const { state, start } = useQRPolling({
+    onApproved: () => setLoggedIn(true),
+  });
 
   return (
     <AppShell>
