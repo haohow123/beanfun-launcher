@@ -1,4 +1,4 @@
-module changeme
+module github.com/haohow123/beanfun-launcher
 
 go 1.25
 
