@@ -1,0 +1,6 @@
+# Mark NSIS installer scaffolding as third-party so GitHub Linguist
+# doesn't count it as our project's primary language. These files come
+# from the Wails v3 template and are only touched when packaging the
+# Windows installer (`task windows:package`).
+build/windows/nsis/wails_tools.nsh linguist-generated
+build/windows/nsis/project.nsi linguist-vendored
