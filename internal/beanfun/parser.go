@@ -1,8 +1,10 @@
 package beanfun
 
 import (
+	"html"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -39,6 +41,14 @@ var (
 	})
 	submitTypeRE = sync.OnceValue(func() *regexp.Regexp {
 		return regexp.MustCompile(`(?i)type\s*=\s*["']submit["']`)
+	})
+
+	// Each row in game_server_account_list.aspx looks like
+	//   <a onclick="onAccountClick(...)"><div id="abc" sn="000111" name="Char">…
+	// An empty onclick handler means the row is server-disabled (e.g.
+	// a frozen account) — we keep it with Enabled=false.
+	accountRowRE = sync.OnceValue(func() *regexp.Regexp {
+		return regexp.MustCompile(`<a\s+onclick="([^"]*)"><div\s+id="(\w+)"\s+sn="(\d+)"\s+name="([^"]+)"`)
 	})
 )
 
@@ -83,6 +93,29 @@ func extractHiddenInputs(html string) url.Values {
 		}
 		out.Add(nameM[1], valM[1])
 	}
+	return out
+}
+
+// extractAccounts scrapes account rows from
+// game_server_account_list.aspx HTML. Names are HTML-entity decoded
+// (Chinese display names can land as numeric entities); the result is
+// sorted ascending by SSN — fixed-width digit strings, so lexicographic
+// order matches numeric order.
+func extractAccounts(htmlBody string) []Account {
+	matches := accountRowRE().FindAllStringSubmatch(htmlBody, -1)
+	out := make([]Account, 0, len(matches))
+	for _, m := range matches {
+		// m[1] = onclick, m[2] = id, m[3] = sn, m[4] = name
+		out = append(out, Account{
+			SID:     m[2],
+			SSN:     m[3],
+			SName:   html.UnescapeString(m[4]),
+			Enabled: m[1] != "",
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].SSN < out[j].SSN
+	})
 	return out
 }
 

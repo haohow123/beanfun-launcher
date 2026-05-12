@@ -17,6 +17,7 @@ const (
 	KindServerMessage
 	KindSendLoginNoFormData
 	KindMissingWebToken
+	KindLoginRequired
 )
 
 // LoginError is the typed error returned by every Beanfun login step.
@@ -75,6 +76,13 @@ func ErrSendLoginNoFormData() *LoginError {
 // settles. Fatal — login cannot complete without it.
 func ErrMissingWebToken() *LoginError {
 	return &LoginError{Kind: KindMissingWebToken, Msg: "bfWebToken cookie missing after finalize"}
+}
+
+// ErrLoginRequired is returned by post-login methods (e.g. GetAccounts)
+// when no session is active. The frontend's expected response is to
+// route back to the login page.
+func ErrLoginRequired() *LoginError {
+	return &LoginError{Kind: KindLoginRequired, Msg: "login required: no active session"}
 }
 
 // truncate returns up to n bytes of s with a "…" marker if it was

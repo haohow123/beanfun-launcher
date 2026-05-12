@@ -29,6 +29,18 @@ export function CheckQRLogin() {
 }
 
 /**
+ * GetAccounts returns the list of game accounts under the active
+ * session. Requires StartQRLogin → CheckQRLogin to have completed
+ * successfully (session != nil). See docs/beanfun-login-protocol.md § 8.
+ * @returns {$CancellablePromise<$models.Account[]>}
+ */
+export function GetAccounts() {
+    return $Call.ByID(3665416331).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType1($result);
+    }));
+}
+
+/**
  * StartQRLogin runs the init flow (getSessionKey → initQRLogin) and
  * returns the QR + deeplink for the frontend to render. A fresh
  * BeanfunClient (clean cookie jar) is minted on every call.
@@ -36,9 +48,11 @@ export function CheckQRLogin() {
  */
 export function StartQRLogin() {
     return $Call.ByID(3663858381).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType0($result);
+        return $$createType2($result);
     }));
 }
 
 // Private type creation functions
-const $$createType0 = $models.QRStart.createFrom;
+const $$createType0 = $models.Account.createFrom;
+const $$createType1 = $Create.Array($$createType0);
+const $$createType2 = $models.QRStart.createFrom;

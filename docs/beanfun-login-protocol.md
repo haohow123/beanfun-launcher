@@ -246,6 +246,76 @@ rather than the immediate 302, and only the jar sees all of them.
 
 Missing `bfWebToken` from the jar → `KindMissingWebToken` (fatal).
 
+## Step 8 — Post-login: `GetAccounts`
+
+Once login completes the `bfWebToken` cookie is the bearer for every
+subsequent portal call. The first one we need is the user's list of
+game accounts under their Beanfun ID — rendered on the post-login
+home screen.
+
+Two sequential GETs:
+
+### Call 1 — `auth.aspx` (cookie refresh)
+
+```
+GET https://tw.beanfun.com/beanfun_block/auth.aspx
+  ?channel=game_zone
+  &page_and_query=game_start.aspx?service_code_and_region={ServiceCode}_{ServiceRegion}
+  &web_token={bfWebToken}
+```
+
+The inner `game_start.aspx?...` value gets URL-encoded by `net/url`
+when the query is serialised — that's correct, the server expects the
+percent-encoded form.
+
+Response body is discarded. Non-2xx is fatal (`KindHTTP`). The call's
+side effect on the server is to rebind `bfWebToken` to a game-zone
+session — without it the next call may 302 to a login interstitial.
+
+### Call 2 — `game_server_account_list.aspx`
+
+```
+GET https://tw.beanfun.com/beanfun_block/game_zone/game_server_account_list.aspx
+  ?sc={ServiceCode}
+  &sr={ServiceRegion}
+  &dt={time.Now().UTC().Format("20060102150405")}
+```
+
+`dt` is a 14-character UTC timestamp — purely a cache-buster. Server
+doesn't validate the value, but the parameter is required.
+
+Response is HTML. Each account row matches:
+
+```
+<a onclick="(handler)"><div id="(sid)" sn="(ssn)" name="(sname)">
+```
+
+Implemented as `accountRowRE` in `internal/beanfun/parser.go`. Rules:
+
+- **`onclick` empty** → row is server-disabled (frozen / suspended);
+  keep it in the result with `Enabled=false` so the UI can render
+  greyed-out instead of dropping silently.
+- **`sname`** is HTML-entity decoded (`html.UnescapeString`). Real
+  responses use named entities (`&amp;`, `&lt;`) for special chars in
+  display names, and numeric entities (`&#23567;`) for Chinese.
+- Result slice is sorted ascending by `ssn`. Since `ssn` is a
+  fixed-width digit string, lexicographic order equals numeric order.
+
+Empty list is a valid response: user has zero game accounts under this
+service code. Frontend surfaces it as an empty state, not an error.
+
+### Deferred
+
+Pungin also issues a per-row `game_start_step2.aspx` GET to fetch
+`screatetime` (account creation timestamp) for each account. It is
+concurrent, has a 5s per-row timeout, and tolerates partial failure.
+We skip it for now — the timestamp is cosmetic UI ("created on
+2018-05-13") and adds real complexity for marginal value. Revisit if
+the UX needs it.
+
+Pungin's `AmountLimitNotice` (quota / re-auth banner) is also deferred —
+low-frequency edge case.
+
 ## Cookie + client design
 
 `BeanfunClient` holds one redirect-following `http.Client` plus a
@@ -316,7 +386,10 @@ consult the corresponding files:
 | return.aspx no-redirect POST | `src/services/beanfun/login/return_aspx.rs` |
 | return.aspx AuthKey=OK + jar read | `src/services/beanfun/login/completed.rs` |
 | Session struct + Debug redaction | `src/services/beanfun/session.rs` |
-| Test golden fixtures | `tests/{session_key,qr_init,qr_poll,qr_finalize}.rs` |
+| GetAccounts orchestration | `src/commands/account.rs` (lines 243–272 for the Tauri command, 608–660 for the auth.aspx refresh, 667–685 for the list fetch) |
+| Account-row regex | `src/core/parser/account.rs:69-91` |
+| `screatetime` per-row fetch (we defer) | `src/commands/account.rs:695-721` |
+| Test golden fixtures | `tests/{session_key,qr_init,qr_poll,qr_finalize,account}.rs` |
 
 Our test suite mirrors the cases in those files where they apply to
 our scope (TW only; QR-only).
