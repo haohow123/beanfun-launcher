@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 
+import { AppShell } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -30,7 +31,7 @@ export function LoginPage({ onApproved }: LoginPageProps) {
   }, [state, onApproved]);
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background p-6">
+    <AppShell>
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle>登入 Beanfun</CardTitle>
@@ -75,6 +76,6 @@ export function LoginPage({ onApproved }: LoginPageProps) {
           )}
         </CardContent>
       </Card>
-    </div>
+    </AppShell>
   );
 }
