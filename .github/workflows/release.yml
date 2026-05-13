@@ -70,6 +70,10 @@ jobs:
 
       - name: Build Windows .exe + NSIS installer
         run: task windows:package
+        env:
+          # Plumbed into ldflags as `-X main.version=$VERSION` so the
+          # runtime log filename can carry the tag.
+          VERSION: ${{ steps.ver.outputs.tag }}
 
       - name: Locate artifacts
         id: art

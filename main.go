@@ -2,6 +2,7 @@ package main
 
 import (
 	"embed"
+	"fmt"
 	"io"
 	"log"
 	"log/slog"
@@ -15,6 +16,12 @@ import (
 
 //go:embed all:frontend/dist
 var assets embed.FS
+
+// version is the release tag this binary was built from. The release
+// workflow injects the value via `-ldflags="-X main.version=$tag"`;
+// dev builds keep the default. Used to namespace the log file so
+// upgrading to a new alpha leaves the previous run's log intact.
+var version = "dev"
 
 func main() {
 	logFile := setupLogging()
@@ -63,11 +70,11 @@ func main() {
 // handle so main() can defer-close it; nil on any error (we
 // gracefully fall back to stderr-only logging).
 //
-// Paths:
+// Paths (one file per release tag — append within version):
 //
-//	Windows: %LOCALAPPDATA%\beanfun-launcher\launcher.log
-//	macOS:   ~/Library/Caches/beanfun-launcher/launcher.log
-//	Linux:   ~/.cache/beanfun-launcher/launcher.log
+//	Windows: %LOCALAPPDATA%\beanfun-launcher\launcher-<version>.log
+//	macOS:   ~/Library/Caches/beanfun-launcher/launcher-<version>.log
+//	Linux:   ~/.cache/beanfun-launcher/launcher-<version>.log
 //
 // Tokens (SKey, WebToken, OTP) are already redacted at their
 // log-emission sites — see beanfun.Session.String() and the OTP
@@ -83,7 +90,11 @@ func setupLogging() *os.File {
 		slog.Error("MkdirAll failed; logging to stderr only", "dir", dir, "err", err)
 		return nil
 	}
-	path := filepath.Join(dir, "launcher.log")
+	// One file per release tag (e.g. launcher-v0.1.0-alpha.13.log).
+	// Same-version sessions append to the same file; a new alpha
+	// build writes to its own file. Keeps logs separated by build
+	// so the user doesn't have to hand-prune between version tests.
+	path := filepath.Join(dir, fmt.Sprintf("launcher-%s.log", version))
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		slog.Error("OpenFile failed; logging to stderr only", "path", path, "err", err)
