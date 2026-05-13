@@ -11,10 +11,10 @@ import (
 )
 
 // pppppLiteral is a 64-char uppercase hex constant the Beanfun OTP
-// endpoint validates as a protocol literal. The provenance is unknown
-// (WPF / pungin / our Rust reference all use it verbatim) — do not
-// modify without empirical verification against the production
-// server.
+// endpoint validates as a protocol literal. Provenance unknown; the
+// server treats it as opaque required input — do not modify without
+// empirical verification against the production server. See
+// docs/beanfun-login-protocol.md § 9.
 const pppppLiteral = "1F552AEAFF976018F942B13690C990F60ED01510DDF89165F1658CCE7BC21DBA"
 
 // OTPResult is the decrypted one-time game-launch credential. Token

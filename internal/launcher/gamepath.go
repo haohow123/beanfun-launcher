@@ -19,13 +19,13 @@ var readGameExeFromRegistryFn = readGameExeFromRegistry
 // resolveGameExe finds the game.exe path via:
 //
 //  1. `BEANFUN_GAME_EXE` env var — explicit override; wins outright.
-//  2. Windows registry at `HKCU\SOFTWARE\Gamania\MapleStory\ExecPath`
-//     — written by Beanfun's installer when MapleStory TW is installed.
+//  2. Windows registry at the canonical install-info key written by
+//     Beanfun's installer (see gamepath_windows.go for the exact
+//     hive / subkey / value).
 //  3. ErrGameExeMissing — nothing usable found.
 //
-// Pungin's reference launcher reads the same HKCU key and treats it
-// as the canonical source; we mirror that and use the env var only
-// as an escape hatch for dev / unusual installs.
+// The registry value is the canonical source; the env var is an
+// escape hatch for dev / unusual installs / overrides.
 //
 // On non-Windows builds step 2 always misses (registry doesn't
 // exist), so the env var is the only working path.

@@ -77,9 +77,9 @@ func (s *LauncherService) Launch(account beanfun.Account) error {
 }
 
 // GetOTP runs the OTP fetch flow and returns the plaintext token for
-// display + clipboard copy on the frontend. This is the "show
-// credentials so the user can paste into another launcher" path that
-// pungin's UI exposes alongside the direct-spawn button.
+// display + clipboard copy on the frontend. The "show credentials so
+// the user can paste into another launcher" path that runs alongside
+// the direct-spawn Launch method.
 //
 // Two callers:
 //   - macOS dev verification: the spawn path returns
@@ -90,8 +90,8 @@ func (s *LauncherService) Launch(account beanfun.Account) error {
 //
 // The returned string lives in the frontend's JS heap (we can't zero
 // it from Go). Per Beanfun's design the OTP is single-use and
-// rotates on each call — this is acceptable for the same reason
-// pungin's UI is acceptable.
+// rotates on each call — keeping it in memory between fetch and
+// paste is acceptable given that single-use lifecycle.
 func (s *LauncherService) GetOTP(account beanfun.Account) (string, error) {
 	s.mu.Lock()
 	client, session := s.login.Snapshot()

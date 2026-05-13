@@ -10,9 +10,7 @@ import (
 
 const (
 	// Verified against an actual Beanfun TW MapleStory install
-	// (haohow123's box, 2026-05-13). Pungin's reference suggested
-	// HKCU\SOFTWARE\Gamania\MapleStory with value "ExecPath", but
-	// the live registry on a current Beanfun install has:
+	// (2026-05-13). The live registry layout:
 	//
 	//   HKLM\SOFTWARE\Gamania\MAPLESTORY (key, uppercase tail)
 	//     Path  REG_SZ  D:\MapleStory
