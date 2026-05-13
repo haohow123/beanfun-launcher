@@ -8,26 +8,13 @@ import { Create as $Create } from "@wailsio/runtime";
 
 /**
  * LaunchResult signals the outcome reported back to the frontend.
- * Two booleans cover three distinct UX paths:
  * 
- *   - AutoFilled=true, Spawned=false
- *     The game was already running; we found its window and
- *     injected credentials. OTP empty (never exposed to frontend).
+ *   - AutoFilled=true → the game's login form received the
+ *     credentials. OTP empty (never exposed to frontend).
  * 
- *   - AutoFilled=false, Spawned=true
- *     The game wasn't running; we spawned it. We did NOT try to
- *     inject yet because the login form often isn't ready when our
- *     wait-for-window timeout fires (the first window observed is
- *     typically the patcher / loading screen, not the login form).
- *     User clicks 啟動遊戲 again once the login screen appears —
- *     that re-entry routes to the "existing window" path and the
- *     injection lands cleanly. OTP populated so the user can also
- *     manual-paste while the game loads if they prefer.
- * 
- *   - AutoFilled=false, Spawned=false
- *     The game was already running, we found its window, but
- *     PostMessageW rejected. Should be rare. OTP populated for
- *     manual paste.
+ *   - AutoFilled=false → either the window never showed up in time,
+ *     or PostMessageW rejected. OTP is populated so the frontend
+ *     can offer the user manual-paste.
  * 
  * Hard errors (no session, missing game exe, spawn failure, OTP
  * fetch failure) come back as a plain Go error and never produce a
@@ -45,13 +32,6 @@ export class LaunchResult {
              * @type {boolean}
              */
             this["autoFilled"] = false;
-        }
-        if (!("spawned" in $$source)) {
-            /**
-             * @member
-             * @type {boolean}
-             */
-            this["spawned"] = false;
         }
         if (/** @type {any} */(false)) {
             /**

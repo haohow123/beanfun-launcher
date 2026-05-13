@@ -28,33 +28,19 @@ func NewLauncherService(login *beanfun.LoginService) *LauncherService {
 }
 
 // LaunchResult signals the outcome reported back to the frontend.
-// Two booleans cover three distinct UX paths:
 //
-//   - AutoFilled=true, Spawned=false
-//     The game was already running; we found its window and
-//     injected credentials. OTP empty (never exposed to frontend).
+//   - AutoFilled=true → the game's login form received the
+//     credentials. OTP empty (never exposed to frontend).
 //
-//   - AutoFilled=false, Spawned=true
-//     The game wasn't running; we spawned it. We did NOT try to
-//     inject yet because the login form often isn't ready when our
-//     wait-for-window timeout fires (the first window observed is
-//     typically the patcher / loading screen, not the login form).
-//     User clicks 啟動遊戲 again once the login screen appears —
-//     that re-entry routes to the "existing window" path and the
-//     injection lands cleanly. OTP populated so the user can also
-//     manual-paste while the game loads if they prefer.
-//
-//   - AutoFilled=false, Spawned=false
-//     The game was already running, we found its window, but
-//     PostMessageW rejected. Should be rare. OTP populated for
-//     manual paste.
+//   - AutoFilled=false → either the window never showed up in time,
+//     or PostMessageW rejected. OTP is populated so the frontend
+//     can offer the user manual-paste.
 //
 // Hard errors (no session, missing game exe, spawn failure, OTP
 // fetch failure) come back as a plain Go error and never produce a
 // LaunchResult.
 type LaunchResult struct {
 	AutoFilled bool   `json:"autoFilled"`
-	Spawned    bool   `json:"spawned"`
 	OTP        string `json:"otp,omitempty"`
 }
 
@@ -96,36 +82,43 @@ func (s *LauncherService) Launch(account beanfun.Account) (LaunchResult, error) 
 	}
 	defer beanfun.Zero(otp.Token)
 
-	// Detect-first: if a MapleStory window is already open (user
-	// launched manually, or earlier Launch click left the game
-	// running), skip spawn and inject directly. This is the path
-	// that reliably auto-fills — the game's login form is up and
-	// accepting input.
-	if hwnd := findGameWindowFn(); hwnd != 0 {
-		slog.Info("Launch: existing window found, injecting", "sid", account.SID)
-		if ierr := injectFn(hwnd, []byte(account.SID), otp.Token); ierr != nil {
-			slog.Error("Launch: inject failed on existing window",
-				"err", ierr, "sid", account.SID)
-			return LaunchResult{AutoFilled: false, Spawned: false, OTP: string(otp.Token)}, nil
+	// Detect-first: if a MapleStory window is already open, skip
+	// spawn and inject directly.
+	hwnd := findGameWindowFn()
+	if hwnd != 0 {
+		slog.Info("Launch: existing window found, injecting directly",
+			"sid", account.SID)
+	} else {
+		// No existing window: spawn the game and wait for its
+		// window to come up.
+		if err := spawnFn(ctx, gameExe, nil); err != nil {
+			slog.Error("Launch: spawnFn failed", "err", err, "sid", account.SID)
+			return LaunchResult{}, err
 		}
-		slog.Info("Launch: credentials injected", "sid", account.SID)
-		return LaunchResult{AutoFilled: true}, nil
+		slog.Info("Launch: game spawned, waiting for window",
+			"sid", account.SID, "exe", gameExe, "timeout", gameWindowWaitTimeout)
+
+		h, werr := waitForGameWindowFn(ctx, gameWindowWaitTimeout)
+		if werr != nil {
+			slog.Warn("Launch: window not found within timeout, falling back to manual paste",
+				"err", werr, "sid", account.SID)
+			return LaunchResult{AutoFilled: false, OTP: string(otp.Token)}, nil
+		}
+		hwnd = h
+
+		// Settle delay: the window that appears first is often the
+		// patcher / load screen sharing the login window's class.
+		// Give it a moment for the actual login form to take focus.
+		time.Sleep(postWindowSettleDelay)
 	}
 
-	// No existing window: spawn the game and stop there. We don't
-	// attempt to inject because the first window that appears after
-	// spawn is typically the patcher / loading screen, not the
-	// login form — injecting too early sends keystrokes into the
-	// wrong control where they're silently dropped. The user
-	// re-clicks 啟動遊戲 once the login screen is visible; the
-	// detect-first path above then handles the inject.
-	if err := spawnFn(ctx, gameExe, nil); err != nil {
-		slog.Error("Launch: spawnFn failed", "err", err, "sid", account.SID)
-		return LaunchResult{}, err
+	if ierr := injectFn(hwnd, []byte(account.SID), otp.Token); ierr != nil {
+		slog.Error("Launch: inject failed, falling back to manual paste",
+			"err", ierr, "sid", account.SID)
+		return LaunchResult{AutoFilled: false, OTP: string(otp.Token)}, nil
 	}
-	slog.Info("Launch: game spawned (re-click after login screen to inject)",
-		"sid", account.SID, "exe", gameExe)
-	return LaunchResult{AutoFilled: false, Spawned: true, OTP: string(otp.Token)}, nil
+	slog.Info("Launch: credentials injected", "sid", account.SID)
+	return LaunchResult{AutoFilled: true}, nil
 }
 
 // GetOTP runs the OTP fetch flow and returns the plaintext token for
