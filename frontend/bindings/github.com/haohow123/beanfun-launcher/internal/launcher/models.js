@@ -12,13 +12,16 @@ import { Create as $Create } from "@wailsio/runtime";
  *   - AutoFilled=true → the game's login form received the
  *     credentials. OTP empty (never exposed to frontend).
  * 
- *   - AutoFilled=false → either the window never showed up in time,
- *     or PostMessageW rejected. OTP is populated so the frontend
+ *   - NoWindow=true → no game window is open. Frontend should
+ *     prompt the user to press 啟動遊戲 first. OTP is not fetched
+ *     in this path (saves a wasted single-use token).
+ * 
+ *   - AutoFilled=false (NoWindow=false) → window was found but
+ *     inject failed mid-sequence. OTP is populated so the frontend
  *     can offer the user manual-paste.
  * 
- * Hard errors (no session, missing game exe, spawn failure, OTP
- * fetch failure) come back as a plain Go error and never produce a
- * LaunchResult.
+ * Hard errors (no session, OTP fetch failure) come back as a plain
+ * Go error and never produce a LaunchResult.
  */
 export class LaunchResult {
     /**
@@ -32,6 +35,13 @@ export class LaunchResult {
              * @type {boolean}
              */
             this["autoFilled"] = false;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * @member
+             * @type {boolean | undefined}
+             */
+            this["noWindow"] = undefined;
         }
         if (/** @type {any} */(false)) {
             /**
