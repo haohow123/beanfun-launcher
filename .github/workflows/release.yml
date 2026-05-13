@@ -1,0 +1,83 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write   # gh release create needs this
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install wails3
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha.90
+
+      - name: Install task (go-task)
+        uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive version from tag
+        id: ver
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          ver="${tag#v}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "ver=$ver" >> "$GITHUB_OUTPUT"
+
+      - name: Inject version into build/config.yml + info.json
+        shell: bash
+        run: |
+          ver='${{ steps.ver.outputs.ver }}'
+          sed -i "s/^  version: .*/  version: \"$ver\"/" build/config.yml
+          sed -i "s/\"file_version\": .*/\"file_version\": \"$ver\",/" build/windows/info.json || true
+          echo "--- build/config.yml ---"
+          grep '^  version:' build/config.yml
+          echo "--- build/windows/info.json ---"
+          grep '"file_version"' build/windows/info.json || true
+
+      - name: Build Windows .exe + NSIS installer
+        run: task windows:package
+
+      - name: Locate artifacts
+        id: art
+        shell: bash
+        run: |
+          set -e
+          exe=$(ls bin/*.exe 2>/dev/null | grep -v -- '-installer' | head -1)
+          inst=$(ls bin/*-installer.exe 2>/dev/null | head -1)
+          if [ -z "$inst" ]; then
+            inst=$(ls build/windows/nsis/*-installer.exe 2>/dev/null | head -1)
+          fi
+          echo "exe=$exe"   >> "$GITHUB_OUTPUT"
+          echo "inst=$inst" >> "$GITHUB_OUTPUT"
+          echo "Found: $exe + $inst"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          gh release create '${{ steps.ver.outputs.tag }}' \
+            --title '${{ steps.ver.outputs.tag }}' \
+            --generate-notes \
+            --prerelease \
+            '${{ steps.art.outputs.exe }}' \
+            '${{ steps.art.outputs.inst }}'
