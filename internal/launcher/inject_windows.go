@@ -6,6 +6,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"runtime"
+	"syscall"
 	"time"
 	"unsafe"
 
@@ -22,9 +25,32 @@ func init() {
 var (
 	user32                  = windows.NewLazySystemDLL("user32.dll")
 	procFindWindowW         = user32.NewProc("FindWindowW")
+	procGetClassNameW       = user32.NewProc("GetClassNameW")
 	procSetForegroundWindow = user32.NewProc("SetForegroundWindow")
 	procPostMessageW        = user32.NewProc("PostMessageW")
+	procSetWinEventHook     = user32.NewProc("SetWinEventHook")
+	procUnhookWinEvent      = user32.NewProc("UnhookWinEvent")
+	procGetMessageW         = user32.NewProc("GetMessageW")
+	procPostThreadMessageW  = user32.NewProc("PostThreadMessageW")
 )
+
+const (
+	eventObjectCreate    = 0x8000
+	winEventOutOfContext = 0x0000
+	winEventSkipOwnProc  = 0x0002
+	objidWindow          = 0x00000000
+	wmQuit               = 0x0012
+)
+
+// win32Msg mirrors Win32's MSG struct for use with GetMessageW.
+type win32Msg struct {
+	HWnd    uintptr
+	Message uint32
+	WParam  uintptr
+	LParam  uintptr
+	Time    uint32
+	Pt      struct{ X, Y int32 }
+}
 
 const (
 	wmChar    = 0x0102 // WM_CHAR
@@ -68,29 +94,157 @@ func findGameWindow() uintptr {
 	return 0
 }
 
-// waitForGameWindow polls every 200ms (after an immediate probe)
-// until findGameWindow returns non-zero, ctx is cancelled, or the
-// deadline expires.
+// waitForGameWindow registers a system-wide WinEvent hook for
+// EVENT_OBJECT_CREATE and returns the first MapleStory window's
+// HWND, or an error on context cancel / timeout.
+//
+// Architecture (Win32 hooks fundamentally require thread-local
+// state + a message pump):
+//
+//  1. Run a goroutine locked to one OS thread (Win32 hooks are
+//     thread-bound; cross-thread hook delivery is not allowed).
+//  2. That thread calls SetWinEventHook with WINEVENT_OUTOFCONTEXT
+//     — the hook callback runs in our process, no DLL injection
+//     into the target.
+//  3. The thread runs a GetMessage / TranslateMessage /
+//     DispatchMessage pump. SetWinEventHook delivers its callbacks
+//     via this pump.
+//  4. The callback checks the new window's class name; matches
+//     publish to a `found` channel.
+//  5. The caller goroutine waits on `found` / ctx / timeout; on
+//     any exit it posts WM_QUIT to wake up the pump and the hook
+//     thread terminates cleanly (deferred UnhookWinEvent + pump
+//     return).
+//
+// Why event-based instead of polling: 200ms poll worked, but
+// SetWinEventHook fires within ~milliseconds of window creation —
+// no wasted FindWindowW calls, cleaner pattern, and the same
+// approach lets us later subscribe to "game window closed"
+// (EVENT_OBJECT_DESTROY) events if we want.
 func waitForGameWindow(ctx context.Context, timeout time.Duration) (uintptr, error) {
+	// Immediate probe — game may already be running.
 	if h := findGameWindow(); h != 0 {
 		return h, nil
 	}
-	deadline := time.Now().Add(timeout)
-	ticker := time.NewTicker(200 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return 0, ctx.Err()
-		case <-ticker.C:
-			if h := findGameWindow(); h != 0 {
-				return h, nil
-			}
-			if time.Now().After(deadline) {
-				return 0, errors.New("game window did not appear within timeout")
-			}
-		}
+
+	found := make(chan uintptr, 1)
+	threadIDCh := make(chan uint32, 1)
+	pumpDone := make(chan struct{})
+
+	go runHookPump(found, threadIDCh, pumpDone)
+
+	// Wait for the hook thread to publish its thread ID; we need it
+	// to PostThreadMessageW(WM_QUIT) on cleanup. The pump should be
+	// up within milliseconds of the goroutine starting.
+	var threadID uint32
+	select {
+	case threadID = <-threadIDCh:
+	case <-ctx.Done():
+		<-pumpDone
+		return 0, ctx.Err()
+	case <-time.After(2 * time.Second):
+		return 0, errors.New("hook thread failed to start")
 	}
+
+	defer func() {
+		_, _, _ = procPostThreadMessageW.Call(uintptr(threadID), wmQuit, 0, 0)
+		<-pumpDone
+	}()
+
+	select {
+	case h := <-found:
+		return h, nil
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	case <-time.After(timeout):
+		return 0, errors.New("game window did not appear within timeout")
+	}
+}
+
+// runHookPump owns the SetWinEventHook + message-pump lifecycle on
+// one locked OS thread.
+func runHookPump(found chan<- uintptr, threadIDOut chan<- uint32, pumpDone chan<- struct{}) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	defer close(pumpDone)
+
+	callback := syscall.NewCallback(func(
+		_ uintptr, // hWinEventHook
+		_ uint32, // event
+		hwnd uintptr,
+		idObject int32,
+		_ int32, // idChild
+		_ uint32, // idEventThread
+		_ uint32, // dwmsEventTime
+	) uintptr {
+		// EVENT_OBJECT_CREATE fires for windows AND for every child
+		// accessibility object inside them; idObject=OBJID_WINDOW (0)
+		// is the top-level window event we care about.
+		if hwnd == 0 || idObject != objidWindow {
+			return 0
+		}
+		if !classMatchesGame(hwnd) {
+			return 0
+		}
+		// Non-blocking — first match wins.
+		select {
+		case found <- hwnd:
+		default:
+		}
+		return 0
+	})
+
+	hook, _, _ := procSetWinEventHook.Call(
+		eventObjectCreate, // eventMin
+		eventObjectCreate, // eventMax
+		0,                 // hmodWinEventProc (NULL for out-of-context)
+		callback,
+		0, // idProcess (0 = all)
+		0, // idThread  (0 = all)
+		winEventOutOfContext|winEventSkipOwnProc,
+	)
+	if hook == 0 {
+		slog.Error("SetWinEventHook returned 0; falling back to find-only path")
+		threadIDOut <- windows.GetCurrentThreadId()
+		return
+	}
+	defer procUnhookWinEvent.Call(hook)
+
+	threadIDOut <- windows.GetCurrentThreadId()
+
+	var msg win32Msg
+	for {
+		ret, _, _ := procGetMessageW.Call(
+			uintptr(unsafe.Pointer(&msg)),
+			0, 0, 0,
+		)
+		// GetMessageW returns 0 on WM_QUIT; -1 (^uintptr(0)) on error.
+		if ret == 0 || ret == ^uintptr(0) {
+			return
+		}
+		// We never call TranslateMessage / DispatchMessage —
+		// SetWinEventHook callbacks are dispatched internally by
+		// the GetMessage call itself for hooks installed on this
+		// thread. Skipping the dispatch loop avoids accidentally
+		// invoking other window procs on a thread that owns no
+		// windows.
+	}
+}
+
+// classMatchesGame reads the window class name and compares it
+// against the known MapleStory classes.
+func classMatchesGame(hwnd uintptr) bool {
+	var buf [256]uint16
+	n, _, _ := procGetClassNameW.Call(
+		hwnd,
+		uintptr(unsafe.Pointer(&buf[0])),
+		uintptr(len(buf)),
+	)
+	if n == 0 {
+		return false
+	}
+	name := windows.UTF16ToString(buf[:n])
+	return name == classMapleStory || name == classMapleStoryTW
 }
 
 // injectCredentials types the account + OTP into the game's currently
