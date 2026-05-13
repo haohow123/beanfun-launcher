@@ -124,7 +124,16 @@ export function HomePage() {
           />
         </div>
 
-        <div className="mt-3 flex justify-end">
+        <div className="mt-3 flex justify-end gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!otpValue}
+            onClick={() => copyValue(`${acc.sid}:both`, `${acc.sid}\n${otpValue}`)}
+            title="把帳號+密碼一起複製,中間用換行隔開"
+          >
+            {copiedKey === `${acc.sid}:both` ? "✓ 已複製" : "複製帳密"}
+          </Button>
           <Button
             variant="outline"
             size="sm"
