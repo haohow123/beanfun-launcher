@@ -3,8 +3,6 @@
 package launcher
 
 import (
-	"context"
-	"errors"
 	"fmt"
 	"time"
 	"unsafe"
@@ -13,7 +11,7 @@ import (
 )
 
 func init() {
-	waitForGameWindowFn = waitForGameWindow
+	findGameWindowFn = findGameWindow
 	injectFn = injectCredentials
 }
 
@@ -46,8 +44,6 @@ const (
 	// 64 covers account-id-sized fields, 20 covers OTP-sized.
 	clearAccountKeyCount  = 64
 	clearPasswordKeyCount = 20
-
-	windowPollInterval = 200 * time.Millisecond
 )
 
 // findGameWindow tries the known MapleStory window classes and
@@ -67,31 +63,6 @@ func findGameWindow() uintptr {
 		}
 	}
 	return 0
-}
-
-// waitForGameWindow polls every 200ms (after an immediate probe) up
-// to timeout for findGameWindow() to return non-zero. Honours ctx
-// cancellation.
-func waitForGameWindow(ctx context.Context, timeout time.Duration) (uintptr, error) {
-	if h := findGameWindow(); h != 0 {
-		return h, nil
-	}
-	deadline := time.Now().Add(timeout)
-	ticker := time.NewTicker(windowPollInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return 0, ctx.Err()
-		case <-ticker.C:
-			if h := findGameWindow(); h != 0 {
-				return h, nil
-			}
-			if time.Now().After(deadline) {
-				return 0, errors.New("game window did not appear within timeout")
-			}
-		}
-	}
 }
 
 // injectCredentials types the account + OTP into the game's currently
