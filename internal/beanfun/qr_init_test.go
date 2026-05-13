@@ -4,42 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 )
-
-const sampleQRBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
-
-// happyIndexBody returns minimal HTML containing the verification
-// token hidden input.
-func happyIndexBody(token string) string {
-	return `<html><body><input name="__RequestVerificationToken" type="hidden" value="` + token + `" /></body></html>`
-}
-
-// happyInitBody returns the canonical successful InitLogin JSON.
-func happyInitBody(deeplink string) string {
-	b, _ := json.Marshal(map[string]any{
-		"Result": 0,
-		"ResultData": map[string]any{
-			"QRImage":  sampleQRBase64,
-			"DeepLink": deeplink,
-		},
-	})
-	return string(b)
-}
-
-func writeHTML(w http.ResponseWriter, body string) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = fmt.Fprint(w, body)
-}
-
-func writeJSON(w http.ResponseWriter, body string) {
-	w.Header().Set("Content-Type", "application/json")
-	_, _ = fmt.Fprint(w, body)
-}
 
 // initStubMux creates a mux with /Login/Index and /Login/InitLogin
 // handlers wired up. Either may be nil to fall through to 404.
@@ -54,26 +22,13 @@ func initStubMux(indexHandler, initLoginHandler http.HandlerFunc) *http.ServeMux
 	return mux
 }
 
-// newQRTestClient stands up an httptest server with the given mux and
-// returns a BeanfunClient pointed at it.
-func newQRTestClient(t *testing.T, mux *http.ServeMux) (*BeanfunClient, *httptest.Server) {
-	t.Helper()
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-	c, err := NewBeanfunClientWithEndpoints(stubEndpoints(t, srv))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return c, srv
-}
-
 func TestInitQRLogin_HappyPath(t *testing.T) {
 	t.Parallel()
 	mux := initStubMux(
 		func(w http.ResponseWriter, _ *http.Request) { writeHTML(w, happyIndexBody("TKN_A")) },
 		func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, happyInitBody("https://app.example/auth")) },
 	)
-	c, _ := newQRTestClient(t, mux)
+	c, _ := newTestClient(t, mux)
 
 	got, err := c.initQRLogin(context.Background(), "SKEY_X")
 	if err != nil {
@@ -99,7 +54,7 @@ func TestInitQRLogin_MissingVerificationTokenLenient(t *testing.T) {
 		func(w http.ResponseWriter, _ *http.Request) { writeHTML(w, `<html><body>no token here</body></html>`) },
 		func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, happyInitBody("")) },
 	)
-	c, _ := newQRTestClient(t, mux)
+	c, _ := newTestClient(t, mux)
 
 	got, err := c.initQRLogin(context.Background(), "SK")
 	if err != nil {
@@ -119,7 +74,7 @@ func TestInitQRLogin_DeeplinkUnwrap(t *testing.T) {
 		func(w http.ResponseWriter, _ *http.Request) { writeHTML(w, happyIndexBody("X")) },
 		func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, happyInitBody(wrapped)) },
 	)
-	c, _ := newQRTestClient(t, mux)
+	c, _ := newTestClient(t, mux)
 
 	got, err := c.initQRLogin(context.Background(), "SK")
 	if err != nil {
@@ -137,7 +92,7 @@ func TestInitQRLogin_DeeplinkPlainPassthrough(t *testing.T) {
 		func(w http.ResponseWriter, _ *http.Request) { writeHTML(w, happyIndexBody("X")) },
 		func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, happyInitBody(plain)) },
 	)
-	c, _ := newQRTestClient(t, mux)
+	c, _ := newTestClient(t, mux)
 
 	got, err := c.initQRLogin(context.Background(), "SK")
 	if err != nil {
@@ -158,7 +113,7 @@ func TestInitQRLogin_DeeplinkOmitted(t *testing.T) {
 		func(w http.ResponseWriter, _ *http.Request) { writeHTML(w, happyIndexBody("X")) },
 		func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, string(body)) },
 	)
-	c, _ := newQRTestClient(t, mux)
+	c, _ := newTestClient(t, mux)
 
 	got, err := c.initQRLogin(context.Background(), "SK")
 	if err != nil {
@@ -175,7 +130,7 @@ func TestInitQRLogin_DeeplinkEmptyString(t *testing.T) {
 		func(w http.ResponseWriter, _ *http.Request) { writeHTML(w, happyIndexBody("X")) },
 		func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, happyInitBody("")) },
 	)
-	c, _ := newQRTestClient(t, mux)
+	c, _ := newTestClient(t, mux)
 
 	got, err := c.initQRLogin(context.Background(), "SK")
 	if err != nil {
@@ -196,7 +151,7 @@ func TestInitQRLogin_ResultNonZero(t *testing.T) {
 		func(w http.ResponseWriter, _ *http.Request) { writeHTML(w, happyIndexBody("X")) },
 		func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, string(body)) },
 	)
-	c, _ := newQRTestClient(t, mux)
+	c, _ := newTestClient(t, mux)
 
 	_, err := c.initQRLogin(context.Background(), "SK")
 	var le *LoginError
@@ -214,7 +169,7 @@ func TestInitQRLogin_MissingResultField(t *testing.T) {
 		func(w http.ResponseWriter, _ *http.Request) { writeHTML(w, happyIndexBody("X")) },
 		func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, string(body)) },
 	)
-	c, _ := newQRTestClient(t, mux)
+	c, _ := newTestClient(t, mux)
 	_, err := c.initQRLogin(context.Background(), "SK")
 	var le *LoginError
 	if !errors.As(err, &le) || le.Kind != KindQRInitResult {
@@ -229,7 +184,7 @@ func TestInitQRLogin_MissingResultData(t *testing.T) {
 		func(w http.ResponseWriter, _ *http.Request) { writeHTML(w, happyIndexBody("X")) },
 		func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, string(body)) },
 	)
-	c, _ := newQRTestClient(t, mux)
+	c, _ := newTestClient(t, mux)
 	_, err := c.initQRLogin(context.Background(), "SK")
 	var le *LoginError
 	if !errors.As(err, &le) || le.Kind != KindQRInitResult {
@@ -247,7 +202,7 @@ func TestInitQRLogin_MissingQRImage(t *testing.T) {
 		func(w http.ResponseWriter, _ *http.Request) { writeHTML(w, happyIndexBody("X")) },
 		func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, string(body)) },
 	)
-	c, _ := newQRTestClient(t, mux)
+	c, _ := newTestClient(t, mux)
 	_, err := c.initQRLogin(context.Background(), "SK")
 	var le *LoginError
 	if !errors.As(err, &le) || le.Kind != KindQRInitResult {
@@ -265,7 +220,7 @@ func TestInitQRLogin_EmptyQRImage(t *testing.T) {
 		func(w http.ResponseWriter, _ *http.Request) { writeHTML(w, happyIndexBody("X")) },
 		func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, string(body)) },
 	)
-	c, _ := newQRTestClient(t, mux)
+	c, _ := newTestClient(t, mux)
 	_, err := c.initQRLogin(context.Background(), "SK")
 	var le *LoginError
 	if !errors.As(err, &le) || le.Kind != KindQRInitResult {
@@ -279,7 +234,7 @@ func TestInitQRLogin_InvalidJSON(t *testing.T) {
 		func(w http.ResponseWriter, _ *http.Request) { writeHTML(w, happyIndexBody("X")) },
 		func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, "not-json-{") },
 	)
-	c, _ := newQRTestClient(t, mux)
+	c, _ := newTestClient(t, mux)
 	_, err := c.initQRLogin(context.Background(), "SK")
 	var le *LoginError
 	if !errors.As(err, &le) || le.Kind != KindJSON {
@@ -299,7 +254,7 @@ func TestInitQRLogin_Step2RequestHeaders(t *testing.T) {
 			writeJSON(w, happyInitBody("https://x"))
 		},
 	)
-	c, srv := newQRTestClient(t, mux)
+	c, srv := newTestClient(t, mux)
 
 	if _, err := c.initQRLogin(context.Background(), "SK"); err != nil {
 		t.Fatal(err)

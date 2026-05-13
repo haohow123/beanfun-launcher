@@ -5,27 +5,10 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
 )
-
-// happySendLoginBody returns HTML with 5 hidden inputs that our
-// extractHiddenInputs scrapes, plus one submit button to verify the
-// skip-submit logic.
-func happySendLoginBody() string {
-	return `<html><body>
-<form action="https://tw.beanfun.com/beanfun_block/bflogin/return.aspx" method="post">
-  <input type="hidden" name="SessionKey" value="SKEY_INNER_123" />
-  <input type="hidden" name="AuthKey" value="AUTH_INNER_456" />
-  <input type="hidden" name="ServiceCode" value="" />
-  <input type="hidden" name="ServiceRegion" value="" />
-  <input type="hidden" name="ServiceAccountSN" value="0" />
-  <input type="submit" name="btn_submit" value="Submit" />
-</form>
-</body></html>`
-}
 
 // finalizeMuxHooks lets tests override behaviour per step.
 type finalizeMuxHooks struct {
@@ -98,21 +81,10 @@ func fullFinalizeMux(t *testing.T, hooks *finalizeMuxHooks) *http.ServeMux {
 	return mux
 }
 
-func newFinalizeTestClient(t *testing.T, mux *http.ServeMux) (*BeanfunClient, *httptest.Server) {
-	t.Helper()
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-	c, err := NewBeanfunClientWithEndpoints(stubEndpoints(t, srv))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return c, srv
-}
-
 func TestFinalizeQRLogin_HappyPath(t *testing.T) {
 	t.Parallel()
 	hooks := &finalizeMuxHooks{step4SetCookie: true, step4WebToken: "CANONICAL_TOKEN"}
-	c, _ := newFinalizeTestClient(t, fullFinalizeMux(t, hooks))
+	c, _ := newTestClient(t, fullFinalizeMux(t, hooks))
 
 	sess, err := c.finalizeQRLogin(context.Background(), &qrLoginInit{SKey: "OUTER_SK"})
 	if err != nil {
@@ -138,7 +110,7 @@ func TestFinalizeQRLogin_HappyPath(t *testing.T) {
 func TestFinalizeQRLogin_Step1HandshakeFailureSkipsRest(t *testing.T) {
 	t.Parallel()
 	hooks := &finalizeMuxHooks{step1Status: http.StatusInternalServerError, step4SetCookie: true}
-	c, _ := newFinalizeTestClient(t, fullFinalizeMux(t, hooks))
+	c, _ := newTestClient(t, fullFinalizeMux(t, hooks))
 
 	_, err := c.finalizeQRLogin(context.Background(), &qrLoginInit{SKey: "SK"})
 	var le *LoginError
@@ -154,7 +126,7 @@ func TestFinalizeQRLogin_Step1HandshakeFailureSkipsRest(t *testing.T) {
 func TestFinalizeQRLogin_SendLoginEmptyFormFails(t *testing.T) {
 	t.Parallel()
 	hooks := &finalizeMuxHooks{step2Body: `<html><body>no inputs here</body></html>`}
-	c, _ := newFinalizeTestClient(t, fullFinalizeMux(t, hooks))
+	c, _ := newTestClient(t, fullFinalizeMux(t, hooks))
 
 	_, err := c.finalizeQRLogin(context.Background(), &qrLoginInit{SKey: "SK"})
 	var le *LoginError
@@ -170,7 +142,7 @@ func TestFinalizeQRLogin_Step3MissingCookieTolerated(t *testing.T) {
 		step4SetCookie: true,  // step 4 sets it (canonical)
 		step4WebToken:  "step4-canonical",
 	}
-	c, _ := newFinalizeTestClient(t, fullFinalizeMux(t, hooks))
+	c, _ := newTestClient(t, fullFinalizeMux(t, hooks))
 
 	sess, err := c.finalizeQRLogin(context.Background(), &qrLoginInit{SKey: "SK"})
 	if err != nil {
@@ -184,7 +156,7 @@ func TestFinalizeQRLogin_Step3MissingCookieTolerated(t *testing.T) {
 func TestFinalizeQRLogin_Step4MissingCookieFatal(t *testing.T) {
 	t.Parallel()
 	hooks := &finalizeMuxHooks{step3SetCookie: false, step4SetCookie: false}
-	c, _ := newFinalizeTestClient(t, fullFinalizeMux(t, hooks))
+	c, _ := newTestClient(t, fullFinalizeMux(t, hooks))
 
 	_, err := c.finalizeQRLogin(context.Background(), &qrLoginInit{SKey: "SK"})
 	var le *LoginError
@@ -196,7 +168,7 @@ func TestFinalizeQRLogin_Step4MissingCookieFatal(t *testing.T) {
 func TestFinalizeQRLogin_Step2Step3HeadersAndOrdering(t *testing.T) {
 	t.Parallel()
 	hooks := &finalizeMuxHooks{step4SetCookie: true}
-	c, srv := newFinalizeTestClient(t, fullFinalizeMux(t, hooks))
+	c, srv := newTestClient(t, fullFinalizeMux(t, hooks))
 
 	_, err := c.finalizeQRLogin(context.Background(), &qrLoginInit{SKey: "OUTER_SK"})
 	if err != nil {
@@ -219,7 +191,7 @@ func TestFinalizeQRLogin_Step2Step3HeadersAndOrdering(t *testing.T) {
 func TestFinalizeQRLogin_Step4FormFields(t *testing.T) {
 	t.Parallel()
 	hooks := &finalizeMuxHooks{step4SetCookie: true}
-	c, _ := newFinalizeTestClient(t, fullFinalizeMux(t, hooks))
+	c, _ := newTestClient(t, fullFinalizeMux(t, hooks))
 
 	_, err := c.finalizeQRLogin(context.Background(), &qrLoginInit{SKey: "OUTER_SK"})
 	if err != nil {
@@ -253,7 +225,7 @@ func TestFinalizeQRLogin_Step4FormFields(t *testing.T) {
 func TestFinalizeQRLogin_Step3FormCarriesScrapedFields(t *testing.T) {
 	t.Parallel()
 	hooks := &finalizeMuxHooks{step4SetCookie: true}
-	c, _ := newFinalizeTestClient(t, fullFinalizeMux(t, hooks))
+	c, _ := newTestClient(t, fullFinalizeMux(t, hooks))
 
 	_, err := c.finalizeQRLogin(context.Background(), &qrLoginInit{SKey: "SK"})
 	if err != nil {
@@ -299,7 +271,7 @@ func TestFinalizeQRLogin_Step2AcceptIsQRSpecific(t *testing.T) {
 		http.SetCookie(w, &http.Cookie{Name: "bfWebToken", Value: "T", Path: "/"})
 		w.WriteHeader(http.StatusOK)
 	})
-	c, _ := newFinalizeTestClient(t, mux)
+	c, _ := newTestClient(t, mux)
 
 	if _, err := c.finalizeQRLogin(context.Background(), &qrLoginInit{SKey: "SK"}); err != nil {
 		t.Fatal(err)
