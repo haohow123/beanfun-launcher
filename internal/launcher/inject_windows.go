@@ -26,6 +26,7 @@ var (
 	user32                  = windows.NewLazySystemDLL("user32.dll")
 	procFindWindowW         = user32.NewProc("FindWindowW")
 	procGetClassNameW       = user32.NewProc("GetClassNameW")
+	procGetWindowTextW      = user32.NewProc("GetWindowTextW")
 	procSetForegroundWindow = user32.NewProc("SetForegroundWindow")
 	procPostMessageW        = user32.NewProc("PostMessageW")
 	procSetWinEventHook     = user32.NewProc("SetWinEventHook")
@@ -35,7 +36,22 @@ var (
 )
 
 const (
-	eventObjectCreate    = 0x8000
+	// WinEvent range we listen on. eventMin/eventMax span from
+	// EVENT_SYSTEM_FOREGROUND (0x0003) to EVENT_OBJECT_NAMECHANGE
+	// (0x800C) so we can diagnose which event corresponds to "login
+	// form input-ready" on this game build. The class filter inside
+	// the callback keeps the volume low.
+	//
+	// Other events that fall in the range and may show up in logs:
+	//   0x8001 EVENT_OBJECT_DESTROY
+	//   0x8002 EVENT_OBJECT_SHOW
+	//   0x8003 EVENT_OBJECT_HIDE
+	//   0x8005 EVENT_OBJECT_FOCUS
+	//   0x800A EVENT_OBJECT_STATECHANGE
+	eventSystemForeground = 0x0003
+	eventObjectCreate     = 0x8000
+	eventObjectNameChange = 0x800C
+
 	winEventOutOfContext = 0x0000
 	winEventSkipOwnProc  = 0x0002
 	objidWindow          = 0x00000000
@@ -170,20 +186,34 @@ func runHookPump(found chan<- uintptr, threadIDOut chan<- uint32, pumpDone chan<
 
 	callback := syscall.NewCallback(func(
 		_ uintptr, // hWinEventHook
-		_ uint32, // event
+		event uint32,
 		hwnd uintptr,
 		idObject int32,
 		_ int32, // idChild
 		_ uint32, // idEventThread
 		_ uint32, // dwmsEventTime
 	) uintptr {
-		// EVENT_OBJECT_CREATE fires for windows AND for every child
-		// accessibility object inside them; idObject=OBJID_WINDOW (0)
-		// is the top-level window event we care about.
+		// Every WinEvent in our range fires the callback. Most are
+		// for windows we don't care about; we filter on
+		// idObject=OBJID_WINDOW + class match before doing anything
+		// expensive.
 		if hwnd == 0 || idObject != objidWindow {
 			return 0
 		}
 		if !classMatchesGame(hwnd) {
+			return 0
+		}
+		// Diagnostic: log every MapleStory-class event so we can
+		// identify which event marks "login form is input-ready"
+		// (currently CREATE fires ~4s post-spawn but inject at that
+		// point misses — form not ready). Once we have the right
+		// event we can drop the post-detect settle delay.
+		slog.Info("WinEvent: MapleStory match",
+			"event", fmt.Sprintf("0x%04X", event),
+			"hwnd", fmt.Sprintf("0x%X", hwnd),
+			"title", windowTitle(hwnd),
+		)
+		if event != eventObjectCreate {
 			return 0
 		}
 		// Non-blocking — first match wins.
@@ -195,9 +225,9 @@ func runHookPump(found chan<- uintptr, threadIDOut chan<- uint32, pumpDone chan<
 	})
 
 	hook, _, _ := procSetWinEventHook.Call(
-		eventObjectCreate, // eventMin
-		eventObjectCreate, // eventMax
-		0,                 // hmodWinEventProc (NULL for out-of-context)
+		eventSystemForeground, // eventMin
+		eventObjectNameChange, // eventMax (range covers CREATE / SHOW / FOCUS / FOREGROUND / etc.)
+		0,                     // hmodWinEventProc (NULL for out-of-context)
 		callback,
 		0, // idProcess (0 = all)
 		0, // idThread  (0 = all)
@@ -245,6 +275,21 @@ func classMatchesGame(hwnd uintptr) bool {
 	}
 	name := windows.UTF16ToString(buf[:n])
 	return name == classMapleStory || name == classMapleStoryTW
+}
+
+// windowTitle returns the window's title via GetWindowTextW, or
+// the empty string if it has none / the call fails.
+func windowTitle(hwnd uintptr) string {
+	var buf [256]uint16
+	n, _, _ := procGetWindowTextW.Call(
+		hwnd,
+		uintptr(unsafe.Pointer(&buf[0])),
+		uintptr(len(buf)),
+	)
+	if n == 0 {
+		return ""
+	}
+	return windows.UTF16ToString(buf[:n])
 }
 
 // injectCredentials types the account + OTP into the game's currently
