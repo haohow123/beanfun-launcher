@@ -46,12 +46,17 @@ jobs:
         shell: bash
         run: |
           ver='${{ steps.ver.outputs.ver }}'
-          sed -i "s/^  version: .*/  version: \"$ver\"/" build/config.yml
-          sed -i "s/\"file_version\": .*/\"file_version\": \"$ver\",/" build/windows/info.json || true
+          # In-place value replacement only — never touch surrounding
+          # punctuation. The earlier `.*,/` style appended an illegal
+          # trailing comma to "file_version" (the last field of its
+          # object) and broke JSON parsing in `wails3 generate syso`.
+          sed -i "s/^  version: \"[^\"]*\"/  version: \"$ver\"/" build/config.yml
+          sed -i "s/\"file_version\": \"[^\"]*\"/\"file_version\": \"$ver\"/" build/windows/info.json
+          sed -i "s/\"ProductVersion\": \"[^\"]*\"/\"ProductVersion\": \"$ver\"/" build/windows/info.json
           echo "--- build/config.yml ---"
           grep '^  version:' build/config.yml
           echo "--- build/windows/info.json ---"
-          grep '"file_version"' build/windows/info.json || true
+          cat build/windows/info.json
 
       - name: Build Windows .exe + NSIS installer
         run: task windows:package
