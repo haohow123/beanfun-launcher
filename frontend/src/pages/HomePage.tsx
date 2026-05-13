@@ -19,6 +19,11 @@ import {
 } from "@/queries/launch";
 import { loggedInAtom } from "@/state/auth";
 
+interface FallbackOTP {
+  sid: string;
+  otp: string;
+}
+
 export function HomePage() {
   const setLoggedIn = useSetAtom(loggedInAtom);
   const qc = useQueryClient();
@@ -26,7 +31,7 @@ export function HomePage() {
   const launch = useLaunchGameMutation();
   const fetchOTP = useFetchOTPMutation();
   const [copiedSid, setCopiedSid] = useState<string | null>(null);
-  const [fallbackSid, setFallbackSid] = useState<string | null>(null);
+  const [fallbackOTP, setFallbackOTP] = useState<FallbackOTP | null>(null);
 
   function logout() {
     qc.clear();
@@ -37,32 +42,54 @@ export function HomePage() {
     accounts.refetch();
   }
 
-  async function copyValue(sid: string, value: string) {
-    if (!value) return;
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopiedSid(sid);
-      window.setTimeout(
-        () => setCopiedSid((s) => (s === sid ? null : s)),
-        1500,
-      );
-    } catch {
-      console.error("clipboard write failed");
-    }
+  function markCopied(sid: string) {
+    setCopiedSid(sid);
+    window.setTimeout(
+      () => setCopiedSid((s) => (s === sid ? null : s)),
+      1500,
+    );
   }
 
-  async function copyCredentials(acc: Account) {
-    const result = await fetchOTP.mutateAsync(acc);
-    await copyValue(acc.sid, `${acc.sid}\n${result}`);
+  // Why ClipboardItem + Promise<Blob> instead of plain
+  // `await fetchOTP.mutateAsync(...)` then `writeText(...)`:
+  // navigator.clipboard.writeText requires the document's "transient
+  // user activation" — set by a click event handler — to be still
+  // valid when the call is made. WebView2 / WKWebView treat the
+  // activation as consumed once you `await`, so a writeText after a
+  // 1-2s OTP fetch gets silently rejected. clipboard.write with a
+  // ClipboardItem whose blob is a pending Promise tells the browser
+  // "hold activation; resolve later" — which keeps the activation
+  // budget for the actual write.
+  function copyCredentials(acc: Account) {
+    const blobPromise = fetchOTP.mutateAsync(acc).then(
+      (otp) => new Blob([`${acc.sid}\n${otp}`], { type: "text/plain" }),
+    );
+    navigator.clipboard
+      .write([new ClipboardItem({ "text/plain": blobPromise })])
+      .then(() => markCopied(acc.sid))
+      .catch((e) => console.error("clipboard write failed:", e));
   }
 
-  async function startGame(acc: Account) {
-    setFallbackSid(null);
-    const result = await launch.mutateAsync(acc);
-    if (!result.autoFilled && result.otp) {
-      await copyValue(acc.sid, `${acc.sid}\n${result.otp}`);
-      setFallbackSid(acc.sid);
-    }
+  // startGame doesn't pre-emptively touch the clipboard. The
+  // fallback path (window injection didn't work) reveals the OTP
+  // inline; the user copies via an explicit click that fires
+  // inside its own user-activation window.
+  function startGame(acc: Account) {
+    setFallbackOTP(null);
+    launch.mutate(acc, {
+      onSuccess: (result) => {
+        if (!result.autoFilled && result.otp) {
+          setFallbackOTP({ sid: acc.sid, otp: result.otp });
+        }
+      },
+    });
+  }
+
+  function copyFallback(item: FallbackOTP) {
+    navigator.clipboard
+      .writeText(`${item.sid}\n${item.otp}`)
+      .then(() => markCopied(item.sid))
+      .catch((e) => console.error("clipboard write failed:", e));
   }
 
   function launchStatusFor(acc: Account): "idle" | "pending" | "error" | "success" | "fallback" {
@@ -70,7 +97,7 @@ export function HomePage() {
     if (launch.isPending) return "pending";
     if (launch.isError) return "error";
     if (launch.isSuccess) {
-      return fallbackSid === acc.sid ? "fallback" : "success";
+      return fallbackOTP?.sid === acc.sid ? "fallback" : "success";
     }
     return "idle";
   }
@@ -86,9 +113,8 @@ export function HomePage() {
   function renderAccountCard(acc: Account) {
     const launchStatus = launchStatusFor(acc);
     const copyStatus = copyStatusFor(acc);
-    const launchPending = launchStatus === "pending";
-    const copyPending = copyStatus === "pending";
-    const anyPending = launchPending || copyPending;
+    const anyPending = launchStatus === "pending" || copyStatus === "pending";
+    const fallback = fallbackOTP?.sid === acc.sid ? fallbackOTP : null;
 
     return (
       <li key={acc.sid} className="rounded-md border p-3">
@@ -102,7 +128,7 @@ export function HomePage() {
           )}
           {launchStatus === "fallback" && (
             <span className="text-xs text-foreground">
-              ✓ 已啟動,帳密已複製,請手動貼上
+              ✓ 已啟動,需手動帶入
             </span>
           )}
           {launchStatus === "error" && (
@@ -118,6 +144,21 @@ export function HomePage() {
         <code className="block break-all text-xs text-muted-foreground">
           {acc.sid}
         </code>
+
+        {fallback && (
+          <div className="mt-2 flex items-center gap-2 rounded-md bg-muted/50 px-2 py-1">
+            <code className="flex-1 select-all break-all font-mono text-sm">
+              {fallback.otp}
+            </code>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => copyFallback(fallback)}
+            >
+              {copiedSid === fallback.sid ? "✓" : "複製"}
+            </Button>
+          </div>
+        )}
 
         <div className="mt-3 flex justify-end gap-2">
           <Button
