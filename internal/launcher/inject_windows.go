@@ -18,6 +18,7 @@ import (
 func init() {
 	findGameWindowFn = findGameWindow
 	waitForGameWindowFn = waitForGameWindow
+	waitWindowVisibleFn = waitWindowVisible
 	injectFn = injectCredentials
 }
 
@@ -175,6 +176,42 @@ func waitForGameWindow(ctx context.Context, timeout time.Duration) (uintptr, err
 	case <-time.After(timeout):
 		return 0, errors.New("game window did not appear within timeout")
 	}
+}
+
+// waitWindowVisible polls IsWindowVisible(hwnd) every 250ms until it
+// returns true, ctx is cancelled, or the timeout fires.
+//
+// The MapleStoryClass(TW) HWND is created early (~4s post-spawn) but
+// stays invisible while the game's DirectX init runs. Diagnostic
+// data showed IsWindowVisible flipping true ~4-5s after CREATE,
+// coinciding with the login form becoming input-ready. That makes
+// this poll the cheap, reliable replacement for the previous 25s
+// blind settle.
+func waitWindowVisible(ctx context.Context, hwnd uintptr, timeout time.Duration) error {
+	if isWindowVisible(hwnd) {
+		return nil
+	}
+	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			if isWindowVisible(hwnd) {
+				return nil
+			}
+			if time.Now().After(deadline) {
+				return errors.New("window did not become visible within timeout")
+			}
+		}
+	}
+}
+
+func isWindowVisible(hwnd uintptr) bool {
+	ret, _, _ := procIsWindowVisible.Call(hwnd)
+	return ret != 0
 }
 
 // runHookPump owns the SetWinEventHook + message-pump lifecycle on

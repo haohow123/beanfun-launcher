@@ -20,30 +20,33 @@ var findGameWindowFn func() uintptr
 // screen time to transition into the actual login window.
 var waitForGameWindowFn func(ctx context.Context, timeout time.Duration) (uintptr, error)
 
+// waitWindowVisibleFn polls IsWindowVisible(hwnd) every 250ms
+// until it returns true, ctx is cancelled, or the timeout fires.
+//
+// MapleStory's main HWND is created early (~4s after spawn) but
+// stays invisible while DirectX initialises + the login form
+// renders. Diagnostic poll-log captured the transition cleanly:
+// IsWindowVisible flips false → true ~4-5s after CREATE, which
+// matches the moment the login form becomes input-ready. This
+// replaced the previous 25s blind settle.
+var waitWindowVisibleFn func(ctx context.Context, hwnd uintptr, timeout time.Duration) error
+
 // injectFn types the account + OTP into the game's login form via
 // PostMessage. Both byte slices are zeroed by the caller after Launch
 // returns; injectFn must consume them synchronously (no goroutines).
 var injectFn func(hwnd uintptr, account, otp []byte) error
 
-// postWindowSettleDelay is how long Launch waits after the window
-// first appears before sending keystrokes.
-//
-// MapleStory is a DirectX game: the login form is rendered inside
-// the DirectX swap chain, not as Win32 child controls. The HWND we
-// match on (MapleStoryClass / MapleStoryClassTW) is created early
-// — observed ~4s after spawn — but the game keeps the same HWND
-// through patcher → loading → login screen with no Win32-visible
-// state change. We verified this by listening for every WinEvent
-// in range 0x0003-0x800C on the match: only one CREATE fires, no
-// SHOW / FOREGROUND / FOCUS / NAMECHANGE / STATECHANGE follow.
-//
-// So we can't use a Win32 event to mark "form input-ready" — we
-// fall back to a fixed wait. Real-Beanfun smoke shows form ready
-// ~27s after spawn on a warm install. 25s after detect (≈ 29s
-// after spawn) gives a small margin and lands cleanly. Cold
-// installs with patching will still miss; user re-clicks 啟動遊戲
-// and the detect-first path injects directly within ~100ms.
-const postWindowSettleDelay = 25 * time.Second
+// formReadyTimeout caps how long Launch will poll IsWindowVisible
+// after the CREATE event. Real-Beanfun observed transitions land
+// within 4-5s of CREATE; 30s is generous headroom for cold caches.
+const formReadyTimeout = 30 * time.Second
+
+// formReadySettleDelay is a tiny safety margin between
+// IsWindowVisible flipping true and the first PostMessage. The
+// visibility flip is closely correlated with form-input-ready, but
+// 500ms gives the message pump room to settle without being
+// perceptible in the UX.
+const formReadySettleDelay = 500 * time.Millisecond
 
 // gameWindowWaitTimeout is the upper bound on how long Launch
 // blocks waiting for the game window to appear after spawn. Covers
