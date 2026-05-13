@@ -61,7 +61,7 @@ func TestLauncherService_Launch_NoSession(t *testing.T) {
 	login := beanfun.NewLoginService()
 	svc := NewLauncherService(login)
 
-	err := svc.Launch(beanfun.Account{SID: "s", SSN: "1", SName: "n"})
+	_, err := svc.Launch(beanfun.Account{SID: "s", SSN: "1", SName: "n"})
 	var le *beanfun.LoginError
 	if !errors.As(err, &le) || le.Kind != beanfun.KindLoginRequired {
 		t.Errorf("got %v, want beanfun.KindLoginRequired", err)
@@ -88,7 +88,7 @@ func TestLauncherService_Launch_GameExeMissing_NoSessionStillTakesPrecedence(t *
 	login := beanfun.NewLoginService()
 	svc := NewLauncherService(login)
 
-	err := svc.Launch(beanfun.Account{SID: "s", SSN: "1", SName: "n"})
+	_, err := svc.Launch(beanfun.Account{SID: "s", SSN: "1", SName: "n"})
 	var le *beanfun.LoginError
 	if !errors.As(err, &le) || le.Kind != beanfun.KindLoginRequired {
 		t.Errorf("got %v, want beanfun.KindLoginRequired (check order: session before env var)", err)

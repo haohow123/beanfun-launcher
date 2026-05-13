@@ -27,29 +27,50 @@ func NewLauncherService(login *beanfun.LoginService) *LauncherService {
 	return &LauncherService{login: login}
 }
 
-// Launch fetches a one-time game-launch token for the given account
-// and spawns the game executable with `/hb /u:{SID} /p:{OTP}`. The
-// OTP byte slice is zeroed before this method returns regardless of
-// outcome.
+// LaunchResult is the outcome reported back to the frontend after a
+// successful spawn. Two states:
+//
+//   - AutoFilled=true → window injection succeeded; the game's
+//     login form has been typed into and submitted. OTP stays "".
+//   - AutoFilled=false → spawn worked but the window-injection
+//     step failed (window class not found, PostMessage rejected,
+//     etc.). OTP is populated so the frontend can copy SID+OTP to
+//     the clipboard for manual paste.
+//
+// A hard error (no session, missing game exe, spawn failure, OTP
+// fetch failure) is returned as a regular Go error and never
+// produces a LaunchResult.
+type LaunchResult struct {
+	AutoFilled bool   `json:"autoFilled"`
+	OTP        string `json:"otp,omitempty"`
+}
+
+// Launch fetches a one-time game-launch token for the given account,
+// spawns the game executable, then injects the credentials into its
+// login form via PostMessage. The OTP byte slice is zeroed before
+// this method returns regardless of outcome.
 //
 // Requires:
 //   - An active session (login → CheckQRLogin completed).
-//   - BEANFUN_GAME_EXE env var pointing at a valid game executable.
+//   - Either BEANFUN_GAME_EXE env var or the
+//     HKLM\SOFTWARE\Gamania\MAPLESTORY\Path registry value to locate
+//     the game.
 //
-// On Windows the spawn uses CreateProcessW; on non-Windows it returns
-// ErrPlatformUnsupported (the macOS dev box doesn't run game.exe).
-func (s *LauncherService) Launch(account beanfun.Account) error {
+// On Windows the spawn uses ShellExecuteW (manifest-aware UAC) and
+// injection uses FindWindowW + PostMessageW. On non-Windows the
+// spawn stub returns ErrPlatformUnsupported.
+func (s *LauncherService) Launch(account beanfun.Account) (LaunchResult, error) {
 	s.mu.Lock()
 	client, session := s.login.Snapshot()
 	s.mu.Unlock()
 
 	if client == nil || session == nil {
-		return beanfun.ErrLoginRequired()
+		return LaunchResult{}, beanfun.ErrLoginRequired()
 	}
 
 	gameExe, err := resolveGameExe()
 	if err != nil {
-		return err
+		return LaunchResult{}, err
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -58,22 +79,33 @@ func (s *LauncherService) Launch(account beanfun.Account) error {
 	otp, err := client.FetchOTP(ctx, session, account)
 	if err != nil {
 		slog.Error("Launch: FetchOTP failed", "err", err, "sid", account.SID)
-		return err
+		return LaunchResult{}, err
 	}
 	defer beanfun.Zero(otp.Token)
 
-	args := []string{
-		"/hb",
-		"/u:" + account.SID,
-		"/p:" + string(otp.Token),
-	}
-
-	if err := spawnFn(ctx, gameExe, args); err != nil {
+	// Spawn with no command-line credentials. The current TW build
+	// ignores `/hb /u:.. /p:..` args (verified during alpha.6);
+	// injection via PostMessage replaces that path.
+	if err := spawnFn(ctx, gameExe, nil); err != nil {
 		slog.Error("Launch: spawnFn failed", "err", err, "sid", account.SID)
-		return err
+		return LaunchResult{}, err
 	}
 	slog.Info("Launch: game spawned", "sid", account.SID, "exe", gameExe)
-	return nil
+
+	hwnd, werr := waitForGameWindowFn(ctx, gameWindowWaitTimeout)
+	if werr != nil {
+		slog.Warn("Launch: window not found within timeout, falling back to manual paste",
+			"err", werr, "sid", account.SID)
+		return LaunchResult{AutoFilled: false, OTP: string(otp.Token)}, nil
+	}
+
+	if ierr := injectFn(hwnd, []byte(account.SID), otp.Token); ierr != nil {
+		slog.Error("Launch: inject failed, falling back to manual paste",
+			"err", ierr, "sid", account.SID)
+		return LaunchResult{AutoFilled: false, OTP: string(otp.Token)}, nil
+	}
+	slog.Info("Launch: credentials injected", "sid", account.SID)
+	return LaunchResult{AutoFilled: true}, nil
 }
 
 // GetOTP runs the OTP fetch flow and returns the plaintext token for

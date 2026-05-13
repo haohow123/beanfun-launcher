@@ -18,11 +18,15 @@ import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Cr
 // @ts-ignore: Unused imports
 import * as beanfun$0 from "../beanfun/models.js";
 
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as $models from "./models.js";
+
 /**
  * GetOTP runs the OTP fetch flow and returns the plaintext token for
- * display + clipboard copy on the frontend. This is the "show
- * credentials so the user can paste into another launcher" path that
- * pungin's UI exposes alongside the direct-spawn button.
+ * display + clipboard copy on the frontend. The "show credentials so
+ * the user can paste into another launcher" path that runs alongside
+ * the direct-spawn Launch method.
  * 
  * Two callers:
  *   - macOS dev verification: the spawn path returns
@@ -33,8 +37,8 @@ import * as beanfun$0 from "../beanfun/models.js";
  * 
  * The returned string lives in the frontend's JS heap (we can't zero
  * it from Go). Per Beanfun's design the OTP is single-use and
- * rotates on each call — this is acceptable for the same reason
- * pungin's UI is acceptable.
+ * rotates on each call — keeping it in memory between fetch and
+ * paste is acceptable given that single-use lifecycle.
  * @param {beanfun$0.Account} account
  * @returns {$CancellablePromise<string>}
  */
@@ -43,20 +47,28 @@ export function GetOTP(account) {
 }
 
 /**
- * Launch fetches a one-time game-launch token for the given account
- * and spawns the game executable with `/hb /u:{SID} /p:{OTP}`. The
- * OTP byte slice is zeroed before this method returns regardless of
- * outcome.
+ * Launch fetches a one-time game-launch token for the given account,
+ * spawns the game executable, then injects the credentials into its
+ * login form via PostMessage. The OTP byte slice is zeroed before
+ * this method returns regardless of outcome.
  * 
  * Requires:
  *   - An active session (login → CheckQRLogin completed).
- *   - BEANFUN_GAME_EXE env var pointing at a valid game executable.
+ *   - Either BEANFUN_GAME_EXE env var or the
+ *     HKLM\SOFTWARE\Gamania\MAPLESTORY\Path registry value to locate
+ *     the game.
  * 
- * On Windows the spawn uses CreateProcessW; on non-Windows it returns
- * ErrPlatformUnsupported (the macOS dev box doesn't run game.exe).
+ * On Windows the spawn uses ShellExecuteW (manifest-aware UAC) and
+ * injection uses FindWindowW + PostMessageW. On non-Windows the
+ * spawn stub returns ErrPlatformUnsupported.
  * @param {beanfun$0.Account} account
- * @returns {$CancellablePromise<void>}
+ * @returns {$CancellablePromise<$models.LaunchResult>}
  */
 export function Launch(account) {
-    return $Call.ByID(1857854220, account);
+    return $Call.ByID(1857854220, account).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType0($result);
+    }));
 }
+
+// Private type creation functions
+const $$createType0 = $models.LaunchResult.createFrom;

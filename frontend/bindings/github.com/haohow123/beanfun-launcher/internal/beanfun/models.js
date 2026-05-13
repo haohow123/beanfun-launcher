@@ -58,11 +58,10 @@ export class Account {
  * jar for a single Beanfun login session. A new instance starts a
  * fresh jar — no leftover cookies from a prior attempt.
  * 
- * Pungin/Beanfun maintains a second no-redirect client variant for
- * flows that need to read `Set-Cookie` directly from a 302 response.
- * Our QR-only flow doesn't: step 6 of finalize discards the response,
- * and step 7 reads `bfWebToken` from the jar after the redirect chain
- * settles. So one client is enough. See docs/beanfun-login-protocol.md.
+ * One client (not two) is enough for our QR-only flow: step 6 of
+ * finalize discards the response, and step 7 reads `bfWebToken`
+ * from the jar after the redirect chain settles. See
+ * docs/beanfun-login-protocol.md.
  */
 export class BeanfunClient {
     /**

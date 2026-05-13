@@ -6,3 +6,7 @@ import * as LauncherService from "./launcherservice.js";
 export {
     LauncherService
 };
+
+export {
+    LaunchResult
+} from "./models.js";

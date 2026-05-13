@@ -19,13 +19,19 @@ import {
 } from "@/queries/launch";
 import { loggedInAtom } from "@/state/auth";
 
+interface FallbackOTP {
+  sid: string;
+  otp: string;
+}
+
 export function HomePage() {
   const setLoggedIn = useSetAtom(loggedInAtom);
   const qc = useQueryClient();
   const accounts = useAccountsQuery();
   const launch = useLaunchGameMutation();
   const fetchOTP = useFetchOTPMutation();
-  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [copiedSid, setCopiedSid] = useState<string | null>(null);
+  const [fallbackOTP, setFallbackOTP] = useState<FallbackOTP | null>(null);
 
   function logout() {
     qc.clear();
@@ -36,50 +42,94 @@ export function HomePage() {
     accounts.refetch();
   }
 
-  function launchStatusFor(acc: Account): "idle" | "pending" | "error" | "success" {
+  function markCopied(sid: string) {
+    setCopiedSid(sid);
+    window.setTimeout(
+      () => setCopiedSid((s) => (s === sid ? null : s)),
+      1500,
+    );
+  }
+
+  // Why ClipboardItem + Promise<Blob> instead of plain
+  // `await fetchOTP.mutateAsync(...)` then `writeText(...)`:
+  // navigator.clipboard.writeText requires the document's "transient
+  // user activation" — set by a click event handler — to be still
+  // valid when the call is made. WebView2 / WKWebView treat the
+  // activation as consumed once you `await`, so a writeText after a
+  // 1-2s OTP fetch gets silently rejected. clipboard.write with a
+  // ClipboardItem whose blob is a pending Promise tells the browser
+  // "hold activation; resolve later" — which keeps the activation
+  // budget for the actual write.
+  function copyCredentials(acc: Account) {
+    const blobPromise = fetchOTP.mutateAsync(acc).then(
+      (otp) => new Blob([`${acc.sid}\n${otp}`], { type: "text/plain" }),
+    );
+    navigator.clipboard
+      .write([new ClipboardItem({ "text/plain": blobPromise })])
+      .then(() => markCopied(acc.sid))
+      .catch((e) => console.error("clipboard write failed:", e));
+  }
+
+  // startGame doesn't pre-emptively touch the clipboard. The
+  // fallback path (window injection didn't work) reveals the OTP
+  // inline; the user copies via an explicit click that fires
+  // inside its own user-activation window.
+  function startGame(acc: Account) {
+    setFallbackOTP(null);
+    launch.mutate(acc, {
+      onSuccess: (result) => {
+        if (!result.autoFilled && result.otp) {
+          setFallbackOTP({ sid: acc.sid, otp: result.otp });
+        }
+      },
+    });
+  }
+
+  function copyFallback(item: FallbackOTP) {
+    navigator.clipboard
+      .writeText(`${item.sid}\n${item.otp}`)
+      .then(() => markCopied(item.sid))
+      .catch((e) => console.error("clipboard write failed:", e));
+  }
+
+  function launchStatusFor(acc: Account): "idle" | "pending" | "error" | "success" | "fallback" {
     if (launch.variables?.sid !== acc.sid) return "idle";
     if (launch.isPending) return "pending";
     if (launch.isError) return "error";
-    if (launch.isSuccess) return "success";
+    if (launch.isSuccess) {
+      return fallbackOTP?.sid === acc.sid ? "fallback" : "success";
+    }
     return "idle";
   }
 
-  function otpStatusFor(acc: Account): "idle" | "pending" | "error" | "ready" {
+  function copyStatusFor(acc: Account): "idle" | "pending" | "error" | "copied" {
+    if (copiedSid === acc.sid) return "copied";
     if (fetchOTP.variables?.sid !== acc.sid) return "idle";
     if (fetchOTP.isPending) return "pending";
     if (fetchOTP.isError) return "error";
-    if (fetchOTP.isSuccess) return "ready";
     return "idle";
   }
 
-  async function copyValue(key: string, value: string) {
-    if (!value) return;
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopiedKey(key);
-      window.setTimeout(
-        () => setCopiedKey((k) => (k === key ? null : k)),
-        1500,
-      );
-    } catch {
-      console.error("clipboard write failed");
-    }
-  }
-
-  function renderAccountItem(acc: Account) {
+  function renderAccountCard(acc: Account) {
     const launchStatus = launchStatusFor(acc);
-    const otpStatus = otpStatusFor(acc);
-    const otpValue = otpStatus === "ready" ? (fetchOTP.data ?? "") : "";
+    const copyStatus = copyStatusFor(acc);
+    const anyPending = launchStatus === "pending" || copyStatus === "pending";
+    const fallback = fallbackOTP?.sid === acc.sid ? fallbackOTP : null;
 
     return (
       <li key={acc.sid} className="rounded-md border p-3">
-        <div className="mb-2 flex items-baseline justify-between gap-2">
+        <div className="mb-1 flex items-baseline justify-between gap-2">
           <span className="text-sm font-medium">{acc.sname}</span>
           {launchStatus === "pending" && (
             <span className="text-xs text-muted-foreground">啟動中…</span>
           )}
           {launchStatus === "success" && (
-            <span className="text-xs text-foreground">✓ 已啟動</span>
+            <span className="text-xs text-foreground">✓ 已啟動並帶入帳密</span>
+          )}
+          {launchStatus === "fallback" && (
+            <span className="text-xs text-foreground">
+              ✓ 已啟動,需手動帶入
+            </span>
           )}
           {launchStatus === "error" && (
             <span
@@ -91,47 +141,46 @@ export function HomePage() {
           )}
         </div>
 
-        <div className="flex flex-col gap-2">
-          <CredentialRow label="帳號" value={acc.sid} />
+        <code className="block break-all text-xs text-muted-foreground">
+          {acc.sid}
+        </code>
 
-          <CredentialRow
-            label="密碼"
-            value={otpValue}
-            placeholder={
-              otpStatus === "pending"
-                ? "產生中…"
-                : otpStatus === "error"
-                  ? `失敗:${String(fetchOTP.error)}`
-                  : "尚未產生"
-            }
-            extraAction={
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={otpStatus === "pending"}
-                onClick={() => fetchOTP.mutate(acc)}
-              >
-                {otpStatus === "pending" ? "…" : "產生 OTP"}
-              </Button>
-            }
-          />
-        </div>
+        {fallback && (
+          <div className="mt-2 flex items-center gap-2 rounded-md bg-muted/50 px-2 py-1">
+            <code className="flex-1 select-all break-all font-mono text-sm">
+              {fallback.otp}
+            </code>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => copyFallback(fallback)}
+            >
+              {copiedSid === fallback.sid ? "✓" : "複製"}
+            </Button>
+          </div>
+        )}
 
         <div className="mt-3 flex justify-end gap-2">
           <Button
             variant="outline"
             size="sm"
-            disabled={!otpValue}
-            onClick={() => copyValue(`${acc.sid}:both`, `${acc.sid}\n${otpValue}`)}
-            title="把帳號+密碼一起複製,中間用換行隔開"
+            disabled={anyPending}
+            onClick={() => copyCredentials(acc)}
+            title="抓 OTP 後把帳號+密碼 (換行隔開) 複製到剪貼簿"
           >
-            {copiedKey === `${acc.sid}:both` ? "✓ 已複製" : "複製帳密"}
+            {copyStatus === "pending"
+              ? "產生中…"
+              : copyStatus === "copied"
+                ? "✓ 已複製"
+                : copyStatus === "error"
+                  ? "複製失敗"
+                  : "複製帳密"}
           </Button>
           <Button
             variant="outline"
             size="sm"
-            disabled={launchStatus === "pending"}
-            onClick={() => launch.mutate(acc)}
+            disabled={anyPending}
+            onClick={() => startGame(acc)}
           >
             啟動遊戲
           </Button>
@@ -168,7 +217,7 @@ export function HomePage() {
     }
     return (
       <ul className="flex flex-col gap-3">
-        {accounts.data.map(renderAccountItem)}
+        {accounts.data.map(renderAccountCard)}
       </ul>
     );
   }
@@ -179,7 +228,7 @@ export function HomePage() {
         <CardHeader>
           <CardTitle>遊戲帳號</CardTitle>
           <CardDescription>
-            點「啟動遊戲」直接開,或「產生 OTP」貼到其他啟動器
+            點「啟動遊戲」直接開並自動帶入,或「複製帳密」貼到其他啟動器
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
@@ -194,36 +243,5 @@ export function HomePage() {
         </CardContent>
       </Card>
     </AppShell>
-  );
-}
-
-interface CredentialRowProps {
-  label: string;
-  value: string;
-  placeholder?: string;
-  extraAction?: React.ReactNode;
-}
-
-function CredentialRow({
-  label,
-  value,
-  placeholder,
-  extraAction,
-}: CredentialRowProps) {
-  return (
-    <div className="flex items-center gap-2">
-      <span className="w-10 shrink-0 text-xs text-muted-foreground">
-        {label}
-      </span>
-      <input
-        type="text"
-        readOnly
-        value={value}
-        placeholder={placeholder}
-        onFocus={(e) => e.currentTarget.select()}
-        className="flex-1 rounded-md border bg-background px-2 py-1 font-mono text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-      />
-      {extraAction}
-    </div>
   );
 }
