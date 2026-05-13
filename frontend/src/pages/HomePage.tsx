@@ -70,9 +70,9 @@ export function HomePage() {
       .catch((e) => console.error("clipboard write failed:", e));
   }
 
-  // startGame doesn't pre-emptively touch the clipboard. The
-  // fallback path (window injection didn't work) reveals the OTP
-  // inline; the user copies via an explicit click that fires
+  // startGame doesn't pre-emptively touch the clipboard. Whenever
+  // result.otp is populated (Spawned=true or inject failed), reveal
+  // it inline; the user copies via an explicit click that fires
   // inside its own user-activation window.
   function startGame(acc: Account) {
     setFallbackOTP(null);
@@ -92,12 +92,16 @@ export function HomePage() {
       .catch((e) => console.error("clipboard write failed:", e));
   }
 
-  function launchStatusFor(acc: Account): "idle" | "pending" | "error" | "success" | "fallback" {
+  function launchStatusFor(
+    acc: Account,
+  ): "idle" | "pending" | "error" | "success" | "spawned" | "fallback" {
     if (launch.variables?.sid !== acc.sid) return "idle";
     if (launch.isPending) return "pending";
     if (launch.isError) return "error";
     if (launch.isSuccess) {
-      return fallbackOTP?.sid === acc.sid ? "fallback" : "success";
+      if (launch.data?.autoFilled) return "success";
+      if (launch.data?.spawned) return "spawned";
+      return "fallback";
     }
     return "idle";
   }
@@ -126,9 +130,14 @@ export function HomePage() {
           {launchStatus === "success" && (
             <span className="text-xs text-foreground">✓ 已啟動並帶入帳密</span>
           )}
+          {launchStatus === "spawned" && (
+            <span className="text-xs text-foreground">
+              ✓ 已啟動,等登入畫面再按一次自動帶入
+            </span>
+          )}
           {launchStatus === "fallback" && (
             <span className="text-xs text-foreground">
-              ✓ 已啟動,需手動帶入
+              已啟動,需手動帶入
             </span>
           )}
           {launchStatus === "error" && (
