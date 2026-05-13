@@ -98,6 +98,15 @@ func (s *LauncherService) Launch(account beanfun.Account) (LaunchResult, error) 
 		slog.Info("Launch: game spawned, waiting for window",
 			"sid", account.SID, "exe", gameExe, "timeout", gameWindowWaitTimeout)
 
+		// Diagnostic: poll-log every Maple-class window + Maple/Patcher
+		// process every 500ms from spawn through inject, so we can
+		// characterise the patcher → main-game → form-ready timeline.
+		// Bounded by the wait + settle + inject duration; cancelled by
+		// the deferred cancel below.
+		diagCtx, diagCancel := context.WithCancel(ctx)
+		defer diagCancel()
+		startDiagnostic(diagCtx)
+
 		h, werr := waitForGameWindowFn(ctx, gameWindowWaitTimeout)
 		if werr != nil {
 			slog.Warn("Launch: window not found within timeout, falling back to manual paste",
