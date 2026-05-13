@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"syscall"
 
 	"golang.org/x/sys/windows"
@@ -45,13 +46,22 @@ func osSpawn(_ context.Context, path string, args []string) error {
 			return ErrSpawnFailed(fmt.Errorf("UTF16PtrFromString(args): %w", err))
 		}
 	}
+	// Use the exe's directory as cwd so the game finds its data files.
+	// Without this, the game inherits the launcher's cwd and fails
+	// with "no data file" (MapleStory's resource loader is cwd-relative).
+	// Manual double-click on the exe works because Windows shell sets
+	// cwd to the exe dir automatically.
+	cwdW, err := windows.UTF16PtrFromString(filepath.Dir(path))
+	if err != nil {
+		return ErrSpawnFailed(fmt.Errorf("UTF16PtrFromString(cwd): %w", err))
+	}
 
 	err = windows.ShellExecute(
 		0,                     // hWnd — no parent window for UAC dialog
 		nil,                   // verb=nil → "open" (manifest-aware launch)
 		pathW,                 // file
 		argsW,                 // params
-		nil,                   // cwd — inherit
+		cwdW,                  // cwd — exe's directory
 		windows.SW_SHOWNORMAL, // nShowCmd
 	)
 	if err != nil {
