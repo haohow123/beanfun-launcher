@@ -10,7 +10,11 @@ permissions:
 
 jobs:
   windows:
-    runs-on: windows-latest
+    # Pinned image — windows-latest auto-promotes when GH bumps the
+    # default (typically every ~2 years). Pinning means dependency
+    # additions / tool removals from the underlying image don't
+    # surprise the build mid-flight. Bump explicitly when ready.
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
 
@@ -32,6 +36,12 @@ jobs:
         with:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install NSIS
+        # windows-latest dropped NSIS from its pre-installed image
+        # circa 2022. Chocolatey is pre-installed, so one line restores
+        # makensis on $PATH for `task windows:create:nsis:installer`.
+        run: choco install nsis -y --no-progress
 
       - name: Derive version from tag
         id: ver
