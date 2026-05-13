@@ -40,7 +40,7 @@ func resolveGameExe() (string, error) {
 	}
 	slog.Warn("resolveGameExe: no source resolved", "tried", []string{
 		"$" + gameExeEnvVar,
-		`HKCU\` + gameRegistrySubkey + `\` + gameRegistryValue,
+		gameRegistryHive + `\` + gameRegistrySubkey + `\` + gameRegistryValue,
 	})
 	return "", ErrGameExeMissing()
 }

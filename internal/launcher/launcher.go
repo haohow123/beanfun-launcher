@@ -54,14 +54,14 @@ func ErrPlatformUnsupported() *LauncherError {
 
 // ErrGameExeMissing is returned when the game executable can't be
 // located via either source: the BEANFUN_GAME_EXE env var override
-// or the HKCU\SOFTWARE\Gamania\MapleStory\ExecPath registry value
-// that Beanfun's installer writes. The user typically resolves this
-// by reinstalling MapleStory (which repopulates the registry value)
+// or the HKLM\SOFTWARE\Gamania\MAPLESTORY\Path registry value that
+// Beanfun's installer writes. The user typically resolves this by
+// reinstalling MapleStory (which repopulates the registry value)
 // or by setting BEANFUN_GAME_EXE manually.
 func ErrGameExeMissing() *LauncherError {
 	return &LauncherError{
 		Kind: KindGameExeMissing,
-		Msg:  `game executable not found (checked $BEANFUN_GAME_EXE and HKCU\SOFTWARE\Gamania\MapleStory\ExecPath)`,
+		Msg:  `game executable not found (checked $BEANFUN_GAME_EXE and HKLM\SOFTWARE\Gamania\MAPLESTORY\Path)`,
 	}
 }
 
