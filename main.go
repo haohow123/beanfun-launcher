@@ -89,11 +89,30 @@ func setupLogging() *os.File {
 		slog.Error("OpenFile failed; logging to stderr only", "path", path, "err", err)
 		return nil
 	}
-	writer := io.MultiWriter(os.Stderr, f)
+	// Wrap stderr in a best-effort writer that always reports success.
+	// On Windows production builds with -H windowsgui, os.Stderr is
+	// detached — a real Write returns 0 bytes / an error, and Go's
+	// io.MultiWriter propagates that error to its caller, aborting
+	// the entire write chain before reaching the file. The first
+	// alpha.2 build hit exactly this: log file existed but was 0
+	// bytes because every slog call failed at stderr and never
+	// touched the file.
+	writer := io.MultiWriter(bestEffortWriter{os.Stderr}, f)
 	handler := slog.NewTextHandler(writer, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	})
 	slog.SetDefault(slog.New(handler))
 	slog.Info("beanfun-launcher starting", "log_file", path)
 	return f
+}
+
+// bestEffortWriter wraps an io.Writer and swallows its errors,
+// always reporting a fully-successful write. Used to keep
+// io.MultiWriter from aborting the chain when an optional sink
+// (e.g. detached stderr) fails.
+type bestEffortWriter struct{ w io.Writer }
+
+func (b bestEffortWriter) Write(p []byte) (int, error) {
+	_, _ = b.w.Write(p)
+	return len(p), nil
 }
