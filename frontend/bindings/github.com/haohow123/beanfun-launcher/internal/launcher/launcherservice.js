@@ -47,20 +47,18 @@ export function GetOTP(account) {
 }
 
 /**
- * Launch fetches a one-time game-launch token for the given account,
- * spawns the game executable, then injects the credentials into its
- * login form via PostMessage. The OTP byte slice is zeroed before
- * this method returns regardless of outcome.
+ * Launch finds the running MapleStory window and injects the given
+ * account's credentials into its login form. Does NOT spawn the
+ * game — see SpawnGame for that. Returns:
  * 
- * Requires:
- *   - An active session (login → CheckQRLogin completed).
- *   - Either BEANFUN_GAME_EXE env var or the
- *     HKLM\SOFTWARE\Gamania\MAPLESTORY\Path registry value to locate
- *     the game.
+ *   - LaunchResult{NoWindow: true} when no game window is open.
+ *     Frontend should prompt the user to press 啟動遊戲 first.
+ *   - LaunchResult{AutoFilled: true} on successful inject.
+ *   - LaunchResult{AutoFilled: false, OTP: ...} when the window
+ *     exists but inject failed mid-sequence — frontend shows the
+ *     OTP for manual paste.
  * 
- * On Windows the spawn uses ShellExecuteW (manifest-aware UAC) and
- * injection uses FindWindowW + PostMessageW. On non-Windows the
- * spawn stub returns ErrPlatformUnsupported.
+ * The OTP byte slice is zeroed before this method returns.
  * @param {beanfun$0.Account} account
  * @returns {$CancellablePromise<$models.LaunchResult>}
  */
@@ -68,6 +66,30 @@ export function Launch(account) {
     return $Call.ByID(1857854220, account).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType0($result);
     }));
+}
+
+/**
+ * SpawnGame opens the configured MapleStory.exe but does not wait
+ * for the login form. Returns nil when the game has been spawned
+ * (or was already running).
+ * 
+ * Split out from Launch so the frontend can drive an explicit
+ * two-step flow: user clicks 啟動遊戲 (this method) → waits visually
+ * for the login form → clicks 帶入帳密 per account (Launch). That
+ * design sidesteps the +20s "form input-ready" gap between window
+ * visibility and the textbox actually accepting WM_CHAR; once the
+ * user can see the form they're guaranteed it's ready, and inject
+ * lands within ~100ms.
+ * 
+ * Requires:
+ *   - An active session (so we know there's a logged-in user
+ *     intending to play; resolveGameExe is independent of session).
+ *   - Either BEANFUN_GAME_EXE env var or the registry value to
+ *     locate the game executable.
+ * @returns {$CancellablePromise<void>}
+ */
+export function SpawnGame() {
+    return $Call.ByID(4030112748);
 }
 
 // Private type creation functions

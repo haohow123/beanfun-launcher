@@ -3,12 +3,7 @@
 package launcher
 
 import (
-	"context"
-	"errors"
 	"fmt"
-	"log/slog"
-	"runtime"
-	"syscall"
 	"time"
 	"unsafe"
 
@@ -17,8 +12,6 @@ import (
 
 func init() {
 	findGameWindowFn = findGameWindow
-	waitForGameWindowFn = waitForGameWindow
-	waitWindowVisibleFn = waitWindowVisible
 	injectFn = injectCredentials
 }
 
@@ -26,52 +19,13 @@ func init() {
 var (
 	user32                  = windows.NewLazySystemDLL("user32.dll")
 	procFindWindowW         = user32.NewProc("FindWindowW")
-	procGetClassNameW       = user32.NewProc("GetClassNameW")
-	procGetWindowTextW      = user32.NewProc("GetWindowTextW")
 	procSetForegroundWindow = user32.NewProc("SetForegroundWindow")
 	procPostMessageW        = user32.NewProc("PostMessageW")
-	procSetWinEventHook     = user32.NewProc("SetWinEventHook")
-	procUnhookWinEvent      = user32.NewProc("UnhookWinEvent")
-	procGetMessageW         = user32.NewProc("GetMessageW")
-	procPostThreadMessageW  = user32.NewProc("PostThreadMessageW")
 	procGetClientRect       = user32.NewProc("GetClientRect")
 	procClientToScreen      = user32.NewProc("ClientToScreen")
 	procGetCursorPos        = user32.NewProc("GetCursorPos")
 	procSetCursorPos        = user32.NewProc("SetCursorPos")
 )
-
-const (
-	// WinEvent range we listen on. eventMin/eventMax span from
-	// EVENT_SYSTEM_FOREGROUND (0x0003) to EVENT_OBJECT_NAMECHANGE
-	// (0x800C) so we can diagnose which event corresponds to "login
-	// form input-ready" on this game build. The class filter inside
-	// the callback keeps the volume low.
-	//
-	// Other events that fall in the range and may show up in logs:
-	//   0x8001 EVENT_OBJECT_DESTROY
-	//   0x8002 EVENT_OBJECT_SHOW
-	//   0x8003 EVENT_OBJECT_HIDE
-	//   0x8005 EVENT_OBJECT_FOCUS
-	//   0x800A EVENT_OBJECT_STATECHANGE
-	eventSystemForeground = 0x0003
-	eventObjectCreate     = 0x8000
-	eventObjectNameChange = 0x800C
-
-	winEventOutOfContext = 0x0000
-	winEventSkipOwnProc  = 0x0002
-	objidWindow          = 0x00000000
-	wmQuit               = 0x0012
-)
-
-// win32Msg mirrors Win32's MSG struct for use with GetMessageW.
-type win32Msg struct {
-	HWnd    uintptr
-	Message uint32
-	WParam  uintptr
-	LParam  uintptr
-	Time    uint32
-	Pt      struct{ X, Y int32 }
-}
 
 const (
 	wmChar        = 0x0102 // WM_CHAR
@@ -88,8 +42,8 @@ const (
 
 	// Two-tier window class fallback. The TW build's class diverges
 	// in suffix from time to time, so we probe both before giving up.
-	// If both miss, the caller falls back to clipboard copy for
-	// manual paste.
+	// If both miss, the caller treats it as "no game window" and the
+	// frontend prompts the user to press 啟動遊戲.
 	classMapleStory   = "MapleStoryClass"
 	classMapleStoryTW = "MapleStoryClassTW"
 
@@ -106,6 +60,11 @@ const (
 	clickXRatio = 0.5
 	clickYRatio = 0.4
 )
+
+// win32Rect mirrors Win32's RECT struct.
+type win32Rect struct {
+	Left, Top, Right, Bottom int32
+}
 
 // win32Point mirrors Win32's POINT struct.
 type win32Point struct {
@@ -131,235 +90,19 @@ func findGameWindow() uintptr {
 	return 0
 }
 
-// waitForGameWindow registers a system-wide WinEvent hook for
-// EVENT_OBJECT_CREATE and returns the first MapleStory window's
-// HWND, or an error on context cancel / timeout.
-//
-// Architecture (Win32 hooks fundamentally require thread-local
-// state + a message pump):
-//
-//  1. Run a goroutine locked to one OS thread (Win32 hooks are
-//     thread-bound; cross-thread hook delivery is not allowed).
-//  2. That thread calls SetWinEventHook with WINEVENT_OUTOFCONTEXT
-//     — the hook callback runs in our process, no DLL injection
-//     into the target.
-//  3. The thread runs a GetMessage / TranslateMessage /
-//     DispatchMessage pump. SetWinEventHook delivers its callbacks
-//     via this pump.
-//  4. The callback checks the new window's class name; matches
-//     publish to a `found` channel.
-//  5. The caller goroutine waits on `found` / ctx / timeout; on
-//     any exit it posts WM_QUIT to wake up the pump and the hook
-//     thread terminates cleanly (deferred UnhookWinEvent + pump
-//     return).
-//
-// Why event-based instead of polling: 200ms poll worked, but
-// SetWinEventHook fires within ~milliseconds of window creation —
-// no wasted FindWindowW calls, cleaner pattern, and the same
-// approach lets us later subscribe to "game window closed"
-// (EVENT_OBJECT_DESTROY) events if we want.
-func waitForGameWindow(ctx context.Context, timeout time.Duration) (uintptr, error) {
-	// Immediate probe — game may already be running.
-	if h := findGameWindow(); h != 0 {
-		return h, nil
-	}
-
-	found := make(chan uintptr, 1)
-	threadIDCh := make(chan uint32, 1)
-	pumpDone := make(chan struct{})
-
-	go runHookPump(found, threadIDCh, pumpDone)
-
-	// Wait for the hook thread to publish its thread ID; we need it
-	// to PostThreadMessageW(WM_QUIT) on cleanup. The pump should be
-	// up within milliseconds of the goroutine starting.
-	var threadID uint32
-	select {
-	case threadID = <-threadIDCh:
-	case <-ctx.Done():
-		<-pumpDone
-		return 0, ctx.Err()
-	case <-time.After(2 * time.Second):
-		return 0, errors.New("hook thread failed to start")
-	}
-
-	defer func() {
-		_, _, _ = procPostThreadMessageW.Call(uintptr(threadID), wmQuit, 0, 0)
-		<-pumpDone
-	}()
-
-	select {
-	case h := <-found:
-		return h, nil
-	case <-ctx.Done():
-		return 0, ctx.Err()
-	case <-time.After(timeout):
-		return 0, errors.New("game window did not appear within timeout")
-	}
-}
-
-// waitWindowVisible polls IsWindowVisible(hwnd) every 250ms until it
-// returns true, ctx is cancelled, or the timeout fires.
-//
-// The MapleStoryClass(TW) HWND is created early (~4s post-spawn) but
-// stays invisible while the game's DirectX init runs. Diagnostic
-// data showed IsWindowVisible flipping true ~4-5s after CREATE,
-// coinciding with the login form becoming input-ready. That makes
-// this poll the cheap, reliable replacement for the previous 25s
-// blind settle.
-func waitWindowVisible(ctx context.Context, hwnd uintptr, timeout time.Duration) error {
-	if isWindowVisible(hwnd) {
-		return nil
-	}
-	deadline := time.Now().Add(timeout)
-	ticker := time.NewTicker(250 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-			if isWindowVisible(hwnd) {
-				return nil
-			}
-			if time.Now().After(deadline) {
-				return errors.New("window did not become visible within timeout")
-			}
-		}
-	}
-}
-
-func isWindowVisible(hwnd uintptr) bool {
-	ret, _, _ := procIsWindowVisible.Call(hwnd)
-	return ret != 0
-}
-
-// runHookPump owns the SetWinEventHook + message-pump lifecycle on
-// one locked OS thread.
-func runHookPump(found chan<- uintptr, threadIDOut chan<- uint32, pumpDone chan<- struct{}) {
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
-	defer close(pumpDone)
-
-	callback := syscall.NewCallback(func(
-		_ uintptr, // hWinEventHook
-		event uint32,
-		hwnd uintptr,
-		idObject int32,
-		_ int32, // idChild
-		_ uint32, // idEventThread
-		_ uint32, // dwmsEventTime
-	) uintptr {
-		// Every WinEvent in our range fires the callback. Most are
-		// for windows we don't care about; we filter on
-		// idObject=OBJID_WINDOW + class match before doing anything
-		// expensive.
-		if hwnd == 0 || idObject != objidWindow {
-			return 0
-		}
-		if !classMatchesGame(hwnd) {
-			return 0
-		}
-		// Diagnostic: log every MapleStory-class event so we can
-		// identify which event marks "login form is input-ready"
-		// (currently CREATE fires ~4s post-spawn but inject at that
-		// point misses — form not ready). Once we have the right
-		// event we can drop the post-detect settle delay.
-		slog.Info("WinEvent: MapleStory match",
-			"event", fmt.Sprintf("0x%04X", event),
-			"hwnd", fmt.Sprintf("0x%X", hwnd),
-			"title", windowTitle(hwnd),
-		)
-		if event != eventObjectCreate {
-			return 0
-		}
-		// Non-blocking — first match wins.
-		select {
-		case found <- hwnd:
-		default:
-		}
-		return 0
-	})
-
-	hook, _, _ := procSetWinEventHook.Call(
-		eventSystemForeground, // eventMin
-		eventObjectNameChange, // eventMax (range covers CREATE / SHOW / FOCUS / FOREGROUND / etc.)
-		0,                     // hmodWinEventProc (NULL for out-of-context)
-		callback,
-		0, // idProcess (0 = all)
-		0, // idThread  (0 = all)
-		winEventOutOfContext|winEventSkipOwnProc,
-	)
-	if hook == 0 {
-		slog.Error("SetWinEventHook returned 0; falling back to find-only path")
-		threadIDOut <- windows.GetCurrentThreadId()
-		return
-	}
-	defer procUnhookWinEvent.Call(hook)
-
-	threadIDOut <- windows.GetCurrentThreadId()
-
-	var msg win32Msg
-	for {
-		ret, _, _ := procGetMessageW.Call(
-			uintptr(unsafe.Pointer(&msg)),
-			0, 0, 0,
-		)
-		// GetMessageW returns 0 on WM_QUIT; -1 (^uintptr(0)) on error.
-		if ret == 0 || ret == ^uintptr(0) {
-			return
-		}
-		// We never call TranslateMessage / DispatchMessage —
-		// SetWinEventHook callbacks are dispatched internally by
-		// the GetMessage call itself for hooks installed on this
-		// thread. Skipping the dispatch loop avoids accidentally
-		// invoking other window procs on a thread that owns no
-		// windows.
-	}
-}
-
-// classMatchesGame reads the window class name and compares it
-// against the known MapleStory classes.
-func classMatchesGame(hwnd uintptr) bool {
-	var buf [256]uint16
-	n, _, _ := procGetClassNameW.Call(
-		hwnd,
-		uintptr(unsafe.Pointer(&buf[0])),
-		uintptr(len(buf)),
-	)
-	if n == 0 {
-		return false
-	}
-	name := windows.UTF16ToString(buf[:n])
-	return name == classMapleStory || name == classMapleStoryTW
-}
-
-// windowTitle returns the window's title via GetWindowTextW, or
-// the empty string if it has none / the call fails.
-func windowTitle(hwnd uintptr) string {
-	var buf [256]uint16
-	n, _, _ := procGetWindowTextW.Call(
-		hwnd,
-		uintptr(unsafe.Pointer(&buf[0])),
-		uintptr(len(buf)),
-	)
-	if n == 0 {
-		return ""
-	}
-	return windows.UTF16ToString(buf[:n])
-}
-
 // injectCredentials types the account + OTP into the game's currently
 // focused login form. The sequence mirrors Beanfun's WPF launcher
 // (MainWindow.xaml.cs L2158-2238):
 //
 //  1. SetForegroundWindow + 100ms settle.
-//  2. Clear account: VK_END (caret to end) + N×VK_BACK.
-//  3. Type account: per-byte WM_CHAR.
-//  4. VK_TAB to password field.
-//  5. Clear password: VK_END + N×VK_BACK.
-//  6. Type OTP: per-byte WM_CHAR.
-//  7. VK_RETURN to submit.
+//  2. preTypingClick: ESC + click at (50%, 40%) of client area to
+//     drop keyboard focus onto the login textbox.
+//  3. Clear account: VK_END (caret to end) + N×VK_BACK.
+//  4. Type account: per-byte WM_CHAR.
+//  5. VK_TAB to password field.
+//  6. Clear password: VK_END + N×VK_BACK.
+//  7. Type OTP: per-byte WM_CHAR.
+//  8. VK_RETURN to submit.
 //
 // Per the WPF code's lParam analysis, MapleStory dispatches on
 // wParam (the VK) and ignores lParam's scan-code bits in standard

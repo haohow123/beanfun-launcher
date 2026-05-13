@@ -16,6 +16,7 @@ import { useAccountsQuery } from "@/queries/accounts";
 import {
   useFetchOTPMutation,
   useLaunchGameMutation,
+  useSpawnGameMutation,
 } from "@/queries/launch";
 import { loggedInAtom } from "@/state/auth";
 
@@ -28,6 +29,7 @@ export function HomePage() {
   const setLoggedIn = useSetAtom(loggedInAtom);
   const qc = useQueryClient();
   const accounts = useAccountsQuery();
+  const spawn = useSpawnGameMutation();
   const launch = useLaunchGameMutation();
   const fetchOTP = useFetchOTPMutation();
   const [copiedSid, setCopiedSid] = useState<string | null>(null);
@@ -70,11 +72,12 @@ export function HomePage() {
       .catch((e) => console.error("clipboard write failed:", e));
   }
 
-  // startGame doesn't pre-emptively touch the clipboard. Whenever
-  // result.otp is populated (Spawned=true or inject failed), reveal
-  // it inline; the user copies via an explicit click that fires
-  // inside its own user-activation window.
-  function startGame(acc: Account) {
+  function spawnGame() {
+    setFallbackOTP(null);
+    spawn.mutate();
+  }
+
+  function injectCredentials(acc: Account) {
     setFallbackOTP(null);
     launch.mutate(acc, {
       onSuccess: (result) => {
@@ -94,12 +97,14 @@ export function HomePage() {
 
   function launchStatusFor(
     acc: Account,
-  ): "idle" | "pending" | "error" | "success" | "fallback" {
+  ): "idle" | "pending" | "error" | "success" | "fallback" | "no-window" {
     if (launch.variables?.sid !== acc.sid) return "idle";
     if (launch.isPending) return "pending";
     if (launch.isError) return "error";
     if (launch.isSuccess) {
-      return launch.data?.autoFilled ? "success" : "fallback";
+      if (launch.data?.autoFilled) return "success";
+      if (launch.data?.noWindow) return "no-window";
+      return "fallback";
     }
     return "idle";
   }
@@ -112,10 +117,17 @@ export function HomePage() {
     return "idle";
   }
 
+  function spawnLabel() {
+    if (spawn.isPending) return "啟動中…";
+    if (spawn.isSuccess) return "✓ 已啟動,等登入畫面";
+    return "啟動遊戲";
+  }
+
   function renderAccountCard(acc: Account) {
     const launchStatus = launchStatusFor(acc);
     const copyStatus = copyStatusFor(acc);
-    const anyPending = launchStatus === "pending" || copyStatus === "pending";
+    const anyPending =
+      launchStatus === "pending" || copyStatus === "pending";
     const fallback = fallbackOTP?.sid === acc.sid ? fallbackOTP : null;
 
     return (
@@ -123,16 +135,19 @@ export function HomePage() {
         <div className="mb-1 flex items-baseline justify-between gap-2">
           <span className="text-sm font-medium">{acc.sname}</span>
           {launchStatus === "pending" && (
-            <span className="text-xs text-muted-foreground">
-              啟動中,等登入畫面…
-            </span>
+            <span className="text-xs text-muted-foreground">帶入中…</span>
           )}
           {launchStatus === "success" && (
-            <span className="text-xs text-foreground">✓ 已啟動並帶入帳密</span>
+            <span className="text-xs text-foreground">✓ 已帶入帳密</span>
+          )}
+          {launchStatus === "no-window" && (
+            <span className="text-xs text-muted-foreground">
+              請先按啟動遊戲
+            </span>
           )}
           {launchStatus === "fallback" && (
             <span className="text-xs text-foreground">
-              已啟動,需手動帶入
+              需手動貼上
             </span>
           )}
           {launchStatus === "error" && (
@@ -140,7 +155,7 @@ export function HomePage() {
               className="text-xs text-destructive"
               title={String(launch.error)}
             >
-              啟動失敗
+              帶入失敗
             </span>
           )}
         </div>
@@ -184,9 +199,9 @@ export function HomePage() {
             variant="outline"
             size="sm"
             disabled={anyPending}
-            onClick={() => startGame(acc)}
+            onClick={() => injectCredentials(acc)}
           >
-            啟動遊戲
+            帶入帳密
           </Button>
         </div>
       </li>
@@ -232,11 +247,24 @@ export function HomePage() {
         <CardHeader>
           <CardTitle>遊戲帳號</CardTitle>
           <CardDescription>
-            點「啟動遊戲」直接開並自動帶入,或「複製帳密」貼到其他啟動器
+            按「啟動遊戲」開遊戲,等登入畫面出現後選帳號按「帶入帳密」
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
+          <Button
+            onClick={spawnGame}
+            disabled={spawn.isPending}
+          >
+            {spawnLabel()}
+          </Button>
+          {spawn.isError && (
+            <p className="text-xs text-destructive" title={String(spawn.error)}>
+              啟動失敗:{String(spawn.error)}
+            </p>
+          )}
+
           {renderAccounts()}
+
           <Button
             variant="outline"
             className="mt-2 self-center"

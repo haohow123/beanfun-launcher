@@ -32,32 +32,81 @@ func NewLauncherService(login *beanfun.LoginService) *LauncherService {
 //   - AutoFilled=true → the game's login form received the
 //     credentials. OTP empty (never exposed to frontend).
 //
-//   - AutoFilled=false → either the window never showed up in time,
-//     or PostMessageW rejected. OTP is populated so the frontend
+//   - NoWindow=true → no game window is open. Frontend should
+//     prompt the user to press 啟動遊戲 first. OTP is not fetched
+//     in this path (saves a wasted single-use token).
+//
+//   - AutoFilled=false (NoWindow=false) → window was found but
+//     inject failed mid-sequence. OTP is populated so the frontend
 //     can offer the user manual-paste.
 //
-// Hard errors (no session, missing game exe, spawn failure, OTP
-// fetch failure) come back as a plain Go error and never produce a
-// LaunchResult.
+// Hard errors (no session, OTP fetch failure) come back as a plain
+// Go error and never produce a LaunchResult.
 type LaunchResult struct {
 	AutoFilled bool   `json:"autoFilled"`
+	NoWindow   bool   `json:"noWindow,omitempty"`
 	OTP        string `json:"otp,omitempty"`
 }
 
-// Launch fetches a one-time game-launch token for the given account,
-// spawns the game executable, then injects the credentials into its
-// login form via PostMessage. The OTP byte slice is zeroed before
-// this method returns regardless of outcome.
+// SpawnGame opens the configured MapleStory.exe but does not wait
+// for the login form. Returns nil when the game has been spawned
+// (or was already running).
+//
+// Split out from Launch so the frontend can drive an explicit
+// two-step flow: user clicks 啟動遊戲 (this method) → waits visually
+// for the login form → clicks 帶入帳密 per account (Launch). That
+// design sidesteps the +20s "form input-ready" gap between window
+// visibility and the textbox actually accepting WM_CHAR; once the
+// user can see the form they're guaranteed it's ready, and inject
+// lands within ~100ms.
 //
 // Requires:
-//   - An active session (login → CheckQRLogin completed).
-//   - Either BEANFUN_GAME_EXE env var or the
-//     HKLM\SOFTWARE\Gamania\MAPLESTORY\Path registry value to locate
-//     the game.
+//   - An active session (so we know there's a logged-in user
+//     intending to play; resolveGameExe is independent of session).
+//   - Either BEANFUN_GAME_EXE env var or the registry value to
+//     locate the game executable.
+func (s *LauncherService) SpawnGame() error {
+	s.mu.Lock()
+	client, session := s.login.Snapshot()
+	s.mu.Unlock()
+
+	if client == nil || session == nil {
+		return beanfun.ErrLoginRequired()
+	}
+
+	gameExe, err := resolveGameExe()
+	if err != nil {
+		return err
+	}
+
+	if hwnd := findGameWindowFn(); hwnd != 0 {
+		slog.Info("SpawnGame: game already running, skipping spawn")
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := spawnFn(ctx, gameExe, nil); err != nil {
+		slog.Error("SpawnGame: spawnFn failed", "err", err)
+		return err
+	}
+	slog.Info("SpawnGame: game spawned", "exe", gameExe)
+	return nil
+}
+
+// Launch finds the running MapleStory window and injects the given
+// account's credentials into its login form. Does NOT spawn the
+// game — see SpawnGame for that. Returns:
 //
-// On Windows the spawn uses ShellExecuteW (manifest-aware UAC) and
-// injection uses FindWindowW + PostMessageW. On non-Windows the
-// spawn stub returns ErrPlatformUnsupported.
+//   - LaunchResult{NoWindow: true} when no game window is open.
+//     Frontend should prompt the user to press 啟動遊戲 first.
+//   - LaunchResult{AutoFilled: true} on successful inject.
+//   - LaunchResult{AutoFilled: false, OTP: ...} when the window
+//     exists but inject failed mid-sequence — frontend shows the
+//     OTP for manual paste.
+//
+// The OTP byte slice is zeroed before this method returns.
 func (s *LauncherService) Launch(account beanfun.Account) (LaunchResult, error) {
 	s.mu.Lock()
 	client, session := s.login.Snapshot()
@@ -67,9 +116,10 @@ func (s *LauncherService) Launch(account beanfun.Account) (LaunchResult, error) 
 		return LaunchResult{}, beanfun.ErrLoginRequired()
 	}
 
-	gameExe, err := resolveGameExe()
-	if err != nil {
-		return LaunchResult{}, err
+	hwnd := findGameWindowFn()
+	if hwnd == 0 {
+		slog.Info("Launch: no game window found", "sid", account.SID)
+		return LaunchResult{NoWindow: true}, nil
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -81,52 +131,6 @@ func (s *LauncherService) Launch(account beanfun.Account) (LaunchResult, error) 
 		return LaunchResult{}, err
 	}
 	defer beanfun.Zero(otp.Token)
-
-	// Detect-first: if a MapleStory window is already open, skip
-	// spawn and inject directly.
-	hwnd := findGameWindowFn()
-	if hwnd != 0 {
-		slog.Info("Launch: existing window found, injecting directly",
-			"sid", account.SID)
-	} else {
-		// No existing window: spawn the game and wait for its
-		// window to come up.
-		if err := spawnFn(ctx, gameExe, nil); err != nil {
-			slog.Error("Launch: spawnFn failed", "err", err, "sid", account.SID)
-			return LaunchResult{}, err
-		}
-		slog.Info("Launch: game spawned, waiting for window",
-			"sid", account.SID, "exe", gameExe, "timeout", gameWindowWaitTimeout)
-
-		// Diagnostic: poll-log every Maple-class window + Maple/Patcher
-		// process every 500ms while we wait. Cheap, useful for
-		// confirming the timeline on Windows builds.
-		diagCtx, diagCancel := context.WithCancel(ctx)
-		defer diagCancel()
-		startDiagnostic(diagCtx)
-
-		h, werr := waitForGameWindowFn(ctx, gameWindowWaitTimeout)
-		if werr != nil {
-			slog.Warn("Launch: window not found within timeout, falling back to manual paste",
-				"err", werr, "sid", account.SID)
-			return LaunchResult{AutoFilled: false, OTP: string(otp.Token)}, nil
-		}
-		hwnd = h
-
-		// Wait for IsWindowVisible to flip true. The CREATE event
-		// fires while the HWND is still invisible (DirectX init in
-		// progress); visibility lights up when the login form is
-		// actually drawable + input-ready. Diagnostic data showed
-		// ~4-5s gap between CREATE and visibility on this build.
-		if verr := waitWindowVisibleFn(ctx, hwnd, formReadyTimeout); verr != nil {
-			slog.Warn("Launch: window never became visible, falling back to manual paste",
-				"err", verr, "sid", account.SID)
-			return LaunchResult{AutoFilled: false, OTP: string(otp.Token)}, nil
-		}
-		slog.Info("Launch: window visible, settling before inject",
-			"sid", account.SID, "settle", formReadySettleDelay)
-		time.Sleep(formReadySettleDelay)
-	}
 
 	if ierr := injectFn(hwnd, []byte(account.SID), otp.Token); ierr != nil {
 		slog.Error("Launch: inject failed, falling back to manual paste",
