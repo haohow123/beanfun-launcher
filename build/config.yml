@@ -56,8 +56,15 @@ dev_mode:
       type: blocking
     - cmd: wails3 task common:dev:frontend
       type: background
+    # Give Vite ~3s to spawn node + bind 9245 before Wails starts its
+    # own connect-retry loop (hardcoded at 10×500ms=5s in alpha.90's
+    # application_dev.go). Without this head-start the FATAL
+    # "unable to connect to frontend server" hits whenever node+Vite
+    # boot exceeds 5s — fast machines clear it, slower or busy ones
+    # don't.
     - cmd: wails3 task run
       type: primary
+      delay_next: 3000
 
 # File Associations
 # More information at: https://v3.wails.io/noit/done/yet
