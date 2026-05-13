@@ -1,0 +1,6 @@
+# Every file in the repo is owned by the project author.
+# Required for the "Require review from Code Owners" branch
+# protection rule on `main` to gate external PRs. Solo project —
+# owner is admin so admin-bypass covers self-merge.
+
+* @haohow123
