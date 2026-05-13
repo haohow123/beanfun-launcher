@@ -4,8 +4,9 @@ package launcher
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"unsafe"
+	"syscall"
 
 	"golang.org/x/sys/windows"
 )
@@ -14,61 +15,61 @@ func init() {
 	spawnFn = osSpawn
 }
 
-// osSpawn invokes CreateProcessW with the given executable and args.
-// The new process is detached — the launcher closes the parent's
-// handles to the process + main thread immediately. We don't track
-// game lifetime in Milestone 6.
+// osSpawn launches `path` with the given args via ShellExecuteW.
 //
-// path is the absolute path to game.exe; args is the argv tail (NOT
-// including argv[0] — Windows expects the full command line to start
-// with the program name, so we re-emit `path` as the first token of
-// CommandLine).
+// We use ShellExecuteW (verb=nil → default "open") rather than
+// CreateProcessW because some game executables — notably MapleStory
+// TW — embed `requireAdministrator` in their application manifest.
+// Windows refuses CreateProcessW from a non-elevated parent in that
+// case (ERROR_ELEVATION_REQUIRED = 740), but ShellExecuteW reads the
+// manifest and transparently raises a UAC prompt to elevate.
+//
+// Outcome:
+//   - Game doesn't require admin → ShellExecuteW launches it as-is,
+//     no UAC prompt.
+//   - Game requires admin (MapleStory) → UAC prompt; user clicks
+//     yes → game launches elevated; clicks no → ERROR_CANCELLED.
+//
+// We don't track the spawned process's lifetime — the game runs
+// independently, and the launcher's job is done once the shell
+// accepts the request.
 func osSpawn(_ context.Context, path string, args []string) error {
-	cmdLine := buildCommandLine(path, args)
-
 	pathW, err := windows.UTF16PtrFromString(path)
 	if err != nil {
 		return ErrSpawnFailed(fmt.Errorf("UTF16PtrFromString(path): %w", err))
 	}
-	cmdW, err := windows.UTF16PtrFromString(cmdLine)
+	var argsW *uint16
+	if argStr := buildArgString(args); argStr != "" {
+		argsW, err = windows.UTF16PtrFromString(argStr)
+		if err != nil {
+			return ErrSpawnFailed(fmt.Errorf("UTF16PtrFromString(args): %w", err))
+		}
+	}
+
+	err = windows.ShellExecute(
+		0,                     // hWnd — no parent window for UAC dialog
+		nil,                   // verb=nil → "open" (manifest-aware launch)
+		pathW,                 // file
+		argsW,                 // params
+		nil,                   // cwd — inherit
+		windows.SW_SHOWNORMAL, // nShowCmd
+	)
 	if err != nil {
-		return ErrSpawnFailed(fmt.Errorf("UTF16PtrFromString(cmdLine): %w", err))
+		if errors.Is(err, syscall.Errno(windows.ERROR_CANCELLED)) {
+			return ErrSpawnFailed(fmt.Errorf("UAC elevation cancelled by user"))
+		}
+		return ErrSpawnFailed(fmt.Errorf("ShellExecuteW: %w", err))
 	}
-
-	si := &windows.StartupInfo{}
-	si.Cb = uint32(unsafe.Sizeof(*si))
-	pi := &windows.ProcessInformation{}
-
-	if err := windows.CreateProcess(
-		pathW,
-		cmdW,
-		nil,   // process security attributes
-		nil,   // thread security attributes
-		false, // inherit handles
-		0,     // creation flags
-		nil,   // environment (inherit parent)
-		nil,   // current directory (inherit parent)
-		si,
-		pi,
-	); err != nil {
-		return ErrSpawnFailed(fmt.Errorf("CreateProcessW: %w", err))
-	}
-
-	_ = windows.CloseHandle(pi.Process)
-	_ = windows.CloseHandle(pi.Thread)
 	return nil
 }
 
-// buildCommandLine assembles the Win32 lpCommandLine string. Each
-// token containing whitespace gets double-quoted with embedded `"`
-// escaped per Microsoft's parsing rules
-// (https://learn.microsoft.com/en-us/cpp/cpp/main-function-command-line-args#parsing-c-command-line-arguments).
-// Beanfun's game args (e.g. `/u:T9abc123 /p:OTP56789`) have no spaces
-// or quotes themselves, so the path is the only token that typically
-// needs quoting.
-func buildCommandLine(path string, args []string) string {
-	parts := make([]string, 0, len(args)+1)
-	parts = append(parts, quoteIfNeeded(path))
+// buildArgString concatenates command-line args with Windows
+// argv-parsing quoting (https://learn.microsoft.com/en-us/cpp/cpp/main-function-command-line-args).
+// ShellExecuteW's lpParameters takes the argv tail — the program
+// itself is passed separately as lpFile, unlike CreateProcessW where
+// lpCommandLine starts with the program name.
+func buildArgString(args []string) string {
+	parts := make([]string, 0, len(args))
 	for _, a := range args {
 		parts = append(parts, quoteIfNeeded(a))
 	}
