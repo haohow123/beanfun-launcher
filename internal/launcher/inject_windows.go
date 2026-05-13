@@ -6,6 +6,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"runtime"
+	"syscall"
 	"time"
 	"unsafe"
 
@@ -22,9 +25,48 @@ func init() {
 var (
 	user32                  = windows.NewLazySystemDLL("user32.dll")
 	procFindWindowW         = user32.NewProc("FindWindowW")
+	procGetClassNameW       = user32.NewProc("GetClassNameW")
+	procGetWindowTextW      = user32.NewProc("GetWindowTextW")
 	procSetForegroundWindow = user32.NewProc("SetForegroundWindow")
 	procPostMessageW        = user32.NewProc("PostMessageW")
+	procSetWinEventHook     = user32.NewProc("SetWinEventHook")
+	procUnhookWinEvent      = user32.NewProc("UnhookWinEvent")
+	procGetMessageW         = user32.NewProc("GetMessageW")
+	procPostThreadMessageW  = user32.NewProc("PostThreadMessageW")
 )
+
+const (
+	// WinEvent range we listen on. eventMin/eventMax span from
+	// EVENT_SYSTEM_FOREGROUND (0x0003) to EVENT_OBJECT_NAMECHANGE
+	// (0x800C) so we can diagnose which event corresponds to "login
+	// form input-ready" on this game build. The class filter inside
+	// the callback keeps the volume low.
+	//
+	// Other events that fall in the range and may show up in logs:
+	//   0x8001 EVENT_OBJECT_DESTROY
+	//   0x8002 EVENT_OBJECT_SHOW
+	//   0x8003 EVENT_OBJECT_HIDE
+	//   0x8005 EVENT_OBJECT_FOCUS
+	//   0x800A EVENT_OBJECT_STATECHANGE
+	eventSystemForeground = 0x0003
+	eventObjectCreate     = 0x8000
+	eventObjectNameChange = 0x800C
+
+	winEventOutOfContext = 0x0000
+	winEventSkipOwnProc  = 0x0002
+	objidWindow          = 0x00000000
+	wmQuit               = 0x0012
+)
+
+// win32Msg mirrors Win32's MSG struct for use with GetMessageW.
+type win32Msg struct {
+	HWnd    uintptr
+	Message uint32
+	WParam  uintptr
+	LParam  uintptr
+	Time    uint32
+	Pt      struct{ X, Y int32 }
+}
 
 const (
 	wmChar    = 0x0102 // WM_CHAR
@@ -68,29 +110,186 @@ func findGameWindow() uintptr {
 	return 0
 }
 
-// waitForGameWindow polls every 200ms (after an immediate probe)
-// until findGameWindow returns non-zero, ctx is cancelled, or the
-// deadline expires.
+// waitForGameWindow registers a system-wide WinEvent hook for
+// EVENT_OBJECT_CREATE and returns the first MapleStory window's
+// HWND, or an error on context cancel / timeout.
+//
+// Architecture (Win32 hooks fundamentally require thread-local
+// state + a message pump):
+//
+//  1. Run a goroutine locked to one OS thread (Win32 hooks are
+//     thread-bound; cross-thread hook delivery is not allowed).
+//  2. That thread calls SetWinEventHook with WINEVENT_OUTOFCONTEXT
+//     — the hook callback runs in our process, no DLL injection
+//     into the target.
+//  3. The thread runs a GetMessage / TranslateMessage /
+//     DispatchMessage pump. SetWinEventHook delivers its callbacks
+//     via this pump.
+//  4. The callback checks the new window's class name; matches
+//     publish to a `found` channel.
+//  5. The caller goroutine waits on `found` / ctx / timeout; on
+//     any exit it posts WM_QUIT to wake up the pump and the hook
+//     thread terminates cleanly (deferred UnhookWinEvent + pump
+//     return).
+//
+// Why event-based instead of polling: 200ms poll worked, but
+// SetWinEventHook fires within ~milliseconds of window creation —
+// no wasted FindWindowW calls, cleaner pattern, and the same
+// approach lets us later subscribe to "game window closed"
+// (EVENT_OBJECT_DESTROY) events if we want.
 func waitForGameWindow(ctx context.Context, timeout time.Duration) (uintptr, error) {
+	// Immediate probe — game may already be running.
 	if h := findGameWindow(); h != 0 {
 		return h, nil
 	}
-	deadline := time.Now().Add(timeout)
-	ticker := time.NewTicker(200 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return 0, ctx.Err()
-		case <-ticker.C:
-			if h := findGameWindow(); h != 0 {
-				return h, nil
-			}
-			if time.Now().After(deadline) {
-				return 0, errors.New("game window did not appear within timeout")
-			}
-		}
+
+	found := make(chan uintptr, 1)
+	threadIDCh := make(chan uint32, 1)
+	pumpDone := make(chan struct{})
+
+	go runHookPump(found, threadIDCh, pumpDone)
+
+	// Wait for the hook thread to publish its thread ID; we need it
+	// to PostThreadMessageW(WM_QUIT) on cleanup. The pump should be
+	// up within milliseconds of the goroutine starting.
+	var threadID uint32
+	select {
+	case threadID = <-threadIDCh:
+	case <-ctx.Done():
+		<-pumpDone
+		return 0, ctx.Err()
+	case <-time.After(2 * time.Second):
+		return 0, errors.New("hook thread failed to start")
 	}
+
+	defer func() {
+		_, _, _ = procPostThreadMessageW.Call(uintptr(threadID), wmQuit, 0, 0)
+		<-pumpDone
+	}()
+
+	select {
+	case h := <-found:
+		return h, nil
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	case <-time.After(timeout):
+		return 0, errors.New("game window did not appear within timeout")
+	}
+}
+
+// runHookPump owns the SetWinEventHook + message-pump lifecycle on
+// one locked OS thread.
+func runHookPump(found chan<- uintptr, threadIDOut chan<- uint32, pumpDone chan<- struct{}) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	defer close(pumpDone)
+
+	callback := syscall.NewCallback(func(
+		_ uintptr, // hWinEventHook
+		event uint32,
+		hwnd uintptr,
+		idObject int32,
+		_ int32, // idChild
+		_ uint32, // idEventThread
+		_ uint32, // dwmsEventTime
+	) uintptr {
+		// Every WinEvent in our range fires the callback. Most are
+		// for windows we don't care about; we filter on
+		// idObject=OBJID_WINDOW + class match before doing anything
+		// expensive.
+		if hwnd == 0 || idObject != objidWindow {
+			return 0
+		}
+		if !classMatchesGame(hwnd) {
+			return 0
+		}
+		// Diagnostic: log every MapleStory-class event so we can
+		// identify which event marks "login form is input-ready"
+		// (currently CREATE fires ~4s post-spawn but inject at that
+		// point misses — form not ready). Once we have the right
+		// event we can drop the post-detect settle delay.
+		slog.Info("WinEvent: MapleStory match",
+			"event", fmt.Sprintf("0x%04X", event),
+			"hwnd", fmt.Sprintf("0x%X", hwnd),
+			"title", windowTitle(hwnd),
+		)
+		if event != eventObjectCreate {
+			return 0
+		}
+		// Non-blocking — first match wins.
+		select {
+		case found <- hwnd:
+		default:
+		}
+		return 0
+	})
+
+	hook, _, _ := procSetWinEventHook.Call(
+		eventSystemForeground, // eventMin
+		eventObjectNameChange, // eventMax (range covers CREATE / SHOW / FOCUS / FOREGROUND / etc.)
+		0,                     // hmodWinEventProc (NULL for out-of-context)
+		callback,
+		0, // idProcess (0 = all)
+		0, // idThread  (0 = all)
+		winEventOutOfContext|winEventSkipOwnProc,
+	)
+	if hook == 0 {
+		slog.Error("SetWinEventHook returned 0; falling back to find-only path")
+		threadIDOut <- windows.GetCurrentThreadId()
+		return
+	}
+	defer procUnhookWinEvent.Call(hook)
+
+	threadIDOut <- windows.GetCurrentThreadId()
+
+	var msg win32Msg
+	for {
+		ret, _, _ := procGetMessageW.Call(
+			uintptr(unsafe.Pointer(&msg)),
+			0, 0, 0,
+		)
+		// GetMessageW returns 0 on WM_QUIT; -1 (^uintptr(0)) on error.
+		if ret == 0 || ret == ^uintptr(0) {
+			return
+		}
+		// We never call TranslateMessage / DispatchMessage —
+		// SetWinEventHook callbacks are dispatched internally by
+		// the GetMessage call itself for hooks installed on this
+		// thread. Skipping the dispatch loop avoids accidentally
+		// invoking other window procs on a thread that owns no
+		// windows.
+	}
+}
+
+// classMatchesGame reads the window class name and compares it
+// against the known MapleStory classes.
+func classMatchesGame(hwnd uintptr) bool {
+	var buf [256]uint16
+	n, _, _ := procGetClassNameW.Call(
+		hwnd,
+		uintptr(unsafe.Pointer(&buf[0])),
+		uintptr(len(buf)),
+	)
+	if n == 0 {
+		return false
+	}
+	name := windows.UTF16ToString(buf[:n])
+	return name == classMapleStory || name == classMapleStoryTW
+}
+
+// windowTitle returns the window's title via GetWindowTextW, or
+// the empty string if it has none / the call fails.
+func windowTitle(hwnd uintptr) string {
+	var buf [256]uint16
+	n, _, _ := procGetWindowTextW.Call(
+		hwnd,
+		uintptr(unsafe.Pointer(&buf[0])),
+		uintptr(len(buf)),
+	)
+	if n == 0 {
+		return ""
+	}
+	return windows.UTF16ToString(buf[:n])
 }
 
 // injectCredentials types the account + OTP into the game's currently
