@@ -13,8 +13,13 @@ tasks:
     sources:
       - package.json
       - package-lock.json
+    # node_modules/ as a directory only updates its mtime when direct
+    # children are added/removed at the top level — npm install often
+    # only touches files deeper inside, so task sees the directory as
+    # stale and re-runs every time. .package-lock.json inside is bumped
+    # by every npm install and gives task a reliable freshness marker.
     generates:
-      - node_modules
+      - node_modules/.package-lock.json
     preconditions:
       - sh: npm version
         msg: "Looks like npm isn't installed. Npm is part of the Node installer: https://nodejs.org/en/download/"
