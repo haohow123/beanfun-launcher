@@ -63,8 +63,7 @@ export function HomePage() {
         {accounts.data.map((acc) => (
           <li
             key={acc.sid}
-            data-disabled={!acc.enabled || undefined}
-            className="flex items-center justify-between rounded-md border p-3 data-[disabled]:opacity-50"
+            className="flex items-center justify-between rounded-md border p-3"
           >
             <span className="text-sm font-medium">{acc.sname}</span>
             <span className="text-xs text-muted-foreground">{acc.sid}</span>

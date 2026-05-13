@@ -49,15 +49,15 @@ func TestExtractAccounts(t *testing.T) {
 				accountRow("x", "ccc", "333", "Charlie"),
 			),
 			want: []Account{
-				{SID: "aaa", SSN: "111", SName: "Alpha", Enabled: true},
-				{SID: "bbb", SSN: "222", SName: "Bravo", Enabled: true},
-				{SID: "ccc", SSN: "333", SName: "Charlie", Enabled: true},
+				{SID: "aaa", SSN: "111", SName: "Alpha"},
+				{SID: "bbb", SSN: "222", SName: "Bravo"},
+				{SID: "ccc", SSN: "333", SName: "Charlie"},
 			},
 		},
 		{
 			name: "single row",
 			html: accountsListHTML(accountRow("onclick(...)", "abc", "000111", "Solo")),
-			want: []Account{{SID: "abc", SSN: "000111", SName: "Solo", Enabled: true}},
+			want: []Account{{SID: "abc", SSN: "000111", SName: "Solo"}},
 		},
 		{
 			name: "empty list",
@@ -65,33 +65,22 @@ func TestExtractAccounts(t *testing.T) {
 			want: []Account{},
 		},
 		{
-			name: "disabled row (empty onclick)",
-			html: accountsListHTML(
-				accountRow("x", "live", "111", "Active"),
-				accountRow("", "frozen", "222", "Frozen"),
-			),
-			want: []Account{
-				{SID: "live", SSN: "111", SName: "Active", Enabled: true},
-				{SID: "frozen", SSN: "222", SName: "Frozen", Enabled: false},
-			},
-		},
-		{
 			name: "named HTML entity in name",
 			html: accountsListHTML(accountRow("x", "abc", "111", "Tom &amp; Jerry")),
-			want: []Account{{SID: "abc", SSN: "111", SName: "Tom & Jerry", Enabled: true}},
+			want: []Account{{SID: "abc", SSN: "111", SName: "Tom & Jerry"}},
 		},
 		{
 			name: "numeric HTML entity in name (chinese)",
-			// &#23567;&#27193; → 小樹 (traditional). Confirms html.UnescapeString
-			// handles bare decimal numeric character references.
+			// &#23567;&#27193; → 小樹 (traditional). Confirms the
+			// tokenizer decodes bare decimal numeric character references.
 			html: accountsListHTML(accountRow("x", "abc", "111", "&#23567;&#27193;")),
-			want: []Account{{SID: "abc", SSN: "111", SName: "小樹", Enabled: true}},
+			want: []Account{{SID: "abc", SSN: "111", SName: "小樹"}},
 		},
 		{
 			name: "malformed row is skipped",
 			html: `<a onclick="x"><div id="" sn="" name=""></div></a>` +
 				accountsListHTML(accountRow("x", "abc", "111", "Real")),
-			want: []Account{{SID: "abc", SSN: "111", SName: "Real", Enabled: true}},
+			want: []Account{{SID: "abc", SSN: "111", SName: "Real"}},
 		},
 	}
 	for _, tc := range cases {
@@ -126,7 +115,7 @@ function AddServiceAccountToList(strServiceAccountSN, strServiceAccountID, strSe
 </script>`
 	got := extractAccounts(fixture)
 	want := []Account{
-		{SID: "T9abcdef0123456789ab", SSN: "1234567", SName: "TestUser", Enabled: true},
+		{SID: "T9abcdef0123456789ab", SSN: "1234567", SName: "TestUser"},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("got %d rows, want %d: %+v", len(got), len(want), got)
@@ -207,9 +196,9 @@ func TestBeanfunClient_GetAccounts_HappyPath(t *testing.T) {
 		t.Errorf("game_server_account_list.aspx hit %d times, want 1", listHits)
 	}
 	want := []Account{
-		{SID: "aaa", SSN: "111", SName: "Hero", Enabled: true},
-		{SID: "frozen", SSN: "222", SName: "Stuck", Enabled: false},
-		{SID: "ccc", SSN: "333", SName: "Tom & Jerry", Enabled: true},
+		{SID: "aaa", SSN: "111", SName: "Hero"},
+		{SID: "frozen", SSN: "222", SName: "Stuck"},
+		{SID: "ccc", SSN: "333", SName: "Tom & Jerry"},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("got %d, want %d: %+v", len(got), len(want), got)

@@ -38,13 +38,6 @@ export class Account {
              */
             this["sname"] = "";
         }
-        if (!("enabled" in $$source)) {
-            /**
-             * @member
-             * @type {boolean}
-             */
-            this["enabled"] = false;
-        }
 
         Object.assign(this, $$source);
     }

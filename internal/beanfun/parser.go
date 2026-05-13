@@ -52,126 +52,112 @@ func extractVerificationToken(htmlBody string) string {
 	return m[1]
 }
 
-// walkNodes invokes visit on n and every descendant. Subtrees rooted
-// at <script> or <style> are skipped — their text content shouldn't
-// be parsed as markup even when it visually contains tag-like
-// substrings (e.g. the JS template that builds account rows in
-// game_server_account_list.aspx).
-func walkNodes(n *html.Node, visit func(*html.Node)) {
-	visit(n)
-	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		if c.Type == html.ElementNode && (c.Data == "script" || c.Data == "style") {
-			continue
-		}
-		walkNodes(c, visit)
-	}
-}
-
-// extractHiddenInputs walks every <input> in body and returns the
-// non-submit ones that carry both name and value attributes, as
+// extractHiddenInputs streams the body's tokens and collects every
+// non-submit <input> that carries both name and value attributes, as
 // url.Values ready for x-www-form-urlencoded encoding.
 //
 // url.Values sorts keys alphabetically on Encode(); the server accepts
 // arbitrary field order, so the simpler Go API wins.
 func extractHiddenInputs(body string) url.Values {
-	doc, err := html.Parse(strings.NewReader(body))
-	if err != nil {
-		return url.Values{}
-	}
 	out := url.Values{}
-	walkNodes(doc, func(n *html.Node) {
-		if n.Type != html.ElementNode || n.Data != "input" {
-			return
+	z := html.NewTokenizer(strings.NewReader(body))
+	for {
+		tt := z.Next()
+		if tt == html.ErrorToken {
+			return out
+		}
+		if tt != html.StartTagToken && tt != html.SelfClosingTagToken {
+			continue
+		}
+		tn, hasAttr := z.TagName()
+		if !hasAttr || string(tn) != "input" {
+			continue
 		}
 		var name, value, typ string
 		hasValue := false
-		for _, a := range n.Attr {
-			switch a.Key {
+		for {
+			k, v, more := z.TagAttr()
+			switch string(k) {
 			case "name":
-				name = a.Val
+				name = string(v)
 			case "value":
-				value = a.Val
+				value = string(v)
 				hasValue = true
 			case "type":
-				typ = a.Val
+				typ = string(v)
+			}
+			if !more {
+				break
 			}
 		}
-		if name == "" || !hasValue {
-			return
-		}
-		if strings.EqualFold(typ, "submit") {
-			return
+		if name == "" || !hasValue || strings.EqualFold(typ, "submit") {
+			continue
 		}
 		out.Add(name, value)
-	})
-	return out
+	}
 }
 
-// extractAccounts walks game_server_account_list.aspx HTML and returns
-// one Account per <div> carrying id + sn + name attributes. Names
-// arrive HTML-entity decoded by the parser; the result slice is sorted
-// ascending by SSN (fixed-width digit strings sort lexicographically
-// equal to numerically).
+// extractAccounts streams the body's tokens and returns one Account
+// per <div> carrying id + sn + name attributes. Names arrive
+// HTML-entity decoded by the tokenizer; the result is sorted ascending
+// by SSN (fixed-width digit strings sort lexicographically equal to
+// numerically).
 //
-// Enabled is best-effort: it reads the onclick attribute of the
-// nearest ancestor (typically the wrapping <li>). Current production
-// HTML always renders visible rows with a non-empty onclick, so this
-// stays true in practice; the field is exposed in case the portal
-// regresses to using empty onclick for disabled rows (the heuristic
-// pungin's HTML used).
+// <script> and <style> subtrees are skipped via an open-tag counter
+// — production HTML embeds a JS template that visually contains
+// matching <div sn= name= id=> markup but is string-concatenated
+// content, not real elements.
 func extractAccounts(body string) []Account {
-	doc, err := html.Parse(strings.NewReader(body))
-	if err != nil {
-		return nil
-	}
 	var out []Account
-	walkNodes(doc, func(n *html.Node) {
-		if n.Type != html.ElementNode || n.Data != "div" {
-			return
+	z := html.NewTokenizer(strings.NewReader(body))
+	inSkipped := 0
+	for {
+		tt := z.Next()
+		if tt == html.ErrorToken {
+			break
 		}
-		var sid, ssn, sname string
-		hasSN := false
-		for _, a := range n.Attr {
-			switch a.Key {
-			case "id":
-				sid = a.Val
-			case "sn":
-				ssn = a.Val
-				hasSN = true
-			case "name":
-				sname = a.Val
+		switch tt {
+		case html.StartTagToken:
+			tn, hasAttr := z.TagName()
+			name := string(tn)
+			if name == "script" || name == "style" {
+				inSkipped++
+				continue
+			}
+			if inSkipped > 0 || name != "div" || !hasAttr {
+				continue
+			}
+			var sid, ssn, sname string
+			for {
+				k, v, more := z.TagAttr()
+				switch string(k) {
+				case "id":
+					sid = string(v)
+				case "sn":
+					ssn = string(v)
+				case "name":
+					sname = string(v)
+				}
+				if !more {
+					break
+				}
+			}
+			if sid == "" || ssn == "" || sname == "" {
+				continue
+			}
+			out = append(out, Account{SID: sid, SSN: ssn, SName: sname})
+		case html.EndTagToken:
+			tn, _ := z.TagName()
+			n := string(tn)
+			if (n == "script" || n == "style") && inSkipped > 0 {
+				inSkipped--
 			}
 		}
-		if !hasSN || sid == "" || ssn == "" || sname == "" {
-			return
-		}
-		out = append(out, Account{
-			SID:     sid,
-			SSN:     ssn,
-			SName:   sname,
-			Enabled: ancestorOnclickIsNonEmpty(n),
-		})
-	})
+	}
 	sort.SliceStable(out, func(i, j int) bool {
 		return out[i].SSN < out[j].SSN
 	})
 	return out
-}
-
-// ancestorOnclickIsNonEmpty walks up the DOM looking for the nearest
-// ancestor with an onclick attribute. Returns:
-//   - true  if onclick is non-empty (rendered, clickable row)
-//   - false if onclick is "" (disabled — pungin's heuristic)
-//   - true  if no ancestor has onclick (assume enabled — defensive)
-func ancestorOnclickIsNonEmpty(n *html.Node) bool {
-	for p := n.Parent; p != nil; p = p.Parent {
-		for _, a := range p.Attr {
-			if a.Key == "onclick" {
-				return a.Val != ""
-			}
-		}
-	}
-	return true
 }
 
 // normalizeDeeplink unwraps the play.games.gamania.com deeplink
