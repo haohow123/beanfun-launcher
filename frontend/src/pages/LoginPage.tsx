@@ -1,12 +1,7 @@
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
 import { useSetAtom } from "jotai";
 import { useEffect } from "react";
 
-import { LoginService, QRStatus } from "@bindings/beanfun";
+import { QRStatus } from "@bindings/beanfun";
 import { AppShell } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,34 +11,16 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  useQRStatusQuery,
+  useStartQRLoginMutation,
+} from "@/queries/qrLogin";
 import { loggedInAtom } from "@/state/auth";
-
-const POLL_INTERVAL_MS = 2000;
 
 export function LoginPage() {
   const setLoggedIn = useSetAtom(loggedInAtom);
-  const qc = useQueryClient();
-
-  const startMut = useMutation({
-    mutationFn: () => LoginService.StartQRLogin(),
-    // Drop any stale status from a previous attempt so a retry after
-    // expired/error starts the poll loop fresh (otherwise refetchInterval
-    // sees the old terminal state and never resumes).
-    onSuccess: () => qc.removeQueries({ queryKey: ["qrStatus"] }),
-  });
-
-  const statusQuery = useQuery({
-    queryKey: ["qrStatus"],
-    queryFn: () => LoginService.CheckQRLogin(),
-    enabled: startMut.isSuccess,
-    refetchInterval: (q) => {
-      const s = q.state.data;
-      if (s === QRStatus.QRStatusApproved || s === QRStatus.QRStatusExpired) {
-        return false;
-      }
-      return POLL_INTERVAL_MS;
-    },
-  });
+  const startMut = useStartQRLoginMutation();
+  const statusQuery = useQRStatusQuery(startMut.isSuccess);
 
   useEffect(() => {
     if (statusQuery.data === QRStatus.QRStatusApproved) {

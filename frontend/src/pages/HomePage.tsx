@@ -1,7 +1,6 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { useSetAtom } from "jotai";
 
-import { LoginService } from "@bindings/beanfun";
 import { AppShell } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/button";
 import {
@@ -11,23 +10,21 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { useAccountsQuery } from "@/queries/accounts";
 import { loggedInAtom } from "@/state/auth";
 
 export function HomePage() {
   const setLoggedIn = useSetAtom(loggedInAtom);
   const qc = useQueryClient();
-  const { data, isPending, isError, error, refetch } = useQuery({
-    queryKey: ["accounts"],
-    queryFn: () => LoginService.GetAccounts(),
-  });
+  const { data, isPending, isError, error, refetch } = useAccountsQuery();
 
   // Wipe all cached query state on logout — otherwise LoginPage
   // remounts and reads the stale ['qrStatus'] = 'approved' from cache,
   // its useEffect fires, and we ping-pong straight back here.
-  const logout = () => {
+  function logout() {
     qc.clear();
     setLoggedIn(false);
-  };
+  }
 
   return (
     <AppShell>
