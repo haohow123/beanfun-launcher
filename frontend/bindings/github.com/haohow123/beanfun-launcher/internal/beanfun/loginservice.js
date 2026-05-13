@@ -41,6 +41,28 @@ export function GetAccounts() {
 }
 
 /**
+ * Snapshot returns the current client + session pointers without a
+ * copy. Used by sibling services (internal/launcher) that need to
+ * drive post-login flows against the same cookie jar — the alternative
+ * would be re-minting a client, which means re-logging-in.
+ * 
+ * Both returned pointers may be nil if no session is active; callers
+ * must nil-check before use. The pointer-sharing is safe because:
+ *   - BeanfunClient.http (and its cookie jar) is itself thread-safe.
+ *   - Session is only mutated by LoginService under s.mu; readers
+ *     observe a coherent snapshot of whichever Session was active at
+ *     call time.
+ * @returns {$CancellablePromise<[$models.BeanfunClient | null, $models.Session | null]>}
+ */
+export function Snapshot() {
+    return $Call.ByID(917524005).then(/** @type {($result: any) => any} */(($result) => {
+        $result[0] = $$createType3($result[0]);
+        $result[1] = $$createType5($result[1]);
+        return $result;
+    }));
+}
+
+/**
  * StartQRLogin runs the init flow (getSessionKey → initQRLogin) and
  * returns the QR + deeplink for the frontend to render. A fresh
  * BeanfunClient (clean cookie jar) is minted on every call.
@@ -48,11 +70,15 @@ export function GetAccounts() {
  */
 export function StartQRLogin() {
     return $Call.ByID(3663858381).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType2($result);
+        return $$createType6($result);
     }));
 }
 
 // Private type creation functions
 const $$createType0 = $models.Account.createFrom;
 const $$createType1 = $Create.Array($$createType0);
-const $$createType2 = $models.QRStart.createFrom;
+const $$createType2 = $models.BeanfunClient.createFrom;
+const $$createType3 = $Create.Nullable($$createType2);
+const $$createType4 = $models.Session.createFrom;
+const $$createType5 = $Create.Nullable($$createType4);
+const $$createType6 = $models.QRStart.createFrom;

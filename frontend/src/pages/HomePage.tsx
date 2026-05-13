@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useSetAtom } from "jotai";
 
+import { type Account } from "@bindings/beanfun";
 import { AppShell } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/button";
 import {
@@ -11,23 +12,35 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { useAccountsQuery } from "@/queries/accounts";
+import { useLaunchGameMutation } from "@/queries/launch";
 import { loggedInAtom } from "@/state/auth";
 
 export function HomePage() {
   const setLoggedIn = useSetAtom(loggedInAtom);
   const qc = useQueryClient();
   const accounts = useAccountsQuery();
+  const launch = useLaunchGameMutation();
 
   function logout() {
     qc.clear();
     setLoggedIn(false);
   }
 
-  // Wrappers exist because accounts.refetch's signature is
-  // (options?: RefetchOptions) => Promise<...>, which TS won't accept
-  // as an onClick handler (MouseEvent isn't RefetchOptions).
   function retry() {
     accounts.refetch();
+  }
+
+  // Per-account status derived from the (shared) launch mutation:
+  // the mutation's `variables.sid` is set while pending/error/success
+  // for whichever row was last clicked, so other rows stay idle.
+  function statusFor(acc: Account): "idle" | "pending" | "error" | "success" {
+    if (launch.variables?.sid !== acc.sid) {
+      return "idle";
+    }
+    if (launch.isPending) return "pending";
+    if (launch.isError) return "error";
+    if (launch.isSuccess) return "success";
+    return "idle";
   }
 
   function renderAccounts() {
@@ -60,15 +73,42 @@ export function HomePage() {
     }
     return (
       <ul className="flex flex-col gap-2">
-        {accounts.data.map((acc) => (
-          <li
-            key={acc.sid}
-            className="flex items-center justify-between rounded-md border p-3"
-          >
-            <span className="text-sm font-medium">{acc.sname}</span>
-            <span className="text-xs text-muted-foreground">{acc.sid}</span>
-          </li>
-        ))}
+        {accounts.data.map((acc) => {
+          const status = statusFor(acc);
+          return (
+            <li key={acc.sid}>
+              <button
+                type="button"
+                onClick={() => launch.mutate(acc)}
+                disabled={status === "pending"}
+                className="flex w-full items-center justify-between rounded-md border p-3 text-left transition-colors hover:bg-accent/40 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <span className="flex flex-col">
+                  <span className="text-sm font-medium">{acc.sname}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {acc.sid}
+                  </span>
+                </span>
+                {status === "pending" && (
+                  <span className="text-xs text-muted-foreground">
+                    啟動中…
+                  </span>
+                )}
+                {status === "success" && (
+                  <span className="text-xs text-foreground">✓ 已啟動</span>
+                )}
+                {status === "error" && (
+                  <span
+                    className="text-xs text-destructive"
+                    title={String(launch.error)}
+                  >
+                    啟動失敗
+                  </span>
+                )}
+              </button>
+            </li>
+          );
+        })}
       </ul>
     );
   }
@@ -78,7 +118,7 @@ export function HomePage() {
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle>遊戲帳號</CardTitle>
-          <CardDescription>選擇要啟動的遊戲帳號</CardDescription>
+          <CardDescription>點擊帳號啟動遊戲</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           {renderAccounts()}
