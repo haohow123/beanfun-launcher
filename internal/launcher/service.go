@@ -115,10 +115,19 @@ func (s *LauncherService) Launch(account beanfun.Account) (LaunchResult, error) 
 		}
 		hwnd = h
 
-		// Settle delay: the window that appears first is often the
-		// patcher / load screen sharing the login window's class.
-		// Give it a moment for the actual login form to take focus.
-		time.Sleep(postWindowSettleDelay)
+		// Wait for IsWindowVisible to flip true. The CREATE event
+		// fires while the HWND is still invisible (DirectX init in
+		// progress); visibility lights up when the login form is
+		// actually drawable + input-ready. Diagnostic data showed
+		// ~4-5s gap between CREATE and visibility on this build.
+		if verr := waitWindowVisibleFn(ctx, hwnd, formReadyTimeout); verr != nil {
+			slog.Warn("Launch: window never became visible, falling back to manual paste",
+				"err", verr, "sid", account.SID)
+			return LaunchResult{AutoFilled: false, OTP: string(otp.Token)}, nil
+		}
+		slog.Info("Launch: window visible, settling before inject",
+			"sid", account.SID, "settle", formReadySettleDelay)
+		time.Sleep(formReadySettleDelay)
 	}
 
 	if ierr := injectFn(hwnd, []byte(account.SID), otp.Token); ierr != nil {
