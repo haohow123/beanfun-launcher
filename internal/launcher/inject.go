@@ -26,15 +26,24 @@ var waitForGameWindowFn func(ctx context.Context, timeout time.Duration) (uintpt
 var injectFn func(hwnd uintptr, account, otp []byte) error
 
 // postWindowSettleDelay is how long Launch waits after the window
-// first appears before sending keystrokes. The early frames are
-// often a patcher / "loading" screen with the same class as the
-// login window; the controls aren't ready to receive input yet.
-// 3 seconds is enough on warm disks for the login form to take
-// focus on a previously-patched install. If the user is mid-patch
-// the inject still misses, but they can click 啟動遊戲 again once
-// the login screen is visible — the detect-first path then lands
-// cleanly into the now-ready window.
-const postWindowSettleDelay = 3 * time.Second
+// first appears before sending keystrokes.
+//
+// MapleStory is a DirectX game: the login form is rendered inside
+// the DirectX swap chain, not as Win32 child controls. The HWND we
+// match on (MapleStoryClass / MapleStoryClassTW) is created early
+// — observed ~4s after spawn — but the game keeps the same HWND
+// through patcher → loading → login screen with no Win32-visible
+// state change. We verified this by listening for every WinEvent
+// in range 0x0003-0x800C on the match: only one CREATE fires, no
+// SHOW / FOREGROUND / FOCUS / NAMECHANGE / STATECHANGE follow.
+//
+// So we can't use a Win32 event to mark "form input-ready" — we
+// fall back to a fixed wait. Real-Beanfun smoke shows form ready
+// ~27s after spawn on a warm install. 25s after detect (≈ 29s
+// after spawn) gives a small margin and lands cleanly. Cold
+// installs with patching will still miss; user re-clicks 啟動遊戲
+// and the detect-first path injects directly within ~100ms.
+const postWindowSettleDelay = 25 * time.Second
 
 // gameWindowWaitTimeout is the upper bound on how long Launch
 // blocks waiting for the game window to appear after spawn. Covers
