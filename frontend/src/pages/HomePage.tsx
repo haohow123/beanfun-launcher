@@ -23,6 +23,13 @@ export function HomePage() {
     setLoggedIn(false);
   }
 
+  // Wrappers exist because accounts.refetch's signature is
+  // (options?: RefetchOptions) => Promise<...>, which TS won't accept
+  // as an onClick handler (MouseEvent isn't RefetchOptions).
+  function retry() {
+    accounts.refetch();
+  }
+
   function renderAccounts() {
     if (accounts.isPending) {
       return (
@@ -35,7 +42,7 @@ export function HomePage() {
           <p className="text-sm text-destructive">
             載入失敗:{String(accounts.error)}
           </p>
-          <Button variant="outline" onClick={() => accounts.refetch()}>
+          <Button variant="outline" onClick={retry}>
             重試
           </Button>
         </div>
@@ -45,7 +52,7 @@ export function HomePage() {
       return (
         <div className="flex flex-col items-center gap-2">
           <p className="text-sm text-muted-foreground">找不到遊戲帳號</p>
-          <Button variant="outline" onClick={() => accounts.refetch()}>
+          <Button variant="outline" onClick={retry}>
             重試
           </Button>
         </div>

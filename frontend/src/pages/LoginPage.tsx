@@ -28,6 +28,13 @@ export function LoginPage() {
     }
   }, [statusQuery.data, setLoggedIn]);
 
+  // Wrapper exists because startMut.mutate's signature is
+  // (variables: void, ...) => void, which TS won't accept as an
+  // onClick handler (MouseEvent isn't void).
+  function startLogin() {
+    startMut.mutate();
+  }
+
   // Ordered by priority: terminal status states first, then mutation
   // states, then the polling display, then the initial idle button.
   // Each branch checks one thing — no `!a && !b && !c && ...` pile-up.
@@ -41,7 +48,7 @@ export function LoginPage() {
           <p className="text-sm text-destructive">
             登入失敗:{String(statusQuery.error)}
           </p>
-          <Button onClick={() => startMut.mutate()}>重試</Button>
+          <Button onClick={startLogin}>重試</Button>
         </>
       );
     }
@@ -49,7 +56,7 @@ export function LoginPage() {
       return (
         <>
           <p className="text-sm text-destructive">QR code 已過期</p>
-          <Button onClick={() => startMut.mutate()}>重新產生</Button>
+          <Button onClick={startLogin}>重新產生</Button>
         </>
       );
     }
@@ -59,7 +66,7 @@ export function LoginPage() {
           <p className="text-sm text-destructive">
             登入失敗:{String(startMut.error)}
           </p>
-          <Button onClick={() => startMut.mutate()}>重試</Button>
+          <Button onClick={startLogin}>重試</Button>
         </>
       );
     }
@@ -78,7 +85,7 @@ export function LoginPage() {
         </>
       );
     }
-    return <Button onClick={() => startMut.mutate()}>登入</Button>;
+    return <Button onClick={startLogin}>登入</Button>;
   }
 
   return (
