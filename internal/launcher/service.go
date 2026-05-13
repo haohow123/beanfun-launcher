@@ -72,7 +72,10 @@ func (s *LauncherService) Launch(account beanfun.Account) (LaunchResult, error) 
 		return LaunchResult{}, err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// Wider ctx budget to cover spawn + wait + inject + post-inject
+	// diagnostic hold. Drops back to 30s once the event diagnostic
+	// is removed.
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	otp, err := client.FetchOTP(ctx, session, account)
@@ -82,6 +85,12 @@ func (s *LauncherService) Launch(account beanfun.Account) (LaunchResult, error) 
 	}
 	defer beanfun.Zero(otp.Token)
 
+	// diagCtx outlives the inject so the WinEvent hook can capture
+	// post-inject events. Cancelled by `defer` on Launch return.
+	diagCtx, diagCancel := context.WithCancel(ctx)
+	defer diagCancel()
+	spawned := false
+
 	// Detect-first: if a MapleStory window is already open, skip
 	// spawn and inject directly.
 	hwnd := findGameWindowFn()
@@ -89,6 +98,7 @@ func (s *LauncherService) Launch(account beanfun.Account) (LaunchResult, error) 
 		slog.Info("Launch: existing window found, injecting directly",
 			"sid", account.SID)
 	} else {
+		spawned = true
 		// No existing window: spawn the game and wait for its
 		// window to come up.
 		if err := spawnFn(ctx, gameExe, nil); err != nil {
@@ -99,12 +109,7 @@ func (s *LauncherService) Launch(account beanfun.Account) (LaunchResult, error) 
 			"sid", account.SID, "exe", gameExe, "timeout", gameWindowWaitTimeout)
 
 		// Diagnostic: poll-log every Maple-class window + Maple/Patcher
-		// process every 500ms from spawn through inject, so we can
-		// characterise the patcher → main-game → form-ready timeline.
-		// Bounded by the wait + settle + inject duration; cancelled by
-		// the deferred cancel below.
-		diagCtx, diagCancel := context.WithCancel(ctx)
-		defer diagCancel()
+		// process every 500ms from spawn through inject + post-inject.
 		startDiagnostic(diagCtx)
 
 		h, werr := waitForGameWindowFn(ctx, gameWindowWaitTimeout)
@@ -125,6 +130,10 @@ func (s *LauncherService) Launch(account beanfun.Account) (LaunchResult, error) 
 				"err", verr, "sid", account.SID)
 			return LaunchResult{AutoFilled: false, OTP: string(otp.Token)}, nil
 		}
+		// Process-scoped WinEvent hook on the game's PID — captures
+		// every event in our diagnostic range so we can see what
+		// (if anything) fires in response to PostMessage.
+		startEventDiagnostic(diagCtx, hwnd)
 		slog.Info("Launch: window visible, settling before inject",
 			"sid", account.SID, "settle", formReadySettleDelay)
 		time.Sleep(formReadySettleDelay)
@@ -136,6 +145,16 @@ func (s *LauncherService) Launch(account beanfun.Account) (LaunchResult, error) 
 		return LaunchResult{AutoFilled: false, OTP: string(otp.Token)}, nil
 	}
 	slog.Info("Launch: credentials injected", "sid", account.SID)
+
+	// Diagnostic-only: hold open after inject so the WinEvent hook
+	// gets a chance to log any events the form fires in response.
+	// Skip for the detect-first path (no diagnostic registered).
+	// Remove once we have data.
+	if spawned {
+		slog.Info("Launch: holding 15s for post-inject event capture (diagnostic)")
+		time.Sleep(15 * time.Second)
+	}
+
 	return LaunchResult{AutoFilled: true}, nil
 }
 

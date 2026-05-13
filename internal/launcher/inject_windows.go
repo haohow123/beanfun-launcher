@@ -24,16 +24,17 @@ func init() {
 
 // Win32 procs we need but aren't exported by golang.org/x/sys/windows.
 var (
-	user32                  = windows.NewLazySystemDLL("user32.dll")
-	procFindWindowW         = user32.NewProc("FindWindowW")
-	procGetClassNameW       = user32.NewProc("GetClassNameW")
-	procGetWindowTextW      = user32.NewProc("GetWindowTextW")
-	procSetForegroundWindow = user32.NewProc("SetForegroundWindow")
-	procPostMessageW        = user32.NewProc("PostMessageW")
-	procSetWinEventHook     = user32.NewProc("SetWinEventHook")
-	procUnhookWinEvent      = user32.NewProc("UnhookWinEvent")
-	procGetMessageW         = user32.NewProc("GetMessageW")
-	procPostThreadMessageW  = user32.NewProc("PostThreadMessageW")
+	user32                       = windows.NewLazySystemDLL("user32.dll")
+	procFindWindowW              = user32.NewProc("FindWindowW")
+	procGetClassNameW            = user32.NewProc("GetClassNameW")
+	procGetWindowTextW           = user32.NewProc("GetWindowTextW")
+	procGetWindowThreadProcessId = user32.NewProc("GetWindowThreadProcessId")
+	procSetForegroundWindow      = user32.NewProc("SetForegroundWindow")
+	procPostMessageW             = user32.NewProc("PostMessageW")
+	procSetWinEventHook          = user32.NewProc("SetWinEventHook")
+	procUnhookWinEvent           = user32.NewProc("UnhookWinEvent")
+	procGetMessageW              = user32.NewProc("GetMessageW")
+	procPostThreadMessageW       = user32.NewProc("PostThreadMessageW")
 )
 
 const (
