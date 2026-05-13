@@ -1,0 +1,38 @@
+# Controls how GitHub's `--generate-notes` (used by release.yml's
+# `gh release create`) groups merged PRs into a release changelog.
+#
+# PRs are categorised by the labels on them at merge time. Apply
+# labels before clicking merge — after merge they don't retroactively
+# move sections.
+#
+# Standard label set (run `task setup:labels` to create them, or use
+# `gh label create` per the README):
+#   feat       — user-facing new feature
+#   fix        — bug fix
+#   chore      — refactor / docs / ci / dependency bumps (no behaviour change)
+#   skip-changelog — explicitly hide from notes (e.g. typo fixes)
+
+changelog:
+  exclude:
+    labels:
+      - skip-changelog
+  categories:
+    - title: ✨ Features
+      labels:
+        - feat
+        - feature
+        - enhancement
+    - title: 🐛 Bug Fixes
+      labels:
+        - fix
+        - bug
+    - title: 🔧 Maintenance
+      labels:
+        - chore
+        - refactor
+        - docs
+        - ci
+        - dependencies
+    - title: Other Changes
+      labels:
+        - "*"
