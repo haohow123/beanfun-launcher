@@ -12,10 +12,9 @@ import (
 // frontend uses these to render the post-login game list. See
 // docs/beanfun-login-protocol.md § 8.
 type Account struct {
-	SID     string `json:"sid"`
-	SSN     string `json:"ssn"`
-	SName   string `json:"sname"`
-	Enabled bool   `json:"enabled"`
+	SID   string `json:"sid"`
+	SSN   string `json:"ssn"`
+	SName string `json:"sname"`
 }
 
 // GetAccounts fetches the list of game accounts under the active
