@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -36,88 +35,6 @@ func startDiagnostic(ctx context.Context) {
 	slog.Info("Diag: start")
 	go diagWindowsLoop(ctx)
 	go diagProcessesLoop(ctx)
-}
-
-// startEventDiagnostic registers a WinEvent hook scoped to the game
-// window's owning process and logs every event in the diagnostic
-// range. Use after CREATE has been detected so we can answer:
-// "does the form fire any event in response to PostMessage?" If yes,
-// that event becomes the retry trigger; if not, we fall back to a
-// blind retry interval.
-//
-// Lifetime tied to ctx — caller cancels to stop the hook.
-func startEventDiagnostic(ctx context.Context, gameHwnd uintptr) {
-	var pid uint32
-	procGetWindowThreadProcessId.Call(
-		gameHwnd,
-		uintptr(unsafe.Pointer(&pid)),
-	)
-	if pid == 0 {
-		slog.Error("DiagEvent: GetWindowThreadProcessId returned 0; skipping hook")
-		return
-	}
-	slog.Info("DiagEvent: hook starting", "pid", pid)
-	go runDiagEventHookPump(ctx, pid)
-}
-
-// runDiagEventHookPump owns the WinEvent hook + message pump on a
-// locked OS thread (Win32 requires both). On ctx cancel a watcher
-// goroutine posts WM_QUIT to wake the pump, the pump exits, and the
-// deferred UnhookWinEvent cleans up.
-func runDiagEventHookPump(ctx context.Context, pid uint32) {
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
-
-	callback := syscall.NewCallback(func(
-		_ uintptr,
-		event uint32,
-		hwnd uintptr,
-		idObject int32,
-		idChild int32,
-		_ uint32,
-		_ uint32,
-	) uintptr {
-		slog.Info("DiagEvent",
-			"event", fmt.Sprintf("0x%04X", event),
-			"hwnd", fmt.Sprintf("0x%X", hwnd),
-			"obj", idObject,
-			"child", idChild,
-		)
-		return 0
-	})
-
-	hook, _, _ := procSetWinEventHook.Call(
-		eventSystemForeground, // eventMin
-		eventObjectNameChange, // eventMax
-		0,                     // hmodWinEventProc (NULL for out-of-context)
-		callback,
-		uintptr(pid), // idProcess — scope events to the game's PID
-		0,            // idThread
-		winEventOutOfContext|winEventSkipOwnProc,
-	)
-	if hook == 0 {
-		slog.Error("DiagEvent: SetWinEventHook returned 0")
-		return
-	}
-	defer procUnhookWinEvent.Call(hook)
-
-	threadID := windows.GetCurrentThreadId()
-	go func() {
-		<-ctx.Done()
-		_, _, _ = procPostThreadMessageW.Call(uintptr(threadID), wmQuit, 0, 0)
-	}()
-
-	var msg win32Msg
-	for {
-		ret, _, _ := procGetMessageW.Call(
-			uintptr(unsafe.Pointer(&msg)),
-			0, 0, 0,
-		)
-		if ret == 0 || ret == ^uintptr(0) {
-			slog.Info("DiagEvent: hook stopped")
-			return
-		}
-	}
 }
 
 func diagWindowsLoop(ctx context.Context) {
