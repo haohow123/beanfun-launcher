@@ -3,6 +3,8 @@
 package launcher
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"time"
 	"unsafe"
@@ -12,6 +14,7 @@ import (
 
 func init() {
 	findGameWindowFn = findGameWindow
+	waitForGameWindowFn = waitForGameWindow
 	injectFn = injectCredentials
 }
 
@@ -63,6 +66,31 @@ func findGameWindow() uintptr {
 		}
 	}
 	return 0
+}
+
+// waitForGameWindow polls every 200ms (after an immediate probe)
+// until findGameWindow returns non-zero, ctx is cancelled, or the
+// deadline expires.
+func waitForGameWindow(ctx context.Context, timeout time.Duration) (uintptr, error) {
+	if h := findGameWindow(); h != 0 {
+		return h, nil
+	}
+	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		case <-ticker.C:
+			if h := findGameWindow(); h != 0 {
+				return h, nil
+			}
+			if time.Now().After(deadline) {
+				return 0, errors.New("game window did not appear within timeout")
+			}
+		}
+	}
 }
 
 // injectCredentials types the account + OTP into the game's currently

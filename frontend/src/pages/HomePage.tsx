@@ -94,14 +94,12 @@ export function HomePage() {
 
   function launchStatusFor(
     acc: Account,
-  ): "idle" | "pending" | "error" | "success" | "spawned" | "fallback" {
+  ): "idle" | "pending" | "error" | "success" | "fallback" {
     if (launch.variables?.sid !== acc.sid) return "idle";
     if (launch.isPending) return "pending";
     if (launch.isError) return "error";
     if (launch.isSuccess) {
-      if (launch.data?.autoFilled) return "success";
-      if (launch.data?.spawned) return "spawned";
-      return "fallback";
+      return launch.data?.autoFilled ? "success" : "fallback";
     }
     return "idle";
   }
@@ -125,15 +123,12 @@ export function HomePage() {
         <div className="mb-1 flex items-baseline justify-between gap-2">
           <span className="text-sm font-medium">{acc.sname}</span>
           {launchStatus === "pending" && (
-            <span className="text-xs text-muted-foreground">啟動中…</span>
+            <span className="text-xs text-muted-foreground">
+              啟動中,等登入畫面…
+            </span>
           )}
           {launchStatus === "success" && (
             <span className="text-xs text-foreground">✓ 已啟動並帶入帳密</span>
-          )}
-          {launchStatus === "spawned" && (
-            <span className="text-xs text-foreground">
-              ✓ 已啟動,等登入畫面再按一次自動帶入
-            </span>
           )}
           {launchStatus === "fallback" && (
             <span className="text-xs text-foreground">
