@@ -1,16 +1,20 @@
 package beanfun
 
 import (
-	"html"
 	"net/url"
 	"regexp"
 	"sort"
 	"strings"
 	"sync"
+
+	"golang.org/x/net/html"
 )
 
-// Compiled regexes used across the login flow. See
-// docs/beanfun-login-protocol.md for the full wire spec these match.
+// Compiled regexes used by the URL-string and single-input scrapers.
+// See docs/beanfun-login-protocol.md for the full wire spec these
+// match. Multi-attribute HTML scrapers (hidden inputs, account rows)
+// switched to DOM walking in Milestone 5.5 — see extractHiddenInputs
+// and extractAccounts below.
 var (
 	// Conservative session-key match. Accepts the lowercase `skey=` the
 	// portal currently emits and the `pSKey=` shape some endpoints
@@ -18,52 +22,11 @@ var (
 	sessionKeyRE = sync.OnceValue(func() *regexp.Regexp {
 		return regexp.MustCompile(`[sp][Ss]?[Kk]ey=([^&]+)`)
 	})
-	// Anti-forgery token from Login/Index's hidden input. Anchored on
-	// the name attribute appearing before the value attribute, which
-	// is the production response shape.
+	// Anti-forgery token from Login/Index's hidden input. Single input,
+	// single attribute — regex stays clearer than walking the DOM just
+	// for one node.
 	verificationTokenRE = sync.OnceValue(func() *regexp.Regexp {
 		return regexp.MustCompile(`__RequestVerificationToken[^>]+value="([^"]+)"`)
-	})
-
-	// Hidden-input scraper for Login/SendLogin's HTML response.
-	// `(?is)` = case-insensitive + dot matches newline.
-	inputTagRE = sync.OnceValue(func() *regexp.Regexp {
-		return regexp.MustCompile(`(?is)<input[^>]+>`)
-	})
-	nameAttrRE = sync.OnceValue(func() *regexp.Regexp {
-		return regexp.MustCompile(`(?i)name\s*=\s*['"]([^'"]+)['"]`)
-	})
-	// `*` (not `+`) on the value group preserves empty `value=""`,
-	// which is the production shape for the ServiceCode / ServiceRegion
-	// fields.
-	valueAttrRE = sync.OnceValue(func() *regexp.Regexp {
-		return regexp.MustCompile(`(?i)value\s*=\s*['"]([^'"]*)['"]`)
-	})
-	submitTypeRE = sync.OnceValue(func() *regexp.Regexp {
-		return regexp.MustCompile(`(?i)type\s*=\s*["']submit["']`)
-	})
-
-	// Each row in game_server_account_list.aspx looks like:
-	//
-	//   <li class="" title="..." onclick="GameAccount.StartGame('SN'); return false;">
-	//     <div id="SID" sn="SN" name="NAME" inherited="false" visible="1" ...>NAME</div>
-	//     <span class="StartButtonSmall">…</span>
-	//   </li>
-	//
-	// The regex deliberately does NOT anchor on the wrapping tag — it
-	// starts at `onclick="..."><div id="..." sn="..." name="..."`. This
-	// matches the live HTML (li-wrapped) and also stays compatible with
-	// pungin's older a-wrapped fixture. We do NOT match the JS template
-	// in <script> blocks (line 148 of the live page) because there the
-	// id value is `'<single-quote>+strServiceAccountID+'<single-quote>`,
-	// which fails `(\w+)`.
-	//
-	// An empty onclick captures the heuristic pungin used for "row
-	// server-disabled" — in current production HTML every rendered row
-	// carries an onclick, so this stays true for the foreseeable future
-	// but the field is exposed in case the portal regresses.
-	accountRowRE = sync.OnceValue(func() *regexp.Regexp {
-		return regexp.MustCompile(`onclick="([^"]*)">\s*<div\s+id="(\w+)"\s+sn="(\d+)"\s+name="([^"]+)"`)
 	})
 )
 
@@ -81,57 +44,134 @@ func sessionKeyFromURL(rawURL string) (string, bool) {
 // input value out of the Login/Index HTML. Returns "" if absent — the
 // intended behaviour; downstream callers send the
 // RequestVerificationToken header only when the value is non-empty.
-func extractVerificationToken(html string) string {
-	m := verificationTokenRE().FindStringSubmatch(html)
+func extractVerificationToken(htmlBody string) string {
+	m := verificationTokenRE().FindStringSubmatch(htmlBody)
 	if len(m) < 2 {
 		return ""
 	}
 	return m[1]
 }
 
-// extractHiddenInputs scrapes every non-submit <input> tag that has
-// both name= and value= attributes, returning them as url.Values
-// ready to be Encode()'d into an x-www-form-urlencoded POST body.
+// walkNodes invokes visit on n and every descendant. Subtrees rooted
+// at <script> or <style> are skipped — their text content shouldn't
+// be parsed as markup even when it visually contains tag-like
+// substrings (e.g. the JS template that builds account rows in
+// game_server_account_list.aspx).
+func walkNodes(n *html.Node, visit func(*html.Node)) {
+	visit(n)
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type == html.ElementNode && (c.Data == "script" || c.Data == "style") {
+			continue
+		}
+		walkNodes(c, visit)
+	}
+}
+
+// extractHiddenInputs walks every <input> in body and returns the
+// non-submit ones that carry both name and value attributes, as
+// url.Values ready for x-www-form-urlencoded encoding.
 //
 // url.Values sorts keys alphabetically on Encode(); the server accepts
 // arbitrary field order, so the simpler Go API wins.
-func extractHiddenInputs(html string) url.Values {
-	out := url.Values{}
-	for _, tag := range inputTagRE().FindAllString(html, -1) {
-		if submitTypeRE().MatchString(tag) {
-			continue
-		}
-		nameM := nameAttrRE().FindStringSubmatch(tag)
-		valM := valueAttrRE().FindStringSubmatch(tag)
-		if len(nameM) < 2 || len(valM) < 2 {
-			continue
-		}
-		out.Add(nameM[1], valM[1])
+func extractHiddenInputs(body string) url.Values {
+	doc, err := html.Parse(strings.NewReader(body))
+	if err != nil {
+		return url.Values{}
 	}
+	out := url.Values{}
+	walkNodes(doc, func(n *html.Node) {
+		if n.Type != html.ElementNode || n.Data != "input" {
+			return
+		}
+		var name, value, typ string
+		hasValue := false
+		for _, a := range n.Attr {
+			switch a.Key {
+			case "name":
+				name = a.Val
+			case "value":
+				value = a.Val
+				hasValue = true
+			case "type":
+				typ = a.Val
+			}
+		}
+		if name == "" || !hasValue {
+			return
+		}
+		if strings.EqualFold(typ, "submit") {
+			return
+		}
+		out.Add(name, value)
+	})
 	return out
 }
 
-// extractAccounts scrapes account rows from
-// game_server_account_list.aspx HTML. Names are HTML-entity decoded
-// (Chinese display names can land as numeric entities); the result is
-// sorted ascending by SSN — fixed-width digit strings, so lexicographic
-// order matches numeric order.
-func extractAccounts(htmlBody string) []Account {
-	matches := accountRowRE().FindAllStringSubmatch(htmlBody, -1)
-	out := make([]Account, 0, len(matches))
-	for _, m := range matches {
-		// m[1] = onclick, m[2] = id, m[3] = sn, m[4] = name
-		out = append(out, Account{
-			SID:     m[2],
-			SSN:     m[3],
-			SName:   html.UnescapeString(m[4]),
-			Enabled: m[1] != "",
-		})
+// extractAccounts walks game_server_account_list.aspx HTML and returns
+// one Account per <div> carrying id + sn + name attributes. Names
+// arrive HTML-entity decoded by the parser; the result slice is sorted
+// ascending by SSN (fixed-width digit strings sort lexicographically
+// equal to numerically).
+//
+// Enabled is best-effort: it reads the onclick attribute of the
+// nearest ancestor (typically the wrapping <li>). Current production
+// HTML always renders visible rows with a non-empty onclick, so this
+// stays true in practice; the field is exposed in case the portal
+// regresses to using empty onclick for disabled rows (the heuristic
+// pungin's HTML used).
+func extractAccounts(body string) []Account {
+	doc, err := html.Parse(strings.NewReader(body))
+	if err != nil {
+		return nil
 	}
+	var out []Account
+	walkNodes(doc, func(n *html.Node) {
+		if n.Type != html.ElementNode || n.Data != "div" {
+			return
+		}
+		var sid, ssn, sname string
+		hasSN := false
+		for _, a := range n.Attr {
+			switch a.Key {
+			case "id":
+				sid = a.Val
+			case "sn":
+				ssn = a.Val
+				hasSN = true
+			case "name":
+				sname = a.Val
+			}
+		}
+		if !hasSN || sid == "" || ssn == "" || sname == "" {
+			return
+		}
+		out = append(out, Account{
+			SID:     sid,
+			SSN:     ssn,
+			SName:   sname,
+			Enabled: ancestorOnclickIsNonEmpty(n),
+		})
+	})
 	sort.SliceStable(out, func(i, j int) bool {
 		return out[i].SSN < out[j].SSN
 	})
 	return out
+}
+
+// ancestorOnclickIsNonEmpty walks up the DOM looking for the nearest
+// ancestor with an onclick attribute. Returns:
+//   - true  if onclick is non-empty (rendered, clickable row)
+//   - false if onclick is "" (disabled — pungin's heuristic)
+//   - true  if no ancestor has onclick (assume enabled — defensive)
+func ancestorOnclickIsNonEmpty(n *html.Node) bool {
+	for p := n.Parent; p != nil; p = p.Parent {
+		for _, a := range p.Attr {
+			if a.Key == "onclick" {
+				return a.Val != ""
+			}
+		}
+	}
+	return true
 }
 
 // normalizeDeeplink unwraps the play.games.gamania.com deeplink
