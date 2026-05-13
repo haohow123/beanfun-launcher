@@ -3,16 +3,15 @@ package launcher
 import (
 	"context"
 	"log/slog"
-	"os"
 	"sync"
 	"time"
 
 	"github.com/haohow123/beanfun-launcher/internal/beanfun"
 )
 
-// gameExeEnvVar is the env var the user points at their game's
-// executable. For Milestone 6 this is the only configuration path; a
-// Settings UI (with persisted JSON in %APPDATA%) is a later milestone.
+// gameExeEnvVar is the override env var for the game executable
+// path. If set, it wins over the registry lookup — handy for dev,
+// non-default installs, or when the registry value is stale.
 const gameExeEnvVar = "BEANFUN_GAME_EXE"
 
 // LauncherService is the Wails-bound facade for "click an account →
@@ -48,9 +47,9 @@ func (s *LauncherService) Launch(account beanfun.Account) error {
 		return beanfun.ErrLoginRequired()
 	}
 
-	gameExe := os.Getenv(gameExeEnvVar)
-	if gameExe == "" {
-		return ErrGameExeMissing()
+	gameExe, err := resolveGameExe()
+	if err != nil {
+		return err
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
