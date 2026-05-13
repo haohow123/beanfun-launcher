@@ -164,3 +164,20 @@ func (s *LoginService) GetAccounts() ([]Account, error) {
 	}
 	return accounts, nil
 }
+
+// Snapshot returns the current client + session pointers without a
+// copy. Used by sibling services (internal/launcher) that need to
+// drive post-login flows against the same cookie jar — the alternative
+// would be re-minting a client, which means re-logging-in.
+//
+// Both returned pointers may be nil if no session is active; callers
+// must nil-check before use. The pointer-sharing is safe because:
+//   - BeanfunClient.http (and its cookie jar) is itself thread-safe.
+//   - Session is only mutated by LoginService under s.mu; readers
+//     observe a coherent snapshot of whichever Session was active at
+//     call time.
+func (s *LoginService) Snapshot() (*BeanfunClient, *Session) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.client, s.session
+}

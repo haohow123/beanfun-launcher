@@ -139,3 +139,14 @@ func (c *BeanfunClient) portalURL(path string) (*url.URL, error) {
 	}
 	return u, nil
 }
+
+// newloginURL joins path onto NewloginBase. Used by the OTP flow's
+// step 2 (TW's get_cookies.ashx lives on the newlogin host, not the
+// regular login host).
+func (c *BeanfunClient) newloginURL(path string) (*url.URL, error) {
+	u, err := c.endpoints.NewloginBase.Parse(path)
+	if err != nil {
+		return nil, ErrHTTP(fmt.Errorf("newloginURL.Parse(%q): %w", path, err))
+	}
+	return u, nil
+}
