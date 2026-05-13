@@ -19,6 +19,30 @@ import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Cr
 import * as beanfun$0 from "../beanfun/models.js";
 
 /**
+ * GetOTP runs the OTP fetch flow and returns the plaintext token for
+ * display + clipboard copy on the frontend. This is the "show
+ * credentials so the user can paste into another launcher" path that
+ * pungin's UI exposes alongside the direct-spawn button.
+ * 
+ * Two callers:
+ *   - macOS dev verification: the spawn path returns
+ *     ErrPlatformUnsupported, so the user uses GetOTP + paste into a
+ *     Windows Beanfun client (or just to confirm the wire format).
+ *   - Windows users who prefer to launch the game through their own
+ *     tooling rather than letting us spawn it.
+ * 
+ * The returned string lives in the frontend's JS heap (we can't zero
+ * it from Go). Per Beanfun's design the OTP is single-use and
+ * rotates on each call — this is acceptable for the same reason
+ * pungin's UI is acceptable.
+ * @param {beanfun$0.Account} account
+ * @returns {$CancellablePromise<string>}
+ */
+export function GetOTP(account) {
+    return $Call.ByID(2873082354, account);
+}
+
+/**
  * Launch fetches a one-time game-launch token for the given account
  * and spawns the game executable with `/hb /u:{SID} /p:{OTP}`. The
  * OTP byte slice is zeroed before this method returns regardless of

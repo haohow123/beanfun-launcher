@@ -76,3 +76,45 @@ func (s *LauncherService) Launch(account beanfun.Account) error {
 	slog.Info("Launch: game spawned", "sid", account.SID, "exe", gameExe)
 	return nil
 }
+
+// GetOTP runs the OTP fetch flow and returns the plaintext token for
+// display + clipboard copy on the frontend. This is the "show
+// credentials so the user can paste into another launcher" path that
+// pungin's UI exposes alongside the direct-spawn button.
+//
+// Two callers:
+//   - macOS dev verification: the spawn path returns
+//     ErrPlatformUnsupported, so the user uses GetOTP + paste into a
+//     Windows Beanfun client (or just to confirm the wire format).
+//   - Windows users who prefer to launch the game through their own
+//     tooling rather than letting us spawn it.
+//
+// The returned string lives in the frontend's JS heap (we can't zero
+// it from Go). Per Beanfun's design the OTP is single-use and
+// rotates on each call — this is acceptable for the same reason
+// pungin's UI is acceptable.
+func (s *LauncherService) GetOTP(account beanfun.Account) (string, error) {
+	s.mu.Lock()
+	client, session := s.login.Snapshot()
+	s.mu.Unlock()
+
+	if client == nil || session == nil {
+		return "", beanfun.ErrLoginRequired()
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	otp, err := client.FetchOTP(ctx, session, account)
+	if err != nil {
+		slog.Error("GetOTP: FetchOTP failed", "err", err, "sid", account.SID)
+		return "", err
+	}
+	// Copy bytes into a string, then zero the source. The string copy
+	// lives in Go GC heap until reclaimed; the JS heap copy lives
+	// until the frontend clears its ref. Both are acceptable given
+	// the OTP's single-use lifecycle.
+	otpStr := string(otp.Token)
+	beanfun.Zero(otp.Token)
+	return otpStr, nil
+}
