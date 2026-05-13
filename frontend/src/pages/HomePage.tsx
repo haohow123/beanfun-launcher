@@ -92,12 +92,7 @@ export function HomePage() {
         </div>
 
         <div className="flex flex-col gap-2">
-          <CredentialRow
-            label="帳號"
-            value={acc.sid}
-            copied={copiedKey === `${acc.sid}:sid`}
-            onCopy={() => copyValue(`${acc.sid}:sid`, acc.sid)}
-          />
+          <CredentialRow label="帳號" value={acc.sid} />
 
           <CredentialRow
             label="密碼"
@@ -109,8 +104,6 @@ export function HomePage() {
                   ? `失敗:${String(fetchOTP.error)}`
                   : "尚未產生"
             }
-            copied={copiedKey === `${acc.sid}:otp`}
-            onCopy={() => copyValue(`${acc.sid}:otp`, otpValue)}
             extraAction={
               <Button
                 variant="outline"
@@ -208,8 +201,6 @@ interface CredentialRowProps {
   label: string;
   value: string;
   placeholder?: string;
-  copied: boolean;
-  onCopy: () => void;
   extraAction?: React.ReactNode;
 }
 
@@ -217,8 +208,6 @@ function CredentialRow({
   label,
   value,
   placeholder,
-  copied,
-  onCopy,
   extraAction,
 }: CredentialRowProps) {
   return (
@@ -235,14 +224,6 @@ function CredentialRow({
         className="flex-1 rounded-md border bg-background px-2 py-1 font-mono text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
       />
       {extraAction}
-      <Button
-        variant="outline"
-        size="sm"
-        disabled={!value}
-        onClick={onCopy}
-      >
-        {copied ? "✓" : "複製"}
-      </Button>
     </div>
   );
 }
