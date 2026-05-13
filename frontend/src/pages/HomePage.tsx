@@ -25,7 +25,7 @@ export function HomePage() {
   const accounts = useAccountsQuery();
   const launch = useLaunchGameMutation();
   const fetchOTP = useFetchOTPMutation();
-  const [copiedSid, setCopiedSid] = useState<string | null>(null);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   function logout() {
     qc.clear();
@@ -36,8 +36,6 @@ export function HomePage() {
     accounts.refetch();
   }
 
-  // Per-account launch status derived from the (shared) launch
-  // mutation's variables.sid match. Other rows stay idle.
   function launchStatusFor(acc: Account): "idle" | "pending" | "error" | "success" {
     if (launch.variables?.sid !== acc.sid) return "idle";
     if (launch.isPending) return "pending";
@@ -46,8 +44,6 @@ export function HomePage() {
     return "idle";
   }
 
-  // OTP status uses the same shared-mutation pattern. The OTP value
-  // itself sits in fetchOTP.data when isSuccess + variables.sid match.
   function otpStatusFor(acc: Account): "idle" | "pending" | "error" | "ready" {
     if (fetchOTP.variables?.sid !== acc.sid) return "idle";
     if (fetchOTP.isPending) return "pending";
@@ -56,17 +52,90 @@ export function HomePage() {
     return "idle";
   }
 
-  async function copyToClipboard(sid: string, value: string) {
+  async function copyValue(key: string, value: string) {
+    if (!value) return;
     try {
       await navigator.clipboard.writeText(value);
-      setCopiedSid(sid);
-      window.setTimeout(() => setCopiedSid((s) => (s === sid ? null : s)), 1500);
+      setCopiedKey(key);
+      window.setTimeout(
+        () => setCopiedKey((k) => (k === key ? null : k)),
+        1500,
+      );
     } catch {
-      // Clipboard API can fail in restricted contexts (no HTTPS,
-      // user gesture timing). Surface a console error and let the
-      // user select+copy from the readonly input manually.
       console.error("clipboard write failed");
     }
+  }
+
+  function renderAccountItem(acc: Account) {
+    const launchStatus = launchStatusFor(acc);
+    const otpStatus = otpStatusFor(acc);
+    const otpValue = otpStatus === "ready" ? (fetchOTP.data ?? "") : "";
+
+    return (
+      <li key={acc.sid} className="rounded-md border p-3">
+        <div className="mb-2 flex items-baseline justify-between gap-2">
+          <span className="text-sm font-medium">{acc.sname}</span>
+          {launchStatus === "pending" && (
+            <span className="text-xs text-muted-foreground">啟動中…</span>
+          )}
+          {launchStatus === "success" && (
+            <span className="text-xs text-foreground">✓ 已啟動</span>
+          )}
+          {launchStatus === "error" && (
+            <span
+              className="text-xs text-destructive"
+              title={String(launch.error)}
+            >
+              啟動失敗
+            </span>
+          )}
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <CredentialRow
+            label="帳號"
+            value={acc.sid}
+            copied={copiedKey === `${acc.sid}:sid`}
+            onCopy={() => copyValue(`${acc.sid}:sid`, acc.sid)}
+          />
+
+          <CredentialRow
+            label="密碼"
+            value={otpValue}
+            placeholder={
+              otpStatus === "pending"
+                ? "產生中…"
+                : otpStatus === "error"
+                  ? `失敗:${String(fetchOTP.error)}`
+                  : "尚未產生"
+            }
+            copied={copiedKey === `${acc.sid}:otp`}
+            onCopy={() => copyValue(`${acc.sid}:otp`, otpValue)}
+            extraAction={
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={otpStatus === "pending"}
+                onClick={() => fetchOTP.mutate(acc)}
+              >
+                {otpStatus === "pending" ? "…" : "產生 OTP"}
+              </Button>
+            }
+          />
+        </div>
+
+        <div className="mt-3 flex justify-end">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={launchStatus === "pending"}
+            onClick={() => launch.mutate(acc)}
+          >
+            啟動遊戲
+          </Button>
+        </div>
+      </li>
+    );
   }
 
   function renderAccounts() {
@@ -96,93 +165,19 @@ export function HomePage() {
       );
     }
     return (
-      <ul className="flex flex-col gap-2">
-        {accounts.data.map((acc) => {
-          const launchStatus = launchStatusFor(acc);
-          const otpStatus = otpStatusFor(acc);
-          const otpValue =
-            otpStatus === "ready" ? (fetchOTP.data ?? "") : "";
-          return (
-            <li key={acc.sid} className="flex flex-col gap-2">
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => launch.mutate(acc)}
-                  disabled={launchStatus === "pending"}
-                  className="flex flex-1 items-center justify-between rounded-md border p-3 text-left transition-colors hover:bg-accent/40 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  <span className="flex flex-col">
-                    <span className="text-sm font-medium">{acc.sname}</span>
-                    <span className="text-xs text-muted-foreground">
-                      {acc.sid}
-                    </span>
-                  </span>
-                  {launchStatus === "pending" && (
-                    <span className="text-xs text-muted-foreground">
-                      啟動中…
-                    </span>
-                  )}
-                  {launchStatus === "success" && (
-                    <span className="text-xs text-foreground">✓ 已啟動</span>
-                  )}
-                  {launchStatus === "error" && (
-                    <span
-                      className="text-xs text-destructive"
-                      title={String(launch.error)}
-                    >
-                      啟動失敗
-                    </span>
-                  )}
-                </button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={otpStatus === "pending"}
-                  onClick={() => fetchOTP.mutate(acc)}
-                  title="取得 OTP 後複製貼到其他啟動器"
-                >
-                  {otpStatus === "pending" ? "…" : "OTP"}
-                </Button>
-              </div>
-
-              {otpStatus === "ready" && (
-                <div className="flex items-center gap-2 rounded-md border bg-muted/30 px-3 py-2">
-                  <span className="text-xs text-muted-foreground">OTP</span>
-                  <code className="flex-1 select-all font-mono text-sm">
-                    {otpValue}
-                  </code>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => copyToClipboard(acc.sid, otpValue)}
-                  >
-                    {copiedSid === acc.sid ? "✓ 已複製" : "複製"}
-                  </Button>
-                </div>
-              )}
-
-              {otpStatus === "error" && (
-                <p
-                  className="text-xs text-destructive"
-                  title={String(fetchOTP.error)}
-                >
-                  取得 OTP 失敗:{String(fetchOTP.error)}
-                </p>
-              )}
-            </li>
-          );
-        })}
+      <ul className="flex flex-col gap-3">
+        {accounts.data.map(renderAccountItem)}
       </ul>
     );
   }
 
   return (
     <AppShell>
-      <Card className="w-full max-w-md">
+      <Card className="w-full max-w-lg">
         <CardHeader>
           <CardTitle>遊戲帳號</CardTitle>
           <CardDescription>
-            點帳號啟動遊戲,或按 OTP 取得密碼複製貼到其他啟動器
+            點「啟動遊戲」直接開,或「產生 OTP」貼到其他啟動器
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
@@ -197,5 +192,48 @@ export function HomePage() {
         </CardContent>
       </Card>
     </AppShell>
+  );
+}
+
+interface CredentialRowProps {
+  label: string;
+  value: string;
+  placeholder?: string;
+  copied: boolean;
+  onCopy: () => void;
+  extraAction?: React.ReactNode;
+}
+
+function CredentialRow({
+  label,
+  value,
+  placeholder,
+  copied,
+  onCopy,
+  extraAction,
+}: CredentialRowProps) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="w-10 shrink-0 text-xs text-muted-foreground">
+        {label}
+      </span>
+      <input
+        type="text"
+        readOnly
+        value={value}
+        placeholder={placeholder}
+        onFocus={(e) => e.currentTarget.select()}
+        className="flex-1 rounded-md border bg-background px-2 py-1 font-mono text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+      />
+      {extraAction}
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={!value}
+        onClick={onCopy}
+      >
+        {copied ? "✓" : "複製"}
+      </Button>
+    </div>
   );
 }
