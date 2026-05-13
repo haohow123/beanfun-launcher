@@ -5,6 +5,7 @@ import (
 	"log"
 
 	"github.com/haohow123/beanfun-launcher/internal/beanfun"
+	"github.com/haohow123/beanfun-launcher/internal/launcher"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
@@ -12,11 +13,15 @@ import (
 var assets embed.FS
 
 func main() {
+	loginSvc := beanfun.NewLoginService()
+	launcherSvc := launcher.NewLauncherService(loginSvc)
+
 	app := application.New(application.Options{
 		Name:        "beanfun-launcher",
 		Description: "Personal third-party Beanfun launcher",
 		Services: []application.Service{
-			application.NewService(beanfun.NewLoginService()),
+			application.NewService(loginSvc),
+			application.NewService(launcherSvc),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
