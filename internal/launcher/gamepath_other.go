@@ -2,13 +2,15 @@
 
 package launcher
 
-// Constants exist on non-Windows builds so the resolver can include
-// them in the "tried" diagnostic — see resolveGameExe. Their values
-// are textual only here (the registry is never actually queried on
-// macOS / Linux).
+// Constants exist on non-Windows builds so resolveGameExe can include
+// them in the "tried" diagnostic — see resolveGameExe. Values are
+// textual only here (the registry is never actually queried on macOS
+// / Linux). Mirrors gamepath_windows.go.
 const (
-	gameRegistrySubkey = `SOFTWARE\Gamania\MapleStory`
-	gameRegistryValue  = "ExecPath"
+	gameRegistryHive         = "HKLM"
+	gameRegistrySubkey       = `SOFTWARE\Gamania\MAPLESTORY`
+	gameRegistryValue        = "Path"
+	gameExeRelativeToInstall = "MapleStory.exe"
 )
 
 // readGameExeFromRegistry on non-Windows always misses — there's no
