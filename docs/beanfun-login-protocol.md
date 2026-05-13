@@ -364,6 +364,176 @@ A condensed list of things that look weird but are deliberate.
 | `AuthKey=OK` literal | Step 7 | QR-only approval sentinel |
 | `ServiceAccountSN=0` literal | Step 7 | Required by server even though it's not an account-specific value |
 
+## Step 9 — Post-login: launch OTP (6-step flow)
+
+Game launch needs a single-use OTP that the game.exe accepts on its
+command line. Beanfun's portal issues the OTP through a 6-step
+choreography that primes server-side state across multiple endpoints
+before the actual ticket can be read out. All calls share the same
+cookie jar that `bfWebToken` lives in.
+
+### Step 9.1 — `game_start_step2.aspx`
+
+```
+GET https://tw.beanfun.com/beanfun_block/game_zone/game_start_step2.aspx
+  ?service_code={ServiceCode}
+  &service_region={ServiceRegion}
+  &sotp={SSN}
+  &dt={UTC YYYYMMDDHHMMSS}
+```
+
+The response is HTML with three inline-JS literals we scrape:
+
+- `GetResultByLongPolling&key=KEYVAL"` — the long-polling key,
+  reused as `SN` on step 9.5 and as `key` on step 9.4.
+- `MyAccountData.ServiceAccountCreateTime + "K=V";` (TW only) —
+  per-account form field reposted verbatim on step 9.3. Both halves
+  arrive URL-encoded; we percent-decode them before forwarding.
+- `ServiceAccountCreateTime: "..."` — the account creation
+  timestamp, forwarded on step 9.3 and step 9.5.
+
+Missing any of these → `KindOTPInit` (server is in an unexpected
+state; user should retry).
+
+### Step 9.2 — `get_cookies.ashx`
+
+```
+GET https://tw.newlogin.beanfun.com/generic_handlers/get_cookies.ashx
+```
+
+Body has one inline JS literal: `var m_strSecretCode = 'CODE';`.
+Scrape it; forward to step 9.5. Note this is the only call in the
+whole flow that hits `tw.newlogin.beanfun.com` rather than
+`tw.beanfun.com` — the `NewloginBase` endpoint exists for this single
+purpose.
+
+### Step 9.3 — `record_service_start.ashx`
+
+```
+POST https://tw.beanfun.com/beanfun_block/generic_handlers/record_service_start.ashx
+Content-Type: application/x-www-form-urlencoded
+
+service_code, service_region, service_account_id=<SID>, sotp=<SSN>,
+service_account_display_name=<SName>, service_account_create_time=<createTime>,
+<unkDataKey>=<unkDataValue>
+```
+
+Response body discarded. The call primes server-side state for step
+9.5's OTP issuance — skipping it fails step 9.5 with a generic
+rejection.
+
+### Step 9.4 — `get_result.ashx` long-poll
+
+```
+GET https://tw.beanfun.com/generic_handlers/get_result.ashx
+  ?meth=GetResultByLongPolling
+  &key=<long-polling key from step 9.1>
+  &_=<ISO timestamp cache buster>
+```
+
+Response body discarded. Like step 9.3, this is a side-effect call
+that drives server-side OTP generation; skipping it makes step 9.5
+return an empty / rejecting envelope.
+
+### Step 9.5 — `get_webstart_otp.ashx`
+
+```
+GET https://tw.beanfun.com/beanfun_block/generic_handlers/get_webstart_otp.ashx
+  ?SN=<long-polling key>
+  &WebToken=<bfWebToken>
+  &SecretCode=<from step 9.2>
+  &ppppp=1F552AEAFF976018F942B13690C990F60ED01510DDF89165F1658CCE7BC21DBA
+  &ServiceCode=<ServiceCode>
+  &ServiceRegion=<ServiceRegion>
+  &ServiceAccount=<SID>
+  &CreateTime=<createTime with space %20-encoded>
+  &d=<UnixMilli cache buster>
+```
+
+Two pieces of WPF-specific encoding the standard form-urlencoder
+gets wrong:
+
+1. **`CreateTime`** contains a literal space (`2024-01-15 12:34:56`)
+   that WPF encodes as `%20`, not `+`. We replace the space manually
+   before assembling the URL string.
+2. **`ppppp`** is a 64-char uppercase hex literal the server
+   validates as a protocol constant. It must appear verbatim — no
+   encoding, no case folding. We don't know its provenance; the
+   value comes from pungin's WPF analysis and works.
+
+`SN` is the **long-polling key from step 9.1**, not the SSN. The
+naming is confusing but matches the wire format.
+
+Response body: `1;{8-char-key}{hex-cipher}` literal (or
+`0;{reason}` / similar on rejection — anything where the first
+segment isn't `1` triggers `KindOTPServerRejected`).
+
+### Step 9.6 — DES-ECB decrypt (local)
+
+The envelope is `<status>;<payload>` (split on the first `;`; ignore
+later segments). If `<status> != "1"` → `KindOTPServerRejected` with
+`<payload>` as the message.
+
+For status=1, the payload is `{8-char-key}{hex-cipher}`:
+
+- Key: first 8 ASCII bytes of payload, used directly as a DES key
+  (DES is 56-bit; the eighth bit of each key byte is parity that the
+  Go API ignores).
+- Cipher: remainder of payload, hex-decoded. Length must be a
+  multiple of 8 bytes (DES block size).
+- Decrypt each block with `crypto/des.Block.Decrypt` (ECB; no IV
+  needed).
+- NUL-trim both ends of the assembled plaintext. The OTP is an 8-char
+  ASCII string padded to a single block.
+
+We keep the decrypted token as `[]byte` (not `string`) so the
+launcher can `Zero` it after the game.exe spawn consumes the
+command-line copy. Per [[security-principles-beanfun]] this matters
+even though the OTP is single-use server-side.
+
+## Command-line spawn
+
+`game.exe` is launched via `windows.CreateProcessW` with command-line
+template:
+
+```
+{game.exe path} /hb /u:{SID} /p:{OTP}
+```
+
+`/hb` is a Beanfun-specific marker the launcher uses for portal-side
+session bookkeeping. `/u` is the service-account SID (NOT the SSN).
+`/p` is the decrypted OTP. The game.exe path comes from the
+`BEANFUN_GAME_EXE` env var in Milestone 6; a Settings UI / registry
+auto-detect lands in a later milestone.
+
+After `CreateProcessW` returns, the launcher closes its process and
+thread handle copies and calls `beanfun.Zero(token)` on the OTP byte
+slice. The Go-heap copy lives until GC; the OS-side argv lives in
+the game process's memory for its lifetime, which is unavoidable and
+bounded by the OTP's server-side ticket lifetime (single use).
+
+### Deferred: Locale_Remulator
+
+Milestone 6 spawns the game directly via `CreateProcessW`. Users on
+Chinese-Windows (the developer's environment) see the game in the
+correct locale because their system codepage is already `950`
+(zh-TW). Users on non-Chinese Windows would see garbled text — that
+case is solved by Locale_Remulator (LR), which injects a DLL hook
+that intercepts locale-related Win32 API calls and reports `zh-TW`.
+
+Adding LR is its own scope:
+
+- 5 LR artifacts to bundle (`LRConfig.xml`, `LRHookx32.dll`,
+  `LRHookx64.dll`, `LRProc.exe`, `LRSubMenus.dll`).
+- Choice between (a) spawning `LRProc.exe` with `ShellExecuteW("runas",
+  …)` (per pungin — requires UAC every launch) or (b) doing the
+  DLL injection ourselves via `CreateProcessW(CREATE_SUSPENDED)` +
+  `VirtualAllocEx` + `WriteProcessMemory` + `CreateRemoteThread` +
+  `LoadLibraryW` (no UAC; more Win32 surface area to own).
+- 32-vs-64-bit DLL selection from `IsWow64Process2`.
+
+Deferred to **Milestone 6.5**.
+
 ## References
 
 The wire spec above was reverse-engineered with help from the
@@ -389,7 +559,13 @@ consult the corresponding files:
 | GetAccounts orchestration | `src/commands/account.rs` (lines 243–272 for the Tauri command, 608–660 for the auth.aspx refresh, 667–685 for the list fetch) |
 | Account-row regex | `src/core/parser/account.rs:69-91` |
 | `screatetime` per-row fetch (we defer) | `src/commands/account.rs:695-721` |
-| Test golden fixtures | `tests/{session_key,qr_init,qr_poll,qr_finalize,account}.rs` |
+| OTP 6-step orchestration | `src/services/beanfun/otp.rs:122-145` |
+| OTP per-step impls | `src/services/beanfun/otp.rs:171-323` |
+| OTP scrapers (long-polling key, unk_data, secret code) | `src/services/beanfun/otp.rs:393-478` |
+| WCDES decrypt (DES-ECB-NoPadding) | `src/core/wcdes/mod.rs:76-88` |
+| `ppppp` 64-hex literal | `src/services/beanfun/otp.rs:489` |
+| Game launcher + command-line template | `src/services/game/launcher.rs:286-375` |
+| Test golden fixtures | `tests/{session_key,qr_init,qr_poll,qr_finalize,account,otp}.rs` |
 
 Our test suite mirrors the cases in those files where they apply to
 our scope (TW only; QR-only).

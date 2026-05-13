@@ -18,6 +18,9 @@ const (
 	KindSendLoginNoFormData
 	KindMissingWebToken
 	KindLoginRequired
+	KindOTPInit
+	KindOTPServerRejected
+	KindOTPDecrypt
 )
 
 // LoginError is the typed error returned by every Beanfun login step.
@@ -83,6 +86,26 @@ func ErrMissingWebToken() *LoginError {
 // route back to the login page.
 func ErrLoginRequired() *LoginError {
 	return &LoginError{Kind: KindLoginRequired, Msg: "login required: no active session"}
+}
+
+// ErrOTPInit covers step 1 / 2 of the OTP flow — scrape misses for
+// the long-polling key, secret code, create-time, or TW unk_data.
+func ErrOTPInit(msg string) *LoginError {
+	return &LoginError{Kind: KindOTPInit, Msg: "OTP init: " + msg}
+}
+
+// ErrOTPServerRejected is returned when step 5's envelope arrives
+// with a status segment other than "1". The payload portion of the
+// envelope is included verbatim for diagnostics (it's usually the
+// server's own error string).
+func ErrOTPServerRejected(rawPayload string) *LoginError {
+	return &LoginError{Kind: KindOTPServerRejected, Msg: "OTP server rejected: " + truncate(rawPayload, 200)}
+}
+
+// ErrOTPDecrypt covers all step-6 decryption failures: short
+// envelope, bad hex, non-block-aligned ciphertext, DES init failure.
+func ErrOTPDecrypt(msg string) *LoginError {
+	return &LoginError{Kind: KindOTPDecrypt, Msg: "OTP decrypt: " + msg}
 }
 
 // truncate returns up to n bytes of s with a "…" marker if it was

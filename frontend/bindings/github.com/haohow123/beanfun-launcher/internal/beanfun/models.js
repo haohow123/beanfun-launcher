@@ -54,6 +54,38 @@ export class Account {
 }
 
 /**
+ * BeanfunClient wraps a redirect-following http.Client plus a cookie
+ * jar for a single Beanfun login session. A new instance starts a
+ * fresh jar — no leftover cookies from a prior attempt.
+ * 
+ * Pungin/Beanfun maintains a second no-redirect client variant for
+ * flows that need to read `Set-Cookie` directly from a 302 response.
+ * Our QR-only flow doesn't: step 6 of finalize discards the response,
+ * and step 7 reads `bfWebToken` from the jar after the redirect chain
+ * settles. So one client is enough. See docs/beanfun-login-protocol.md.
+ */
+export class BeanfunClient {
+    /**
+     * Creates a new BeanfunClient instance.
+     * @param {Partial<BeanfunClient>} [$$source = {}] - The source object to create the BeanfunClient.
+     */
+    constructor($$source = {}) {
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new BeanfunClient instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {BeanfunClient}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new BeanfunClient(/** @type {Partial<BeanfunClient>} */($$parsedSource));
+    }
+}
+
+/**
  * QRStart is the payload returned to the frontend when QR login begins.
  * BitmapBase64 is the QR PNG bytes encoded as base64 (no data: prefix).
  * Deeplink is the Beanfun mobile-app URL the QR encodes; surfaced so
@@ -112,3 +144,66 @@ export const QRStatus = {
     QRStatusExpired: "expired",
     QRStatusApproved: "approved",
 };
+
+/**
+ * Session holds the credentials acquired after a successful login.
+ * SKey and WebToken are session bearers — never log the struct with
+ * %+v; use the redacted Stringer below. See
+ * docs/beanfun-login-protocol.md § Token storage.
+ */
+export class Session {
+    /**
+     * Creates a new Session instance.
+     * @param {Partial<Session>} [$$source = {}] - The source object to create the Session.
+     */
+    constructor($$source = {}) {
+        if (!("SKey" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["SKey"] = "";
+        }
+        if (!("WebToken" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["WebToken"] = "";
+        }
+        if (!("AccountID" in $$source)) {
+            /**
+             * empty for QR until GetAccounts runs (later milestone)
+             * @member
+             * @type {string}
+             */
+            this["AccountID"] = "";
+        }
+        if (!("ServiceCode" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["ServiceCode"] = "";
+        }
+        if (!("ServiceRegion" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["ServiceRegion"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new Session instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {Session}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new Session(/** @type {Partial<Session>} */($$parsedSource));
+    }
+}

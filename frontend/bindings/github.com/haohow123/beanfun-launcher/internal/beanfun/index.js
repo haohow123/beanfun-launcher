@@ -9,6 +9,8 @@ export {
 
 export {
     Account,
+    BeanfunClient,
     QRStart,
-    QRStatus
+    QRStatus,
+    Session
 } from "./models.js";
