@@ -5,21 +5,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"testing"
 )
-
-// stubEndpoints points the BeanfunClient at the given test server for
-// all 3 base URLs. Sufficient for session_key + qr_init tests because
-// the stubbed routes use distinct paths.
-func stubEndpoints(t *testing.T, srv *httptest.Server) Endpoints {
-	t.Helper()
-	base, err := url.Parse(srv.URL + "/")
-	if err != nil {
-		t.Fatalf("parse srv URL: %v", err)
-	}
-	return Endpoints{LoginBase: base, PortalBase: base, NewloginBase: base}
-}
 
 func TestGetSessionKey_HappyPath(t *testing.T) {
 	t.Parallel()

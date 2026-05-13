@@ -2,23 +2,12 @@ package beanfun
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 )
-
-// pollResponseBody returns a JSON envelope with the given ResultMessage.
-func pollResponseBody(msg string) string {
-	b, _ := json.Marshal(map[string]any{
-		"ResultMessage": msg,
-		"ResultData":    map[string]any{},
-	})
-	return string(b)
-}
 
 func pollStubMux(handler http.HandlerFunc) *http.ServeMux {
 	mux := http.NewServeMux()
@@ -26,17 +15,6 @@ func pollStubMux(handler http.HandlerFunc) *http.ServeMux {
 		mux.HandleFunc("/QRLogin/CheckLoginStatus", handler)
 	}
 	return mux
-}
-
-func newPollTestClient(t *testing.T, mux *http.ServeMux) *BeanfunClient {
-	t.Helper()
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-	c, err := NewBeanfunClientWithEndpoints(stubEndpoints(t, srv))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return c
 }
 
 func TestPollQRLoginStatus_ResultMessageDispatch(t *testing.T) {
@@ -54,7 +32,7 @@ func TestPollQRLoginStatus_ResultMessageDispatch(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			c := newPollTestClient(t, pollStubMux(func(w http.ResponseWriter, _ *http.Request) {
+			c, _ := newTestClient(t, pollStubMux(func(w http.ResponseWriter, _ *http.Request) {
 				writeJSON(w, pollResponseBody(tt.msg))
 			}))
 			got, err := c.pollQRLoginStatus(context.Background(), &qrLoginInit{SKey: "SK", VerificationToken: "TKN"})
@@ -70,7 +48,7 @@ func TestPollQRLoginStatus_ResultMessageDispatch(t *testing.T) {
 
 func TestPollQRLoginStatus_UnknownResultMessage(t *testing.T) {
 	t.Parallel()
-	c := newPollTestClient(t, pollStubMux(func(w http.ResponseWriter, _ *http.Request) {
+	c, _ := newTestClient(t, pollStubMux(func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, pollResponseBody("Some Unknown State"))
 	}))
 	_, err := c.pollQRLoginStatus(context.Background(), &qrLoginInit{SKey: "SK"})
@@ -82,7 +60,7 @@ func TestPollQRLoginStatus_UnknownResultMessage(t *testing.T) {
 
 func TestPollQRLoginStatus_MissingResultMessage(t *testing.T) {
 	t.Parallel()
-	c := newPollTestClient(t, pollStubMux(func(w http.ResponseWriter, _ *http.Request) {
+	c, _ := newTestClient(t, pollStubMux(func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, `{}`)
 	}))
 	_, err := c.pollQRLoginStatus(context.Background(), &qrLoginInit{SKey: "SK"})
@@ -94,7 +72,7 @@ func TestPollQRLoginStatus_MissingResultMessage(t *testing.T) {
 
 func TestPollQRLoginStatus_NonJSONBody(t *testing.T) {
 	t.Parallel()
-	c := newPollTestClient(t, pollStubMux(func(w http.ResponseWriter, _ *http.Request) {
+	c, _ := newTestClient(t, pollStubMux(func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, "not-json-{")
 	}))
 	_, err := c.pollQRLoginStatus(context.Background(), &qrLoginInit{SKey: "SK"})
@@ -120,7 +98,7 @@ func TestPollQRLoginStatus_VerificationTokenHeader(t *testing.T) {
 			t.Parallel()
 			var captured string
 			var sent bool
-			c := newPollTestClient(t, pollStubMux(func(w http.ResponseWriter, r *http.Request) {
+			c, _ := newTestClient(t, pollStubMux(func(w http.ResponseWriter, r *http.Request) {
 				_, sent = r.Header["Requestverificationtoken"]
 				// fallback: normalised lookup
 				if v := r.Header.Get("RequestVerificationToken"); v != "" {
@@ -148,7 +126,7 @@ func TestPollQRLoginStatus_RequestShape(t *testing.T) {
 	var captured http.Header
 	var capturedBody []byte
 	var capturedCL int64
-	c := newPollTestClient(t, pollStubMux(func(w http.ResponseWriter, r *http.Request) {
+	c, _ := newTestClient(t, pollStubMux(func(w http.ResponseWriter, r *http.Request) {
 		captured = r.Header.Clone()
 		capturedCL = r.ContentLength
 		capturedBody, _ = io.ReadAll(r.Body)
