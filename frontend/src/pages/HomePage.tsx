@@ -16,14 +16,55 @@ import { loggedInAtom } from "@/state/auth";
 export function HomePage() {
   const setLoggedIn = useSetAtom(loggedInAtom);
   const qc = useQueryClient();
-  const { data, isPending, isError, error, refetch } = useAccountsQuery();
+  const accounts = useAccountsQuery();
 
-  // Wipe all cached query state on logout — otherwise LoginPage
-  // remounts and reads the stale ['qrStatus'] = 'approved' from cache,
-  // its useEffect fires, and we ping-pong straight back here.
   function logout() {
     qc.clear();
     setLoggedIn(false);
+  }
+
+  function renderAccounts() {
+    if (accounts.isPending) {
+      return (
+        <p className="text-sm text-muted-foreground">載入帳號中…</p>
+      );
+    }
+    if (accounts.isError) {
+      return (
+        <div className="flex flex-col items-center gap-2">
+          <p className="text-sm text-destructive">
+            載入失敗:{String(accounts.error)}
+          </p>
+          <Button variant="outline" onClick={() => accounts.refetch()}>
+            重試
+          </Button>
+        </div>
+      );
+    }
+    if (accounts.data.length === 0) {
+      return (
+        <div className="flex flex-col items-center gap-2">
+          <p className="text-sm text-muted-foreground">找不到遊戲帳號</p>
+          <Button variant="outline" onClick={() => accounts.refetch()}>
+            重試
+          </Button>
+        </div>
+      );
+    }
+    return (
+      <ul className="flex flex-col gap-2">
+        {accounts.data.map((acc) => (
+          <li
+            key={acc.sid}
+            data-disabled={!acc.enabled || undefined}
+            className="flex items-center justify-between rounded-md border p-3 data-[disabled]:opacity-50"
+          >
+            <span className="text-sm font-medium">{acc.sname}</span>
+            <span className="text-xs text-muted-foreground">{acc.sid}</span>
+          </li>
+        ))}
+      </ul>
+    );
   }
 
   return (
@@ -34,47 +75,7 @@ export function HomePage() {
           <CardDescription>選擇要啟動的遊戲帳號</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
-          {isPending && (
-            <p className="text-sm text-muted-foreground">載入帳號中…</p>
-          )}
-
-          {isError && (
-            <div className="flex flex-col items-center gap-2">
-              <p className="text-sm text-destructive">
-                載入失敗:{String(error)}
-              </p>
-              <Button variant="outline" onClick={() => refetch()}>
-                重試
-              </Button>
-            </div>
-          )}
-
-          {!isPending && !isError && data && data.length === 0 && (
-            <div className="flex flex-col items-center gap-2">
-              <p className="text-sm text-muted-foreground">找不到遊戲帳號</p>
-              <Button variant="outline" onClick={() => refetch()}>
-                重試
-              </Button>
-            </div>
-          )}
-
-          {!isPending && !isError && data && data.length > 0 && (
-            <ul className="flex flex-col gap-2">
-              {data.map((acc) => (
-                <li
-                  key={acc.sid}
-                  data-disabled={!acc.enabled || undefined}
-                  className="flex items-center justify-between rounded-md border p-3 data-[disabled]:opacity-50"
-                >
-                  <span className="text-sm font-medium">{acc.sname}</span>
-                  <span className="text-xs text-muted-foreground">
-                    {acc.sid}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-
+          {renderAccounts()}
           <Button
             variant="outline"
             className="mt-2 self-center"
