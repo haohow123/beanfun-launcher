@@ -236,6 +236,36 @@ func TestBeanfunClient_FetchOTP_Step1MissingLongPollingKey(t *testing.T) {
 	}
 }
 
+func TestBeanfunClient_FetchOTP_Step1SessionExpired(t *testing.T) {
+	// Captured from real launcher-v0.1.0-alpha.17.log: when the
+	// Beanfun session has timed out server-side, game_start_step2
+	// returns a 200 OK with a "Messge Page" HTML stub whose
+	// divMsg literally says "尚未登入，請重新登入". FetchOTP must
+	// surface that as KindSessionExpired so the launcher resets
+	// state and the frontend routes back to QR login.
+	t.Parallel()
+	const expiredBody = `<!DOCTYPE html><html><body>` +
+		`<div id="divMsg">尚未登入，請重新登入</div>` +
+		`</body></html>`
+	mux := http.NewServeMux()
+	mux.HandleFunc("/beanfun_block/game_zone/game_start_step2.aspx", func(w http.ResponseWriter, _ *http.Request) {
+		writeHTML(w, expiredBody)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	c, err := NewBeanfunClientWithEndpoints(stubEndpoints(t, srv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.FetchOTP(context.Background(),
+		&Session{ServiceCode: "x", ServiceRegion: "y", WebToken: "z"},
+		Account{SID: "s", SSN: "1", SName: "n"})
+	var le *LoginError
+	if !errors.As(err, &le) || le.Kind != KindSessionExpired {
+		t.Errorf("got %v, want KindSessionExpired", err)
+	}
+}
+
 func TestBeanfunClient_FetchOTP_Step5ServerRejects(t *testing.T) {
 	t.Parallel()
 	mux := http.NewServeMux()

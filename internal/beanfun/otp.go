@@ -100,6 +100,9 @@ func (c *BeanfunClient) otpStep1(ctx context.Context, sess *Session, acc Account
 	}
 
 	bodyStr := string(body)
+	if isSessionExpiredBody(bodyStr) {
+		return otpStep1{}, ErrSessionExpired()
+	}
 	key := extractLongPollingKey(bodyStr)
 	if key == "" {
 		return otpStep1{}, ErrOTPInit("missing GetResultByLongPolling key in game_start_step2.aspx" + withBody(bodyStr))
