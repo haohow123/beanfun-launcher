@@ -118,3 +118,30 @@ func truncate(s string, n int) string {
 	}
 	return s[:n] + "…"
 }
+
+// bodyPreviewLimit caps how much of a server response is appended
+// to a parse-failure error message. Generous enough to identify the
+// page type (login redirect / throttle notice / actual payload) but
+// tight enough to keep launcher.log lines readable.
+const bodyPreviewLimit = 500
+
+// withBody appends a truncated response-body preview to an error
+// message. Use at every parse-failure site so the log captures what
+// the server actually returned — saves us from re-instrumenting each
+// time a new failure mode surfaces.
+//
+//	return ErrOTPInit("missing key" + withBody(bodyStr))
+//
+// Empty body strings produce an empty suffix so callers don't have
+// to guard. Bytes slices can be passed via withBodyBytes.
+func withBody(body string) string {
+	if body == "" {
+		return ""
+	}
+	return " :: body=" + truncate(body, bodyPreviewLimit)
+}
+
+// withBodyBytes is the []byte variant of withBody.
+func withBodyBytes(body []byte) string {
+	return withBody(string(body))
+}

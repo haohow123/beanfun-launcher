@@ -138,7 +138,7 @@ export function HomePage() {
             <span className="text-xs text-muted-foreground">帶入中…</span>
           )}
           {launchStatus === "success" && (
-            <span className="text-xs text-foreground">✓ 已帶入帳密</span>
+            <span className="text-xs text-foreground">✓ 已送出帳密</span>
           )}
           {launchStatus === "no-window" && (
             <span className="text-xs text-muted-foreground">
@@ -146,19 +146,23 @@ export function HomePage() {
             </span>
           )}
           {launchStatus === "fallback" && (
-            <span className="text-xs text-foreground">
-              需手動貼上
-            </span>
+            <span className="text-xs text-foreground">需手動貼上</span>
           )}
           {launchStatus === "error" && (
-            <span
-              className="text-xs text-destructive"
-              title={String(launch.error)}
-            >
-              帶入失敗
-            </span>
+            <span className="text-xs text-destructive">帶入失敗</span>
           )}
         </div>
+
+        {launchStatus === "success" && (
+          <p className="mt-1 text-xs text-muted-foreground">
+            若沒帶入,點一下遊戲帳號欄位讓游標進入,再按一次
+          </p>
+        )}
+        {launchStatus === "error" && launch.error && (
+          <p className="mt-1 break-words text-xs text-destructive">
+            {String(launch.error)}
+          </p>
+        )}
 
         <code className="block break-all text-xs text-muted-foreground">
           {acc.sid}
@@ -185,7 +189,6 @@ export function HomePage() {
             size="sm"
             disabled={anyPending}
             onClick={() => copyCredentials(acc)}
-            title="抓 OTP 後把帳號+密碼 (換行隔開) 複製到剪貼簿"
           >
             {copyStatus === "pending"
               ? "產生中…"
@@ -247,7 +250,7 @@ export function HomePage() {
         <CardHeader>
           <CardTitle>遊戲帳號</CardTitle>
           <CardDescription>
-            按「啟動遊戲」開遊戲,等登入畫面出現後選帳號按「帶入帳密」
+            按「啟動遊戲」開遊戲,登入畫面出現後再按帳號旁邊的「帶入帳密」
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
@@ -258,7 +261,7 @@ export function HomePage() {
             {spawnLabel()}
           </Button>
           {spawn.isError && (
-            <p className="text-xs text-destructive" title={String(spawn.error)}>
+            <p className="break-words text-xs text-destructive">
               啟動失敗:{String(spawn.error)}
             </p>
           )}

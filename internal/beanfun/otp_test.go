@@ -228,6 +228,12 @@ func TestBeanfunClient_FetchOTP_Step1MissingLongPollingKey(t *testing.T) {
 	if !errors.As(err, &le) || le.Kind != KindOTPInit {
 		t.Errorf("got %v, want KindOTPInit", err)
 	}
+	// Body preview must accompany the error so real-Beanfun logs
+	// capture what the server actually returned — that's how we'll
+	// finally identify the post-disconnect case.
+	if le != nil && !strings.Contains(le.Msg, "no key here") {
+		t.Errorf("error message missing body preview: %q", le.Msg)
+	}
 }
 
 func TestBeanfunClient_FetchOTP_Step5ServerRejects(t *testing.T) {

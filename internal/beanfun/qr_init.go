@@ -100,16 +100,16 @@ func (c *BeanfunClient) initQRLogin(ctx context.Context, skey string) (*qrLoginI
 		return nil, ErrJSON(err)
 	}
 	if env.Result == nil {
-		return nil, ErrQRInitResult("missing Result field")
+		return nil, ErrQRInitResult("missing Result field" + withBodyBytes(initBody))
 	}
 	if *env.Result != 0 {
-		return nil, ErrQRInitResult(fmt.Sprintf("Result = %d (expected 0)", *env.Result))
+		return nil, ErrQRInitResult(fmt.Sprintf("Result = %d (expected 0)", *env.Result) + withBodyBytes(initBody))
 	}
 	if env.ResultData == nil {
-		return nil, ErrQRInitResult("missing ResultData field")
+		return nil, ErrQRInitResult("missing ResultData field" + withBodyBytes(initBody))
 	}
 	if env.ResultData.QRImage == nil || *env.ResultData.QRImage == "" {
-		return nil, ErrQRInitResult("missing or empty QRImage")
+		return nil, ErrQRInitResult("missing or empty QRImage" + withBodyBytes(initBody))
 	}
 
 	deeplink := ""
