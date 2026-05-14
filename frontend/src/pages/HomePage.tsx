@@ -138,7 +138,7 @@ export function HomePage() {
             <span className="text-xs text-muted-foreground">帶入中…</span>
           )}
           {launchStatus === "success" && (
-            <span className="text-xs text-foreground">✓ 已帶入帳密</span>
+            <span className="text-xs text-foreground">✓ 已送出帳密</span>
           )}
           {launchStatus === "no-window" && (
             <span className="text-xs text-muted-foreground">
@@ -146,9 +146,7 @@ export function HomePage() {
             </span>
           )}
           {launchStatus === "fallback" && (
-            <span className="text-xs text-foreground">
-              需手動貼上
-            </span>
+            <span className="text-xs text-foreground">需手動貼上</span>
           )}
           {launchStatus === "error" && (
             <span
@@ -159,6 +157,12 @@ export function HomePage() {
             </span>
           )}
         </div>
+
+        {launchStatus === "success" && (
+          <p className="mt-1 text-xs text-muted-foreground">
+            若沒帶入,請先在遊戲畫面點一下帳號欄位讓游標進入,再按一次
+          </p>
+        )}
 
         <code className="block break-all text-xs text-muted-foreground">
           {acc.sid}
@@ -200,6 +204,7 @@ export function HomePage() {
             size="sm"
             disabled={anyPending}
             onClick={() => injectCredentials(acc)}
+            title="按下前請先在遊戲畫面點一下帳號欄位讓游標進入"
           >
             帶入帳密
           </Button>
@@ -247,7 +252,8 @@ export function HomePage() {
         <CardHeader>
           <CardTitle>遊戲帳號</CardTitle>
           <CardDescription>
-            按「啟動遊戲」開遊戲,等登入畫面出現後選帳號按「帶入帳密」
+            按「啟動遊戲」開遊戲 → 登入畫面出現後,在帳號欄位點一下讓游標進入
+            → 再按「帶入帳密」
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
