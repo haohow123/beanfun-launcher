@@ -178,7 +178,7 @@ func (c *BeanfunClient) Ping(ctx context.Context) error {
 	if err != nil {
 		return ErrHTTP(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return ErrHTTP(fmt.Errorf("echo_token.ashx returned HTTP %d", resp.StatusCode))
 	}
