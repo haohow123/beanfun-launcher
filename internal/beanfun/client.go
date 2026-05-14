@@ -149,3 +149,38 @@ func (c *BeanfunClient) newloginURL(path string) (*url.URL, error) {
 	}
 	return u, nil
 }
+
+// Ping hits the Beanfun portal's session keep-alive endpoint so the
+// server's idle timer is reset. Mirrors WPF's BeanfunClient.Ping()
+// (bfClient.cs L193-212) and the run_ping_loop call site that drives
+// it every 60 seconds after login finalizes.
+//
+// Body is intentionally discarded — the request is only useful for
+// the server-side side effect. Failures are returned but the caller
+// (LoginService.runPingLoop) swallows them at debug level: a single
+// failed tick doesn't mean the session is dead, and the next real
+// user action (FetchOTP etc.) detects expiry definitively from the
+// response body.
+func (c *BeanfunClient) Ping(ctx context.Context) error {
+	u, err := c.portalURL("beanfun_block/generic_handlers/echo_token.ashx")
+	if err != nil {
+		return err
+	}
+	q := u.Query()
+	q.Set("webtoken", "1")
+	u.RawQuery = q.Encode()
+
+	req, err := c.newRequest(ctx, "GET", u)
+	if err != nil {
+		return err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return ErrHTTP(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode >= 400 {
+		return ErrHTTP(fmt.Errorf("echo_token.ashx returned HTTP %d", resp.StatusCode))
+	}
+	return nil
+}

@@ -1,6 +1,9 @@
 package beanfun
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // LoginErrorKind enumerates the classes of failure surfaced by the
 // Beanfun login flow. The frontend can switch on Kind to render
@@ -21,6 +24,7 @@ const (
 	KindOTPInit
 	KindOTPServerRejected
 	KindOTPDecrypt
+	KindSessionExpired
 )
 
 // LoginError is the typed error returned by every Beanfun login step.
@@ -108,6 +112,14 @@ func ErrOTPDecrypt(msg string) *LoginError {
 	return &LoginError{Kind: KindOTPDecrypt, Msg: "OTP decrypt: " + msg}
 }
 
+// ErrSessionExpired is returned when the Beanfun portal responds to
+// an authenticated request with its "尚未登入，請重新登入" notice
+// (literally: "not logged in, please re-login"). The callers reset
+// local state and route the user back to QR login.
+func ErrSessionExpired() *LoginError {
+	return &LoginError{Kind: KindSessionExpired, Msg: "beanfun session expired (尚未登入)"}
+}
+
 // truncate returns up to n bytes of s with a "…" marker if it was
 // shortened. Used for body previews in diagnostic logs and error
 // messages — small enough to fit on one terminal line, big enough to
@@ -144,4 +156,14 @@ func withBody(body string) string {
 // withBodyBytes is the []byte variant of withBody.
 func withBodyBytes(body []byte) string {
 	return withBody(string(body))
+}
+
+// isSessionExpiredBody reports whether body looks like Beanfun's
+// "session timed out" notice — the same Messge Page (sic) the portal
+// returns from authenticated endpoints when bfWebToken is no longer
+// valid. Captured from a real launcher.log; the marker string is the
+// divMsg content rather than the title because the title is
+// suspiciously misspelled and could change.
+func isSessionExpiredBody(body string) bool {
+	return strings.Contains(body, "尚未登入")
 }

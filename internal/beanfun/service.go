@@ -39,7 +39,19 @@ type LoginService struct {
 	client    *BeanfunClient // minted fresh on each StartQRLogin
 	pendingQR *qrLoginInit
 	session   *Session // populated when finalize succeeds
+	// pingCancel stops the background keep-alive ping loop. nil
+	// when no session is active. Must be held under mu when read /
+	// reassigned.
+	pingCancel context.CancelFunc
 }
+
+// keepAliveInterval is the cadence of the background ping that
+// keeps the Beanfun portal from reaping the session as idle. WPF
+// (and pungin/Beanfun's Rust port) drive `echo_token.ashx` every
+// 60 seconds; without it the server times the session out after
+// roughly an hour, which the user sees as a cryptic 「尚未登入」 the
+// next time they press 帶入帳密.
+const keepAliveInterval = 60 * time.Second
 
 // NewLoginService returns a LoginService configured for production TW
 // endpoints. The HTTP client is minted lazily inside StartQRLogin.
@@ -78,6 +90,14 @@ func (s *LoginService) StartQRLogin() (QRStart, error) {
 	}
 
 	s.mu.Lock()
+	// Cancel any keep-alive loop still running from a previous
+	// session — re-issuing StartQRLogin after a successful login
+	// (e.g. user clicked 登出 and is logging back in) would
+	// otherwise leak the old loop.
+	if s.pingCancel != nil {
+		s.pingCancel()
+		s.pingCancel = nil
+	}
 	s.client = client
 	s.pendingQR = init
 	s.session = nil
@@ -133,6 +153,7 @@ func (s *LoginService) CheckQRLogin() (QRStatus, error) {
 		s.mu.Lock()
 		s.session = sess
 		s.pendingQR = nil
+		s.startKeepAliveLocked(client)
 		s.mu.Unlock()
 		slog.Info("LoginService: login complete", "session", sess)
 		return QRStatusApproved, nil
@@ -180,4 +201,58 @@ func (s *LoginService) Snapshot() (*BeanfunClient, *Session) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.client, s.session
+}
+
+// Reset stops the keep-alive ping loop and drops the cached client +
+// session. Used when an authenticated request comes back as
+// ErrSessionExpired so the next Snapshot returns nil and the
+// launcher service rejects further calls with ErrLoginRequired.
+func (s *LoginService) Reset() {
+	s.mu.Lock()
+	if s.pingCancel != nil {
+		s.pingCancel()
+		s.pingCancel = nil
+	}
+	s.client = nil
+	s.session = nil
+	s.pendingQR = nil
+	s.mu.Unlock()
+}
+
+// startKeepAliveLocked spawns the background ping goroutine for the
+// given client. Cancels any previously-running loop first so that
+// re-logins don't leak a goroutine.
+//
+// Must be called with s.mu held.
+func (s *LoginService) startKeepAliveLocked(client *BeanfunClient) {
+	if s.pingCancel != nil {
+		s.pingCancel()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	s.pingCancel = cancel
+	go runKeepAlive(ctx, client)
+}
+
+// runKeepAlive pings the Beanfun portal every keepAliveInterval
+// until ctx is cancelled. Ping failures are logged at debug level
+// and the loop keeps going — a single failed tick doesn't mean the
+// session is dead, and the next user action will detect real
+// expiry from the response body.
+func runKeepAlive(ctx context.Context, client *BeanfunClient) {
+	t := time.NewTicker(keepAliveInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			slog.Info("keep-alive: loop stopped")
+			return
+		case <-t.C:
+			pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			err := client.Ping(pingCtx)
+			cancel()
+			if err != nil {
+				slog.Debug("keep-alive: ping failed (will retry)", "err", err)
+			}
+		}
+	}
 }
