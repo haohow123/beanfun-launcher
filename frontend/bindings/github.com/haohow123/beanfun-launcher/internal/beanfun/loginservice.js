@@ -41,17 +41,6 @@ export function GetAccounts() {
 }
 
 /**
- * Reset drops the cached BeanfunClient + Session so the next
- * Snapshot returns nil. Used when a downstream call (e.g. FetchOTP)
- * surfaces ErrSessionExpired and the launcher needs to force the
- * user back to QR login.
- * @returns {$CancellablePromise<void>}
- */
-export function Reset() {
-    return $Call.ByID(1458204088);
-}
-
-/**
  * Snapshot returns the current client + session pointers without a
  * copy. Used by sibling services (internal/launcher) that need to
  * drive post-login flows against the same cookie jar — the alternative

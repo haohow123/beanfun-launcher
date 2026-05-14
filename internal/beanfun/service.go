@@ -181,15 +181,3 @@ func (s *LoginService) Snapshot() (*BeanfunClient, *Session) {
 	defer s.mu.Unlock()
 	return s.client, s.session
 }
-
-// Reset drops the cached BeanfunClient + Session so the next
-// Snapshot returns nil. Used when a downstream call (e.g. FetchOTP)
-// surfaces ErrSessionExpired and the launcher needs to force the
-// user back to QR login.
-func (s *LoginService) Reset() {
-	s.mu.Lock()
-	s.client = nil
-	s.session = nil
-	s.pendingQR = nil
-	s.mu.Unlock()
-}

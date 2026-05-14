@@ -2,7 +2,6 @@ package launcher
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -128,12 +127,6 @@ func (s *LauncherService) Launch(account beanfun.Account) (LaunchResult, error) 
 
 	otp, err := client.FetchOTP(ctx, session, account)
 	if err != nil {
-		if isSessionExpired(err) {
-			slog.Warn("Launch: session expired, clearing local state",
-				"sid", account.SID)
-			s.login.Reset()
-			return LaunchResult{}, beanfun.ErrLoginRequired()
-		}
 		slog.Error("Launch: FetchOTP failed", "err", err, "sid", account.SID)
 		return LaunchResult{}, err
 	}
@@ -146,15 +139,6 @@ func (s *LauncherService) Launch(account beanfun.Account) (LaunchResult, error) 
 	}
 	slog.Info("Launch: credentials injected", "sid", account.SID)
 	return LaunchResult{AutoFilled: true}, nil
-}
-
-// isSessionExpired reports whether err signals that the upstream
-// Beanfun session has been invalidated and the user must re-login.
-// Used by Launch + GetOTP to convert the typed beanfun error into
-// the same "login required" shape the rest of the service uses.
-func isSessionExpired(err error) bool {
-	var le *beanfun.LoginError
-	return errors.As(err, &le) && le.Kind == beanfun.KindSessionExpired
 }
 
 // GetOTP runs the OTP fetch flow and returns the plaintext token for
@@ -187,12 +171,6 @@ func (s *LauncherService) GetOTP(account beanfun.Account) (string, error) {
 
 	otp, err := client.FetchOTP(ctx, session, account)
 	if err != nil {
-		if isSessionExpired(err) {
-			slog.Warn("GetOTP: session expired, clearing local state",
-				"sid", account.SID)
-			s.login.Reset()
-			return "", beanfun.ErrLoginRequired()
-		}
 		slog.Error("GetOTP: FetchOTP failed", "err", err, "sid", account.SID)
 		return "", err
 	}

@@ -21,7 +21,6 @@ const (
 	KindOTPInit
 	KindOTPServerRejected
 	KindOTPDecrypt
-	KindSessionExpired
 )
 
 // LoginError is the typed error returned by every Beanfun login step.
@@ -109,16 +108,6 @@ func ErrOTPDecrypt(msg string) *LoginError {
 	return &LoginError{Kind: KindOTPDecrypt, Msg: "OTP decrypt: " + msg}
 }
 
-// ErrSessionExpired is returned when an authenticated endpoint
-// (game_start_step2.aspx and friends) responds with a body that
-// lacks the expected hidden values — overwhelmingly because the
-// server-side Beanfun session has timed out / been invalidated.
-// Callers should drop the local session state and route the user
-// back to QR login.
-func ErrSessionExpired() *LoginError {
-	return &LoginError{Kind: KindSessionExpired, Msg: "beanfun session expired"}
-}
-
 // truncate returns up to n bytes of s with a "…" marker if it was
 // shortened. Used for body previews in diagnostic logs and error
 // messages — small enough to fit on one terminal line, big enough to
@@ -128,4 +117,31 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+// bodyPreviewLimit caps how much of a server response is appended
+// to a parse-failure error message. Generous enough to identify the
+// page type (login redirect / throttle notice / actual payload) but
+// tight enough to keep launcher.log lines readable.
+const bodyPreviewLimit = 500
+
+// withBody appends a truncated response-body preview to an error
+// message. Use at every parse-failure site so the log captures what
+// the server actually returned — saves us from re-instrumenting each
+// time a new failure mode surfaces.
+//
+//	return ErrOTPInit("missing key" + withBody(bodyStr))
+//
+// Empty body strings produce an empty suffix so callers don't have
+// to guard. Bytes slices can be passed via withBodyBytes.
+func withBody(body string) string {
+	if body == "" {
+		return ""
+	}
+	return " :: body=" + truncate(body, bodyPreviewLimit)
+}
+
+// withBodyBytes is the []byte variant of withBody.
+func withBodyBytes(body []byte) string {
+	return withBody(string(body))
 }

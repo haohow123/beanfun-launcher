@@ -102,19 +102,15 @@ func (c *BeanfunClient) otpStep1(ctx context.Context, sess *Session, acc Account
 	bodyStr := string(body)
 	key := extractLongPollingKey(bodyStr)
 	if key == "" {
-		// game_start_step2.aspx without the polling key is the
-		// classic post-disconnect response — server replied with a
-		// login page instead of an authenticated payload. Surface
-		// as session-expired so the caller can drop state cleanly.
-		return otpStep1{}, ErrSessionExpired()
+		return otpStep1{}, ErrOTPInit("missing GetResultByLongPolling key in game_start_step2.aspx" + withBody(bodyStr))
 	}
 	uk, uv, ok := extractUnkData(bodyStr)
 	if !ok {
-		return otpStep1{}, ErrSessionExpired()
+		return otpStep1{}, ErrOTPInit("missing MyAccountData unk_data literal" + withBody(bodyStr))
 	}
 	createTime := extractCreateTimeFallback(bodyStr)
 	if createTime == "" {
-		return otpStep1{}, ErrSessionExpired()
+		return otpStep1{}, ErrOTPInit("missing ServiceAccountCreateTime" + withBody(bodyStr))
 	}
 	slog.Info("FetchOTP step 1: game_start_step2.aspx",
 		"long_polling_key_len", len(key),
@@ -149,9 +145,10 @@ func (c *BeanfunClient) otpStep2(ctx context.Context) (string, error) {
 	if resp.StatusCode >= 400 {
 		return "", ErrHTTP(fmt.Errorf("get_cookies.ashx returned HTTP %d", resp.StatusCode))
 	}
-	code := extractSecretCode(string(body))
+	bodyStr := string(body)
+	code := extractSecretCode(bodyStr)
 	if code == "" {
-		return "", ErrOTPInit("missing m_strSecretCode in get_cookies.ashx body")
+		return "", ErrOTPInit("missing m_strSecretCode in get_cookies.ashx" + withBody(bodyStr))
 	}
 	slog.Info("FetchOTP step 2: get_cookies.ashx", "secret_code_len", len(code))
 	return code, nil
