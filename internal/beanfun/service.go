@@ -45,13 +45,19 @@ type LoginService struct {
 	pingCancel context.CancelFunc
 }
 
-// keepAliveInterval is the cadence of the background ping that
-// keeps the Beanfun portal from reaping the session as idle. WPF
-// (and pungin/Beanfun's Rust port) drive `echo_token.ashx` every
-// 60 seconds; without it the server times the session out after
-// roughly an hour, which the user sees as a cryptic 「尚未登入」 the
-// next time they press 帶入帳密.
-const keepAliveInterval = 60 * time.Second
+// Cadence of the background ping that keeps the Beanfun portal
+// from reaping the session as idle. WPF (and pungin/Beanfun's Rust
+// port) drive `echo_token.ashx` every 60 seconds.
+//
+// Adaptive on failure: a successful ping arms the next tick at
+// keepAliveIntervalOK (60s); a failed ping arms at
+// keepAliveIntervalFail (10s) so a transient blip doesn't burn
+// most of the 55-minute server-side reap window before we try
+// again. Once the next ping succeeds we drop back to 60s.
+const (
+	keepAliveIntervalOK   = 60 * time.Second
+	keepAliveIntervalFail = 10 * time.Second
+)
 
 // NewLoginService returns a LoginService configured for production TW
 // endpoints. The HTTP client is minted lazily inside StartQRLogin.
@@ -233,25 +239,33 @@ func (s *LoginService) startKeepAliveLocked(client *BeanfunClient) {
 	go runKeepAlive(ctx, client)
 }
 
-// runKeepAlive pings the Beanfun portal every keepAliveInterval
-// until ctx is cancelled. Ping failures are logged at debug level
-// and the loop keeps going — a single failed tick doesn't mean the
-// session is dead, and the next user action will detect real
-// expiry from the response body.
+// runKeepAlive pings the Beanfun portal on an adaptive schedule
+// until ctx is cancelled: keepAliveIntervalOK after each success,
+// keepAliveIntervalFail after each failure. The shorter retry
+// interval gives a transient network blip a chance to clear before
+// the server's idle timer reaps the session, without spamming the
+// endpoint when things are fine.
+//
+// Failed pings are logged at debug level and the loop keeps going
+// — a single failed tick doesn't mean the session is dead; the
+// next user action will detect real expiry from the response body.
 func runKeepAlive(ctx context.Context, client *BeanfunClient) {
-	t := time.NewTicker(keepAliveInterval)
-	defer t.Stop()
+	interval := keepAliveIntervalOK
 	for {
 		select {
 		case <-ctx.Done():
 			slog.Info("keep-alive: loop stopped")
 			return
-		case <-t.C:
+		case <-time.After(interval):
 			pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			err := client.Ping(pingCtx)
 			cancel()
 			if err != nil {
-				slog.Debug("keep-alive: ping failed (will retry)", "err", err)
+				slog.Debug("keep-alive: ping failed (retrying sooner)",
+					"err", err, "next_interval", keepAliveIntervalFail)
+				interval = keepAliveIntervalFail
+			} else {
+				interval = keepAliveIntervalOK
 			}
 		}
 	}
