@@ -210,6 +210,11 @@ func TestBeanfunClient_FetchOTP_HappyPath(t *testing.T) {
 }
 
 func TestBeanfunClient_FetchOTP_Step1MissingLongPollingKey(t *testing.T) {
+	// A step1 body that doesn't carry the polling key is the
+	// classic post-disconnect response — Beanfun returns the login
+	// page instead of an authenticated payload. FetchOTP surfaces
+	// that as KindSessionExpired so the launcher can drop local
+	// state and route the user back to QR login.
 	t.Parallel()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/beanfun_block/game_zone/game_start_step2.aspx", func(w http.ResponseWriter, _ *http.Request) {
@@ -225,8 +230,8 @@ func TestBeanfunClient_FetchOTP_Step1MissingLongPollingKey(t *testing.T) {
 		&Session{ServiceCode: "x", ServiceRegion: "y", WebToken: "z"},
 		Account{SID: "s", SSN: "1", SName: "n"})
 	var le *LoginError
-	if !errors.As(err, &le) || le.Kind != KindOTPInit {
-		t.Errorf("got %v, want KindOTPInit", err)
+	if !errors.As(err, &le) || le.Kind != KindSessionExpired {
+		t.Errorf("got %v, want KindSessionExpired", err)
 	}
 }
 

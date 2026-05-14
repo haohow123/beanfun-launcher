@@ -21,6 +21,7 @@ const (
 	KindOTPInit
 	KindOTPServerRejected
 	KindOTPDecrypt
+	KindSessionExpired
 )
 
 // LoginError is the typed error returned by every Beanfun login step.
@@ -106,6 +107,16 @@ func ErrOTPServerRejected(rawPayload string) *LoginError {
 // envelope, bad hex, non-block-aligned ciphertext, DES init failure.
 func ErrOTPDecrypt(msg string) *LoginError {
 	return &LoginError{Kind: KindOTPDecrypt, Msg: "OTP decrypt: " + msg}
+}
+
+// ErrSessionExpired is returned when an authenticated endpoint
+// (game_start_step2.aspx and friends) responds with a body that
+// lacks the expected hidden values — overwhelmingly because the
+// server-side Beanfun session has timed out / been invalidated.
+// Callers should drop the local session state and route the user
+// back to QR login.
+func ErrSessionExpired() *LoginError {
+	return &LoginError{Kind: KindSessionExpired, Msg: "beanfun session expired"}
 }
 
 // truncate returns up to n bytes of s with a "…" marker if it was

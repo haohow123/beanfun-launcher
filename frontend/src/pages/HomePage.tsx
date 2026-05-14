@@ -44,6 +44,18 @@ export function HomePage() {
     accounts.refetch();
   }
 
+  // The backend converts an expired Beanfun session into a "login
+  // required" error (after Reset()ing local state). On the frontend
+  // that surfaces as a Wails IPC error message — match on its prefix
+  // and force the user back to QR login. Same effect as clicking 登出,
+  // wrapped so we don't have to remember to call qc.clear + setLoggedIn
+  // at every mutation onError site.
+  function handleMutationError(err: unknown) {
+    if (err instanceof Error && err.message.includes("login required")) {
+      logout();
+    }
+  }
+
   function markCopied(sid: string) {
     setCopiedSid(sid);
     window.setTimeout(
@@ -63,9 +75,13 @@ export function HomePage() {
   // "hold activation; resolve later" — which keeps the activation
   // budget for the actual write.
   function copyCredentials(acc: Account) {
-    const blobPromise = fetchOTP.mutateAsync(acc).then(
-      (otp) => new Blob([`${acc.sid}\n${otp}`], { type: "text/plain" }),
-    );
+    const blobPromise = fetchOTP
+      .mutateAsync(acc)
+      .then((otp) => new Blob([`${acc.sid}\n${otp}`], { type: "text/plain" }))
+      .catch((e) => {
+        handleMutationError(e);
+        throw e;
+      });
     navigator.clipboard
       .write([new ClipboardItem({ "text/plain": blobPromise })])
       .then(() => markCopied(acc.sid))
@@ -74,7 +90,7 @@ export function HomePage() {
 
   function spawnGame() {
     setFallbackOTP(null);
-    spawn.mutate();
+    spawn.mutate(undefined, { onError: handleMutationError });
   }
 
   function injectCredentials(acc: Account) {
@@ -85,6 +101,7 @@ export function HomePage() {
           setFallbackOTP({ sid: acc.sid, otp: result.otp });
         }
       },
+      onError: handleMutationError,
     });
   }
 
