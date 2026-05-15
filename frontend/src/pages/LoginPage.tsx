@@ -3,14 +3,8 @@ import { useEffect } from "react";
 
 import { QRStatus } from "@bindings/beanfun";
 import { AppShell } from "@/components/layout/AppShell";
+import { Hero } from "@/components/layout/Hero";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import {
   useQRStatusQuery,
   useStartQRLoginMutation,
@@ -89,18 +83,18 @@ export function LoginPage() {
   }
 
   return (
-    <AppShell>
-      <Card className="w-full max-w-md">
-        <CardHeader>
-          <CardTitle>登入 Beanfun</CardTitle>
-          <CardDescription>
+    <AppShell mainClassName="flex-col">
+      <Hero />
+
+      <section className="flex flex-1 flex-col items-center gap-4 px-4 py-6">
+        <div className="text-center">
+          <h2 className="text-base font-semibold">登入 Beanfun</h2>
+          <p className="mt-1 text-xs text-muted-foreground">
             點下方按鈕產生 QR code,用 Beanfun! 手機 app 掃描完成登入
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col items-center gap-4">
-          {renderQRFlow()}
-        </CardContent>
-      </Card>
+          </p>
+        </div>
+        {renderQRFlow()}
+      </section>
     </AppShell>
   );
 }

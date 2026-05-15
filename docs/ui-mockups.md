@@ -126,14 +126,15 @@ flowchart TB
   layout. LoginPage keeps the centred QR card by *not* passing the
   prop; HomePage passes `flex-col` to stretch its hero / body top to
   bottom.
-- **Banner placeholder**. The hero's background is currently
-  `bg-gradient-to-br from-orange-400 via-amber-500 to-red-500` —
-  warm MapleStory-flavoured colours that don't pretend to be the
-  real artwork. A follow-up PR replaces this with
-  `bg-[url('https://tw.beanfun.com/.../banner')] bg-cover bg-center`
-  once we pick a stable Beanfun-hosted URL (loaded at runtime →
-  stays within the "Gamania-only network" rule, no Gamania artwork
-  bundled in repo).
+- **Banner image**. Loaded at runtime from the Beanfun CDN
+  (`https://tw.hicdn.beanfun.com/beanfun/WebImage/<asset>.jpg`) so
+  we stay inside the "Gamania-only network" rule from CLAUDE.md
+  and don't bundle Gamania artwork into a public repo. CSS
+  multi-background stacks the image *on top of* a warm fallback
+  gradient (`linear-gradient(to bottom right, #fb923c, #f59e0b,
+  #ef4444)`); when the image layer 404s the gradient takes over
+  with no JS or onError plumbing. Update the URL when MapleStory
+  rotates its hero banner.
 - **Logout button** keeps the same handler but moves into the hero
   row, glassy `bg-background/80 backdrop-blur` so it stays legible
   on top of bright banner art.
@@ -148,4 +149,13 @@ is *not* a goal. So the layout treats the *page* as the game's
 home screen rather than carving the game out as one container
 among many. If priorities change later, the hero becomes a
 per-game block and gets repeated in a list.
+
+### Hero is shared by LoginPage too
+
+The same `<Hero>` component renders on `LoginPage` (no `action` →
+no 登出 button — the user isn't logged in yet) so the visual
+continuity from login → home doesn't break at the page boundary.
+LoginPage's QR card is dropped in favour of a centred QR + prompt
+text sitting under the hero, matching HomePage's flat-section
+shape.
 

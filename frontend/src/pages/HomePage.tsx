@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { type Account } from "@bindings/beanfun";
 import { AppShell } from "@/components/layout/AppShell";
+import { Hero } from "@/components/layout/Hero";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useAccountsQuery } from "@/queries/accounts";
@@ -298,33 +299,18 @@ export function HomePage() {
 
   return (
     <AppShell mainClassName="flex-col">
-      {/* Hero — banner background + game branding overlay.
-          Banner is a placeholder gradient for now; swap the bg
-          gradient for `bg-[url(...)] bg-cover bg-center` once we
-          wire up an actual MapleStory banner URL. */}
-      <section className="relative overflow-hidden bg-gradient-to-br from-orange-400 via-amber-500 to-red-500 px-4 pt-4 pb-10">
-        <div className="relative z-10 flex items-start justify-between gap-3">
-          <div className="min-w-0 flex-1">
-            <h1 className="text-lg font-bold text-white [text-shadow:0_1px_3px_rgba(0,0,0,0.4)]">
-              新楓之谷 MapleStory
-            </h1>
-            <p className="mt-0.5 text-xs text-white/90 [text-shadow:0_1px_2px_rgba(0,0,0,0.35)]">
-              <span className="inline-block size-1.5 rounded-full bg-emerald-300 align-middle" />{" "}
-              伺服器狀態 (TODO)
-            </p>
-          </div>
+      <Hero
+        action={
           <Button
             variant="outline"
             size="sm"
-            className="shrink-0 bg-background/80 backdrop-blur"
+            className="bg-background/80 backdrop-blur"
             onClick={logout}
           >
             登出
           </Button>
-        </div>
-        {/* Bottom fade so hero blends into the body section */}
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-b from-transparent to-background" />
-      </section>
+        }
+      />
 
       {/* Body — spawn + accounts on solid bg */}
       <section className="flex flex-1 flex-col gap-3 px-4 pb-4">
