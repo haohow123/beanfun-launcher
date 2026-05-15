@@ -26,31 +26,6 @@ interface FallbackOTP {
   otp: string;
 }
 
-// Account avatar palette. Listed as literal class strings so Tailwind
-// v4's content scanner picks them up — building the strings at
-// runtime (e.g. `bg-${name}-500`) would silently fall off the
-// compiled CSS.
-const AVATAR_COLORS = [
-  "bg-orange-500",
-  "bg-blue-500",
-  "bg-emerald-500",
-  "bg-purple-500",
-  "bg-pink-500",
-  "bg-cyan-500",
-];
-
-// avatarColorFor picks a deterministic background for the account
-// avatar so the same sname keeps the same colour across renders /
-// reloads / re-logins. Cheap djb2-style hash; distribution is fine
-// for ≤6 buckets.
-function avatarColorFor(seed: string): string {
-  let hash = 0;
-  for (let i = 0; i < seed.length; i++) {
-    hash = (hash * 31 + seed.charCodeAt(i)) | 0;
-  }
-  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
-}
-
 type LaunchStatus =
   | "idle"
   | "pending"
@@ -215,22 +190,13 @@ export function HomePage() {
       launchStatus === "pending" || copyStatus === "pending";
     const fallback = fallbackOTP?.sid === acc.sid ? fallbackOTP : null;
     const pill = statusPillFor(launchStatus);
-    const initial = acc.sname.trim().charAt(0).toUpperCase() || "?";
 
     return (
       <li
         key={acc.sid}
         className="rounded-lg border p-3 transition-colors hover:bg-muted/40"
       >
-        <div className="flex items-start gap-3">
-          <div
-            className={cn(
-              "flex size-10 shrink-0 items-center justify-center rounded-lg font-semibold text-white",
-              avatarColorFor(acc.sname),
-            )}
-          >
-            {initial}
-          </div>
+        <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <div className="text-sm font-semibold leading-tight">
               {acc.sname}
