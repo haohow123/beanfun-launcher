@@ -307,16 +307,25 @@ export function HomePage() {
     <AppShell>
       <Card className="w-full max-w-lg">
         <CardHeader>
-          <CardTitle>遊戲帳號</CardTitle>
-          <CardDescription>
-            按「啟動遊戲」開遊戲,登入畫面出現後再按帳號旁邊的「帶入帳密」
-          </CardDescription>
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <CardTitle>遊戲帳號</CardTitle>
+              <CardDescription>
+                按「啟動遊戲」開遊戲,登入畫面出現後再按帳號旁邊的「帶入帳密」
+              </CardDescription>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              onClick={logout}
+            >
+              登出
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
-          <Button
-            onClick={spawnGame}
-            disabled={spawn.isPending}
-          >
+          <Button onClick={spawnGame} disabled={spawn.isPending}>
             {spawnLabel()}
           </Button>
           {spawn.isError && (
@@ -326,14 +335,6 @@ export function HomePage() {
           )}
 
           {renderAccounts()}
-
-          <Button
-            variant="outline"
-            className="mt-2 self-center"
-            onClick={logout}
-          >
-            登出
-          </Button>
         </CardContent>
       </Card>
     </AppShell>
