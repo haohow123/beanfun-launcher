@@ -41,6 +41,17 @@ export function GetAccounts() {
 }
 
 /**
+ * Reset stops the keep-alive ping loop and drops the cached client +
+ * session. Used when an authenticated request comes back as
+ * ErrSessionExpired so the next Snapshot returns nil and the
+ * launcher service rejects further calls with ErrLoginRequired.
+ * @returns {$CancellablePromise<void>}
+ */
+export function Reset() {
+    return $Call.ByID(1458204088);
+}
+
+/**
  * Snapshot returns the current client + session pointers without a
  * copy. Used by sibling services (internal/launcher) that need to
  * drive post-login flows against the same cookie jar — the alternative

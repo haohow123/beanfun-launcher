@@ -109,6 +109,12 @@ func (s *LoginService) StartQRLogin() (QRStart, error) {
 	s.session = nil
 	s.mu.Unlock()
 
+	// Boundary log — absence of this line in launcher.log when
+	// "step 2" did appear means we returned successfully but the
+	// frontend never saw the result, i.e. Wails IPC swallowed it.
+	slog.Info("StartQRLogin: returning to frontend",
+		"bitmap_b64_len", len(init.BitmapBase64),
+		"has_deeplink", init.Deeplink != "")
 	return QRStart{
 		BitmapBase64: init.BitmapBase64,
 		Deeplink:     init.Deeplink,

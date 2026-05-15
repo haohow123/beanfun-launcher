@@ -4,14 +4,8 @@ import { useState } from "react";
 
 import { type Account } from "@bindings/beanfun";
 import { AppShell } from "@/components/layout/AppShell";
+import { Hero } from "@/components/layout/Hero";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { useAccountsQuery } from "@/queries/accounts";
 import {
@@ -304,39 +298,34 @@ export function HomePage() {
   }
 
   return (
-    <AppShell>
-      <Card className="w-full max-w-lg">
-        <CardHeader>
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0 flex-1">
-              <CardTitle>遊戲帳號</CardTitle>
-              <CardDescription>
-                按「啟動遊戲」開遊戲,登入畫面出現後再按帳號旁邊的「帶入帳密」
-              </CardDescription>
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              className="shrink-0"
-              onClick={logout}
-            >
-              登出
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3">
-          <Button onClick={spawnGame} disabled={spawn.isPending}>
-            {spawnLabel()}
+    <AppShell mainClassName="flex-col">
+      <Hero
+        action={
+          <Button
+            variant="outline"
+            size="sm"
+            className="bg-background/80 backdrop-blur"
+            onClick={logout}
+          >
+            登出
           </Button>
-          {spawn.isError && (
-            <p className="break-words text-xs text-destructive">
-              啟動失敗:{String(spawn.error)}
-            </p>
-          )}
+        }
+      />
 
-          {renderAccounts()}
-        </CardContent>
-      </Card>
+      {/* Body — spawn + accounts on solid bg */}
+      <section className="flex flex-1 flex-col gap-3 px-4 pb-4">
+        <Button onClick={spawnGame} disabled={spawn.isPending}>
+          {spawnLabel()}
+        </Button>
+        {spawn.isError && (
+          <p className="break-words text-xs text-destructive">
+            啟動失敗:{String(spawn.error)}
+          </p>
+        )}
+
+        <p className="mt-1 text-xs font-medium text-muted-foreground">分帳</p>
+        {renderAccounts()}
+      </section>
     </AppShell>
   );
 }
