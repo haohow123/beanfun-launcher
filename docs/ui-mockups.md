@@ -78,3 +78,74 @@ block now ends with the account list.
 sit on the left and grow, while the button sits on the right and
 keeps a fixed size (`shrink-0`).
 
+---
+
+## HomePage — banner-led app shell (Pass 4)
+
+After alpha.24 the centred `Card` made the app feel like a modal
+dialog: one tile floating in mostly-empty 1024×768 default Wails
+window. Pass 4 drops the Card chrome and replaces it with a
+single-column app layout, with a game-branded hero at the top and
+content stacked below.
+
+Window is fixed at **480 × 720** in `main.go` to match the content
+density.
+
+```mermaid
+flowchart TB
+    subgraph win [Wails window 480×720]
+        direction TB
+        subgraph shell [AppShell — 50px titlebar, drag region]
+            apptitle["'Beanfun Launcher' (muted)"]
+        end
+        subgraph hero [Hero section — banner bg + content overlay]
+            direction TB
+            heroLayer["bg: gradient (placeholder for real banner URL)<br/>linear-gradient overlay fades bottom 12px into body bg"]
+            subgraph heroRow [flex justify-between]
+                direction LR
+                gameblock["h1 '新楓之谷 MapleStory' white drop-shadow<br/>● 伺服器狀態 (TODO open API)"]
+                logoutbtn["[登出] outline sm<br/>bg-background/80 backdrop-blur"]
+            end
+        end
+        subgraph body [Body section — flex-col gap-3 px-4 pb-4, solid bg]
+            direction TB
+            spawn["[ 啟動遊戲 ] solid primary full-width"]
+            spawnerr["(optional) spawn error text"]
+            label["'分帳' muted xs label"]
+            list["Account list (V3a cards)"]
+        end
+    end
+```
+
+### Notable details
+
+- **No more Card** anywhere on HomePage. The Card / CardHeader /
+  CardContent imports are dropped; the page is just two stacked
+  `<section>`s.
+- **AppShell prop**. `mainClassName` overrides the default centred
+  layout. LoginPage keeps the centred QR card by *not* passing the
+  prop; HomePage passes `flex-col` to stretch its hero / body top to
+  bottom.
+- **Banner placeholder**. The hero's background is currently
+  `bg-gradient-to-br from-orange-400 via-amber-500 to-red-500` —
+  warm MapleStory-flavoured colours that don't pretend to be the
+  real artwork. A follow-up PR replaces this with
+  `bg-[url('https://tw.beanfun.com/.../banner')] bg-cover bg-center`
+  once we pick a stable Beanfun-hosted URL (loaded at runtime →
+  stays within the "Gamania-only network" rule, no Gamania artwork
+  bundled in repo).
+- **Logout button** keeps the same handler but moves into the hero
+  row, glassy `bg-background/80 backdrop-blur` so it stays legible
+  on top of bright banner art.
+- **Server status dot + "(TODO)"** is a deliberate visual
+  placeholder so the slot is reserved before the open-API hook
+  lands.
+
+### Single game by design
+
+The user explicitly scoped this app to MapleStory only — multi-game
+is *not* a goal. So the layout treats the *page* as the game's
+home screen rather than carving the game out as one container
+among many. If priorities change later, the hero becomes a
+per-game block and gets repeated in a list.
+
