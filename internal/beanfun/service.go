@@ -246,10 +246,14 @@ func (s *LoginService) startKeepAliveLocked(client *BeanfunClient) {
 // the server's idle timer reaps the session, without spamming the
 // endpoint when things are fine.
 //
-// Failed pings are logged at debug level and the loop keeps going
-// — a single failed tick doesn't mean the session is dead; the
-// next user action will detect real expiry from the response body.
+// Both success and failure log at INFO. Pungin-style debug-only
+// success logging left users (and us) staring at hour-long logs
+// with no evidence the loop was alive; an alpha cycle is worth the
+// ~1 line/min of noise so a glance at launcher.log can confirm
+// "keep-alive ticking" without instrumenting.
 func runKeepAlive(ctx context.Context, client *BeanfunClient) {
+	slog.Info("keep-alive: loop started",
+		"interval_ok", keepAliveIntervalOK, "interval_fail", keepAliveIntervalFail)
 	interval := keepAliveIntervalOK
 	for {
 		select {
@@ -261,10 +265,11 @@ func runKeepAlive(ctx context.Context, client *BeanfunClient) {
 			err := client.Ping(pingCtx)
 			cancel()
 			if err != nil {
-				slog.Debug("keep-alive: ping failed (retrying sooner)",
+				slog.Warn("keep-alive: ping failed (retrying sooner)",
 					"err", err, "next_interval", keepAliveIntervalFail)
 				interval = keepAliveIntervalFail
 			} else {
+				slog.Info("keep-alive: ping ok", "next_interval", keepAliveIntervalOK)
 				interval = keepAliveIntervalOK
 			}
 		}

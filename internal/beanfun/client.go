@@ -66,6 +66,14 @@ func NewBeanfunClient() (*BeanfunClient, error) {
 
 // NewBeanfunClientWithEndpoints builds a client with caller-provided
 // endpoints. Tests use this to point at httptest.NewServer.
+//
+// The HTTP client gets its own cloned Transport so per-client
+// connection-pool churn (e.g. an httptest.Server closing in one
+// goroutine) can't reach in-flight requests on another client.
+// Without isolation, parallel tests sharing `http.DefaultTransport`
+// surface as flaky `http: CloseIdleConnections called` errors when
+// one test's server cleanup kicks pooled connections out from
+// under another test mid-request.
 func NewBeanfunClientWithEndpoints(endpoints Endpoints) (*BeanfunClient, error) {
 	jar, err := cookiejar.New(nil)
 	if err != nil {
@@ -74,8 +82,9 @@ func NewBeanfunClientWithEndpoints(endpoints Endpoints) (*BeanfunClient, error) 
 	return &BeanfunClient{
 		endpoints: endpoints,
 		http: &http.Client{
-			Timeout: defaultTimeout,
-			Jar:     jar,
+			Timeout:   defaultTimeout,
+			Jar:       jar,
+			Transport: http.DefaultTransport.(*http.Transport).Clone(),
 		},
 		jar:       jar,
 		userAgent: defaultUserAgent,
