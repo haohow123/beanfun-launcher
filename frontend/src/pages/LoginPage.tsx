@@ -73,7 +73,7 @@ export function LoginPage() {
           <img
             src={`data:image/png;base64,${startMut.data.bitmapBase64}`}
             alt="登入用 QR code"
-            className="size-64 rounded-md border"
+            className="size-56 rounded-md border"
           />
           <p className="text-sm text-muted-foreground">等待手機 app 掃描…</p>
         </>
