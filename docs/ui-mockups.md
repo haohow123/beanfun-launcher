@@ -47,3 +47,34 @@ flowchart TB
 | `fallback`   | 手動貼上      | `bg-amber-500/15 text-amber-700 dark:text-amber-300`        |
 | `no-window`  | 請先按啟動    | `bg-muted text-muted-foreground`                            |
 | `error`      | 失敗         | `bg-destructive/15 text-destructive`                        |
+
+---
+
+## HomePage — overall card layout (Pass 3)
+
+```mermaid
+flowchart TB
+    subgraph card [Card — w-full max-w-lg]
+        direction TB
+        subgraph hdr [CardHeader — flex items-start justify-between gap-3]
+            direction LR
+            titleblock["CardTitle 遊戲帳號<br/>CardDescription '按啟動遊戲開遊戲...'"]
+            logoutbtn["[登出] outline sm<br/>top-right, shrink-0"]
+        end
+        spawnbtn["[ 啟動遊戲 ] solid primary, full-width"]
+        spawnerr["(optional) spawn error text"]
+        accountlist["Account list — V3a cards"]
+    end
+```
+
+Pass 3 only moves the **登出** button. It previously sat at the bottom
+of `CardContent` (centred, outline) and stole vertical space below
+the account list. Moved to the top-right corner of `CardHeader` as a
+small outline button — small target, always within thumb reach, no
+longer pushes the visible content down. The bottom `CardContent`
+block now ends with the account list.
+
+`CardHeader` becomes a flex row so the title/description block can
+sit on the left and grow, while the button sits on the right and
+keeps a fixed size (`shrink-0`).
+
