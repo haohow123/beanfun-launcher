@@ -12,6 +12,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 import { useAccountsQuery } from "@/queries/accounts";
 import {
   useFetchOTPMutation,
@@ -23,6 +24,48 @@ import { loggedInAtom } from "@/state/auth";
 interface FallbackOTP {
   sid: string;
   otp: string;
+}
+
+type LaunchStatus =
+  | "idle"
+  | "pending"
+  | "error"
+  | "success"
+  | "fallback"
+  | "no-window";
+
+// statusPillFor maps the per-account launch state to the top-right
+// pill on the card. Returning null hides the pill (idle).
+function statusPillFor(
+  s: LaunchStatus,
+): { label: string; className: string } | null {
+  switch (s) {
+    case "pending":
+      return {
+        label: "帶入中…",
+        className: "bg-blue-500/15 text-blue-700 dark:text-blue-300",
+      };
+    case "success":
+      return {
+        label: "✓ 已送出",
+        className:
+          "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
+      };
+    case "fallback":
+      return {
+        label: "手動貼上",
+        className: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
+      };
+    case "no-window":
+      return {
+        label: "請先按啟動",
+        className: "bg-muted text-muted-foreground",
+      };
+    case "error":
+      return { label: "失敗", className: "bg-destructive/15 text-destructive" };
+    default:
+      return null;
+  }
 }
 
 export function HomePage() {
@@ -146,44 +189,44 @@ export function HomePage() {
     const anyPending =
       launchStatus === "pending" || copyStatus === "pending";
     const fallback = fallbackOTP?.sid === acc.sid ? fallbackOTP : null;
+    const pill = statusPillFor(launchStatus);
 
     return (
-      <li key={acc.sid} className="rounded-md border p-3">
-        <div className="mb-1 flex items-baseline justify-between gap-2">
-          <span className="text-sm font-medium">{acc.sname}</span>
-          {launchStatus === "pending" && (
-            <span className="text-xs text-muted-foreground">帶入中…</span>
-          )}
-          {launchStatus === "success" && (
-            <span className="text-xs text-foreground">✓ 已送出帳密</span>
-          )}
-          {launchStatus === "no-window" && (
-            <span className="text-xs text-muted-foreground">
-              請先按啟動遊戲
+      <li
+        key={acc.sid}
+        className="rounded-lg border p-3 transition-colors hover:bg-muted/40"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold leading-tight">
+              {acc.sname}
+            </div>
+            <code className="mt-0.5 block break-all text-xs text-muted-foreground">
+              {acc.sid}
+            </code>
+          </div>
+          {pill && (
+            <span
+              className={cn(
+                "shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium",
+                pill.className,
+              )}
+            >
+              {pill.label}
             </span>
-          )}
-          {launchStatus === "fallback" && (
-            <span className="text-xs text-foreground">需手動貼上</span>
-          )}
-          {launchStatus === "error" && (
-            <span className="text-xs text-destructive">帶入失敗</span>
           )}
         </div>
 
         {launchStatus === "success" && (
-          <p className="mt-1 text-xs text-muted-foreground">
+          <p className="mt-2 text-xs text-muted-foreground">
             若沒帶入,點一下遊戲帳號欄位讓游標進入,再按一次
           </p>
         )}
         {launchStatus === "error" && launch.error && (
-          <p className="mt-1 break-words text-xs text-destructive">
+          <p className="mt-2 break-words text-xs text-destructive">
             {String(launch.error)}
           </p>
         )}
-
-        <code className="block break-all text-xs text-muted-foreground">
-          {acc.sid}
-        </code>
 
         {fallback && (
           <div className="mt-2 flex items-center gap-2 rounded-md bg-muted/50 px-2 py-1">
@@ -216,7 +259,6 @@ export function HomePage() {
                   : "複製帳密"}
           </Button>
           <Button
-            variant="outline"
             size="sm"
             disabled={anyPending}
             onClick={() => injectCredentials(acc)}
