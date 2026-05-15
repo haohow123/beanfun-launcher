@@ -21,10 +21,10 @@ discretion regarding Gamania's Terms of Service.
 
 > ⚠️ GitHub Releases 頁面排序是字典順,不是版本順 — `alpha.10+` 會被擠到 `alpha.9` 後面。請直接用下方連結下載最新版,不要在 Releases 頁面挑。
 
-最新版本 / Latest: **[v0.1.0-alpha.21](https://github.com/haohow123/beanfun-launcher/releases/tag/v0.1.0-alpha.21)** (Windows)
+最新版本 / Latest: **[v0.1.0-alpha.22](https://github.com/haohow123/beanfun-launcher/releases/tag/v0.1.0-alpha.22)** (Windows)
 
-- Installer: [`beanfun-launcher-amd64-installer.exe`](https://github.com/haohow123/beanfun-launcher/releases/download/v0.1.0-alpha.21/beanfun-launcher-amd64-installer.exe)
-- Portable: [`beanfun-launcher.exe`](https://github.com/haohow123/beanfun-launcher/releases/download/v0.1.0-alpha.21/beanfun-launcher.exe)
+- Installer: [`beanfun-launcher-amd64-installer.exe`](https://github.com/haohow123/beanfun-launcher/releases/download/v0.1.0-alpha.22/beanfun-launcher-amd64-installer.exe)
+- Portable: [`beanfun-launcher.exe`](https://github.com/haohow123/beanfun-launcher/releases/download/v0.1.0-alpha.22/beanfun-launcher.exe)
 
 ## Why this exists
 
