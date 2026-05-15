@@ -1,5 +1,5 @@
 import { useSetAtom } from "jotai";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 import { QRStatus } from "@bindings/beanfun";
 import { AppShell } from "@/components/layout/AppShell";
@@ -22,9 +22,25 @@ export function LoginPage() {
     }
   }, [statusQuery.data, setLoggedIn]);
 
+  // Auto-fire the QR mint on mount — login is the only thing the
+  // user can do on this page, so a "click 登入 to start" button is
+  // an extra hop with no choice attached. Re-mount (after logout
+  // or session expiry) re-fires because the ref resets.
+  //
+  // useRef guard rather than `[]` deps so React StrictMode's dev
+  // double-invoke doesn't fire the mutation twice (which would
+  // mint two QR codes and orphan the first cookie jar).
+  const autoStarted = useRef(false);
+  useEffect(() => {
+    if (autoStarted.current) return;
+    autoStarted.current = true;
+    startMut.mutate();
+  }, [startMut]);
+
   // Wrapper exists because startMut.mutate's signature is
   // (variables: void, ...) => void, which TS won't accept as an
-  // onClick handler (MouseEvent isn't void).
+  // onClick handler (MouseEvent isn't void). Still used by the
+  // 重試 / 重新產生 buttons after a failure / expiry.
   function startLogin() {
     startMut.mutate();
   }
@@ -79,7 +95,11 @@ export function LoginPage() {
         </>
       );
     }
-    return <Button onClick={startLogin}>登入</Button>;
+    // The auto-start useEffect above runs after first paint, so the
+    // very first render reaches here before mutation has flipped to
+    // pending. Render the pending copy so the user never sees a
+    // blank flash.
+    return <p className="text-sm text-muted-foreground">產生 QR code 中…</p>;
   }
 
   return (
