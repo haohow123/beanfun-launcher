@@ -1,20 +1,24 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { useSetAtom } from "jotai";
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 
 import { QRStatus } from "@bindings/beanfun";
 import { AppShell } from "@/components/layout/AppShell";
 import { Hero } from "@/components/layout/Hero";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import {
+  qrStatusQueryKey,
+  useQRMintQuery,
   useQRStatusQuery,
-  useStartQRLoginMutation,
 } from "@/queries/qrLogin";
 import { loggedInAtom } from "@/state/auth";
 
 export function LoginPage() {
   const setLoggedIn = useSetAtom(loggedInAtom);
-  const startMut = useStartQRLoginMutation();
-  const statusQuery = useQRStatusQuery(startMut.isSuccess);
+  const qc = useQueryClient();
+  const qrMint = useQRMintQuery();
+  const statusQuery = useQRStatusQuery(qrMint.isSuccess);
 
   useEffect(() => {
     if (statusQuery.data === QRStatus.QRStatusApproved) {
@@ -22,98 +26,105 @@ export function LoginPage() {
     }
   }, [statusQuery.data, setLoggedIn]);
 
-  // Auto-fire the QR mint on mount — login is the only thing the
-  // user can do on this page, so a "click 登入 to start" button is
-  // an extra hop with no choice attached. Re-mount (after logout
-  // or session expiry) re-fires because the ref resets.
-  //
-  // useRef guard rather than `[]` deps so React StrictMode's dev
-  // double-invoke doesn't fire the mutation twice (which would
-  // mint two QR codes and orphan the first cookie jar).
-  const autoStarted = useRef(false);
-  useEffect(() => {
-    if (autoStarted.current) return;
-    autoStarted.current = true;
-    startMut.mutate();
-  }, [startMut]);
-
-  // Wrapper exists because startMut.mutate's signature is
-  // (variables: void, ...) => void, which TS won't accept as an
-  // onClick handler (MouseEvent isn't void). Still used by the
-  // 重試 / 重新產生 buttons after a failure / expiry.
-  function startLogin() {
-    startMut.mutate();
+  // Refresh = re-fire the mint + drop any in-flight poll state so
+  // the next /CheckLoginStatus call sees the fresh pendingQR.
+  function regenerate() {
+    qc.removeQueries({ queryKey: qrStatusQueryKey });
+    qrMint.refetch();
   }
 
-  // Ordered by priority: terminal status states first, then mutation
-  // states, then the polling display, then the initial idle button.
-  // Each branch checks one thing — no `!a && !b && !c && ...` pile-up.
-  function renderQRFlow() {
-    if (statusQuery.data === QRStatus.QRStatusApproved) {
+  const expired = statusQuery.data === QRStatus.QRStatusExpired;
+  const approved = statusQuery.data === QRStatus.QRStatusApproved;
+  const minting = qrMint.isFetching;
+  const hasQR = qrMint.isSuccess && !!qrMint.data?.bitmapBase64;
+
+  // QR tile: skeleton while minting (visibly alive — a static
+  // "產生 QR code 中…" text reads as "frozen UI" if the round-trip
+  // stalls; an animated box keeps the signal that work is in
+  // flight), the live QR once minted (dimmed when expired), or an
+  // error placeholder on failure.
+  function renderQR() {
+    if (minting) {
+      return (
+        <div className="size-56 animate-pulse rounded-md border bg-muted" />
+      );
+    }
+    if (qrMint.isError) {
+      return (
+        <div className="flex size-56 items-center justify-center rounded-md border bg-muted/40 text-sm text-destructive">
+          產生失敗
+        </div>
+      );
+    }
+    if (hasQR) {
+      return (
+        <img
+          src={`data:image/png;base64,${qrMint.data!.bitmapBase64}`}
+          alt="登入 QR code"
+          className={cn(
+            "size-56 rounded-md border",
+            expired && "opacity-30",
+          )}
+        />
+      );
+    }
+    return <div className="size-56 animate-pulse rounded-md border bg-muted" />;
+  }
+
+  function renderStatus() {
+    if (approved) {
       return <p className="text-sm text-foreground">登入成功,載入中…</p>;
+    }
+    if (expired) {
+      return (
+        <p className="text-sm text-amber-700 dark:text-amber-300">
+          QR code 已過期,請按下方按鈕重新產生
+        </p>
+      );
     }
     if (statusQuery.isError) {
       return (
-        <>
-          <p className="text-sm text-destructive">
-            登入失敗:{String(statusQuery.error)}
-          </p>
-          <Button onClick={startLogin}>重試</Button>
-        </>
+        <p className="break-words text-sm text-destructive">
+          登入失敗:{String(statusQuery.error)}
+        </p>
       );
     }
-    if (statusQuery.data === QRStatus.QRStatusExpired) {
+    if (qrMint.isError) {
       return (
-        <>
-          <p className="text-sm text-destructive">QR code 已過期</p>
-          <Button onClick={startLogin}>重新產生</Button>
-        </>
+        <p className="break-words text-sm text-destructive">
+          產生失敗:{String(qrMint.error)}
+        </p>
       );
     }
-    if (startMut.isError) {
-      return (
-        <>
-          <p className="text-sm text-destructive">
-            登入失敗:{String(startMut.error)}
-          </p>
-          <Button onClick={startLogin}>重試</Button>
-        </>
-      );
-    }
-    if (startMut.isPending) {
+    if (minting) {
       return <p className="text-sm text-muted-foreground">產生 QR code 中…</p>;
     }
-    if (startMut.isSuccess) {
+    if (hasQR) {
       return (
-        <>
-          <img
-            src={`data:image/png;base64,${startMut.data.bitmapBase64}`}
-            alt="登入用 QR code"
-            className="size-56 rounded-md border"
-          />
-          <p className="text-sm text-muted-foreground">等待手機 app 掃描…</p>
-        </>
+        <p className="text-sm text-muted-foreground">
+          用 Beanfun 手機 app 掃描 QR code 完成登入
+        </p>
       );
     }
-    // The auto-start useEffect above runs after first paint, so the
-    // very first render reaches here before mutation has flipped to
-    // pending. Render the pending copy so the user never sees a
-    // blank flash.
-    return <p className="text-sm text-muted-foreground">產生 QR code 中…</p>;
+    return <p className="text-sm text-muted-foreground">準備中…</p>;
   }
 
   return (
     <AppShell mainClassName="flex-col">
       <Hero />
 
-      <section className="flex flex-1 flex-col items-center gap-4 px-4 py-6">
-        <div className="text-center">
-          <h2 className="text-base font-semibold">登入 Beanfun</h2>
-          <p className="mt-1 text-xs text-muted-foreground">
-            點下方按鈕產生 QR code,用 Beanfun! 手機 app 掃描完成登入
-          </p>
-        </div>
-        {renderQRFlow()}
+      <section className="flex flex-1 flex-col items-center gap-3 px-4 py-6">
+        <h2 className="text-base font-semibold">登入 Beanfun</h2>
+        {renderQR()}
+        {renderStatus()}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={regenerate}
+          disabled={minting || approved}
+        >
+          重新產生 QR code
+        </Button>
       </section>
     </AppShell>
   );
