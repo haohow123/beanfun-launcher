@@ -22,6 +22,11 @@ const gameExeEnvVar = "BEANFUN_GAME_EXE"
 type LauncherService struct {
 	mu    sync.Mutex
 	login *beanfun.LoginService
+	// watcherCancel cancels the currently-active game-exit watcher
+	// (see runGameWatcher in watcher.go). nil when no watcher is
+	// running; reassigned on every SpawnGame so a fresh spawn
+	// supersedes a previous game's watcher cleanly. mu-protected.
+	watcherCancel context.CancelFunc
 }
 
 func NewLauncherService(login *beanfun.LoginService) *LauncherService {
@@ -81,7 +86,8 @@ func (s *LauncherService) SpawnGame() error {
 	}
 
 	if hwnd := findGameWindowFn(); hwnd != 0 {
-		slog.Info("SpawnGame: game already running, skipping spawn")
+		slog.Info("SpawnGame: game already running, attaching watcher")
+		s.restartWatcher(hwnd)
 		return nil
 	}
 
@@ -93,7 +99,26 @@ func (s *LauncherService) SpawnGame() error {
 		return err
 	}
 	slog.Info("SpawnGame: game spawned", "exe", gameExe)
+	s.restartWatcher(0)
 	return nil
+}
+
+// restartWatcher cancels the currently-active game-exit watcher (if
+// any) and spawns a new one for the given hwnd. SpawnGame calls
+// this in both paths: already-running passes the known hwnd so the
+// watcher skips its window-appears phase; fresh-spawn passes 0 so
+// the watcher polls for the cold-start window. The watcher emits
+// "game:exited" when the game process terminates, so the frontend
+// can reset its post-launch button state (issue #62).
+func (s *LauncherService) restartWatcher(hwnd uintptr) {
+	s.mu.Lock()
+	if s.watcherCancel != nil {
+		s.watcherCancel()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	s.watcherCancel = cancel
+	s.mu.Unlock()
+	go runGameWatcher(ctx, hwnd)
 }
 
 // Launch finds the running MapleStory window and injects the given
