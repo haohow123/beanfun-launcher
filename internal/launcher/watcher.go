@@ -4,8 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"time"
-
-	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 // windowPIDFn returns the PID of the process that owns the given HWND.
@@ -19,16 +17,21 @@ var windowPIDFn func(hwnd uintptr) (uint32, error)
 var waitForProcessExitFn func(ctx context.Context, pid uint32) error
 
 // eventEmitFn forwards events to the live Wails application. Default
-// hits application.Get().Event.Emit with a nil-app guard so tests
-// that exercise this code path without standing up the runtime don't
-// panic. Tests override this var directly to capture emits.
-//
-// Same indirection shape as spawnFn / injectFn / findGameWindowFn —
-// platform code binds the default, tests swap-and-restore.
+// is a no-op so the always-compiled watcher.go stays free of the
+// github.com/wailsapp/wails/v3/pkg/application import — that package
+// has Linux CGO dependencies on libgtk-3-dev + libwebkit2gtk that CI
+// (ubuntu-24.04, no apt installs) can't satisfy. CI scopes `go vet`
+// and `go test` to `./internal/...` to avoid main.go's Wails import
+// for this exact reason; if we leak Wails into internal/launcher the
+// whole CI lane breaks. Windows binds the real emit via init() in
+// watcher_emit_windows.go; non-Windows stays no-op (the watcher
+// never runs there anyway — SpawnGame returns ErrPlatformUnsupported
+// before restartWatcher is reached). Tests override directly to
+// capture emits.
 var eventEmitFn = func(name string, data any) {
-	if app := application.Get(); app != nil {
-		app.Event.Emit(name, data)
-	}
+	// no-op default
+	_ = name
+	_ = data
 }
 
 // Tunables for runGameWatcher. Tests override gameWindowAppearTimeout
