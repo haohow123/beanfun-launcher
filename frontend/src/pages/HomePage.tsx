@@ -1,4 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
+import { Events } from "@wailsio/runtime";
 import { useSetAtom } from "jotai";
 import { useEffect, useState } from "react";
 
@@ -72,22 +73,15 @@ export function HomePage() {
   const [copiedSid, setCopiedSid] = useState<string | null>(null);
   const [fallbackOTP, setFallbackOTP] = useState<FallbackOTP | null>(null);
 
-  // Auto-reset the spawn mutation 10s after a successful launch so
-  // the button stops reading "✓ 已啟動,等登入畫面" forever (issue
-  // #62 — game has long since closed and the stale label confuses
-  // the user when they come back to re-launch). 10s is roughly the
-  // upper bound of "waiting for the login screen to appear" on a
-  // typical SSD; past it the message is no longer informative.
-  //
-  // The "right" answer is to watch the spawned game process for
-  // exit (Win32 OpenProcess + WaitForSingleObject in a goroutine,
-  // emit a Wails event back) and reset on actual exit; deferred
-  // until we hit a case the timer doesn't cover.
+  // Reset spawn.isSuccess when the backend emits "game:exited" —
+  // a Go-side watcher (internal/launcher/watcher.go) blocks on
+  // Win32 WaitForSingleObject against the game process handle and
+  // fires this event when the kernel signals exit. Real lifecycle
+  // signal instead of alpha.25's 10s setTimeout heuristic (issue
+  // #62).
   useEffect(() => {
-    if (!spawn.isSuccess) return;
-    const t = setTimeout(() => spawn.reset(), 10_000);
-    return () => clearTimeout(t);
-  }, [spawn.isSuccess, spawn.reset]);
+    return Events.On("game:exited", () => spawn.reset());
+  }, [spawn]);
 
   function logout() {
     qc.clear();
