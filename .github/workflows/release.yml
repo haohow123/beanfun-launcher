@@ -6,8 +6,7 @@ on:
       - 'v*'
 
 permissions:
-  contents: write       # gh release create needs this; README bump push also writes
-  pull-requests: write  # README bump opens a PR
+  contents: write  # gh release create needs this
 
 jobs:
   windows:
@@ -91,6 +90,13 @@ jobs:
           echo "Found: $exe + $inst"
 
       - name: Create GitHub Release
+        # --prerelease keeps the "Pre-release" badge on the release
+        # page (alpha quality signal). --latest is an independent
+        # axis that controls which release /releases/latest redirects
+        # to — GitHub's default auto-pick skips prereleases, so
+        # without --latest our /releases/latest URL would 404 and
+        # the README download links would die. Both flags coexist:
+        # this is THE latest, and it IS a prerelease.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
@@ -99,52 +105,6 @@ jobs:
             --title '${{ steps.ver.outputs.tag }}' \
             --generate-notes \
             --prerelease \
+            --latest \
             '${{ steps.art.outputs.exe }}' \
             '${{ steps.art.outputs.inst }}'
-
-      - name: Open README download-link bump PR
-        # Auto-generated PR that bumps the hardcoded v0.1.0-alpha.N
-        # links at the top of README.md to the tag we just published.
-        # GitHub Releases sorts tags lexically, so README is the only
-        # place a human reliably finds the latest version — keeping
-        # it fresh by hand was the most-skipped step in the release
-        # workflow before this.
-        #
-        # Why a PR instead of pushing straight to main: branch
-        # protection requires a review on main, and github-actions[bot]
-        # doesn't have repo-admin to bypass via --admin. The user
-        # merges with `gh pr merge <num> --admin --squash --delete-branch`
-        # which is still much less work than the old branch + sed +
-        # commit + push + create-pr sequence.
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -e
-          tag='${{ steps.ver.outputs.tag }}'
-
-          git fetch origin main
-          git checkout -B "chore/readme-bump-$tag" origin/main
-
-          # Replace every v0.1.0-alpha.N reference; README only has
-          # download / link-to-tag mentions today, no version drift
-          # risk elsewhere.
-          sed -i "s|v0\.1\.0-alpha\.[0-9]\+|$tag|g" README.md
-
-          if git diff --quiet README.md; then
-            echo "README already points at $tag, nothing to bump"
-            exit 0
-          fi
-
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add README.md
-          git commit -m "README: bump download links to $tag"
-          git push -u origin "chore/readme-bump-$tag"
-
-          gh pr create \
-            --base main \
-            --head "chore/readme-bump-$tag" \
-            --title "README: bump download links to $tag" \
-            --body "Auto-opened by the Release workflow after \`$tag\` was published. Merge with \`gh pr merge <num> --admin --squash --delete-branch\`." \
-            --label docs
