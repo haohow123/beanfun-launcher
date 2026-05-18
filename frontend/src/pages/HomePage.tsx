@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useSetAtom } from "jotai";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { type Account } from "@bindings/beanfun";
 import { AppShell } from "@/components/layout/AppShell";
@@ -71,6 +71,23 @@ export function HomePage() {
   const fetchOTP = useFetchOTPMutation();
   const [copiedSid, setCopiedSid] = useState<string | null>(null);
   const [fallbackOTP, setFallbackOTP] = useState<FallbackOTP | null>(null);
+
+  // Auto-reset the spawn mutation 10s after a successful launch so
+  // the button stops reading "✓ 已啟動,等登入畫面" forever (issue
+  // #62 — game has long since closed and the stale label confuses
+  // the user when they come back to re-launch). 10s is roughly the
+  // upper bound of "waiting for the login screen to appear" on a
+  // typical SSD; past it the message is no longer informative.
+  //
+  // The "right" answer is to watch the spawned game process for
+  // exit (Win32 OpenProcess + WaitForSingleObject in a goroutine,
+  // emit a Wails event back) and reset on actual exit; deferred
+  // until we hit a case the timer doesn't cover.
+  useEffect(() => {
+    if (!spawn.isSuccess) return;
+    const t = setTimeout(() => spawn.reset(), 10_000);
+    return () => clearTimeout(t);
+  }, [spawn.isSuccess, spawn.reset]);
 
   function logout() {
     qc.clear();
