@@ -493,24 +493,62 @@ even though the OTP is single-use server-side.
 
 ## Command-line spawn
 
-`game.exe` is launched via `windows.CreateProcessW` with command-line
-template:
+`MapleStory.exe` is launched (via ShellExecuteW for manifest-aware
+UAC) with five **positional** arguments — no slash-prefixed flags:
 
 ```
-{game.exe path} /hb /u:{SID} /p:{OTP}
+MapleStory.exe <host> <port> BeanFun <SID> <OTP>
 ```
 
-`/hb` is a Beanfun-specific marker the launcher uses for portal-side
-session bookkeeping. `/u` is the service-account SID (NOT the SSN).
-`/p` is the decrypted OTP. The game.exe path comes from the
-`BEANFUN_GAME_EXE` env var in Milestone 6; a Settings UI / registry
-auto-detect lands in a later milestone.
+| Position | Value | Notes |
+|----------|-------|-------|
+| 1 | `tw.login.maplestory.beanfun.com` | TW login-server hostname (resolves to the `202.80.104.24-29` IPs that `internal/maple/status` TCP-probes) |
+| 2 | `8484` | TCP port — game.exe connects directly |
+| 3 | `BeanFun` | Channel marker; replaces the older `/hb` flag |
+| 4 | `<SID>` | Service-account ID (NOT the SSN — see `Account.SID`) |
+| 5 | `<OTP>` | The 10-char decrypted token from step 9.5 |
 
-After `CreateProcessW` returns, the launcher closes its process and
-thread handle copies and calls `beanfun.Zero(token)` on the OTP byte
-slice. The Go-heap copy lives until GC; the OS-side argv lives in
-the game process's memory for its lifetime, which is unavoidable and
-bounded by the OTP's server-side ticket lifetime (single use).
+On a fresh spawn the game contacts `<host>:<port>`, validates the OTP
+server-side, and proceeds **straight to character select** — no login
+form is rendered, no WM_CHAR injection needed.
+
+After `ShellExecuteW` returns, the launcher calls `beanfun.Zero(token)`
+on the OTP byte slice. The Go-heap copy lives until GC; the OS-side
+argv lives in the game process's memory for its lifetime, which is
+unavoidable and bounded by the OTP's server-side ticket lifetime
+(single use).
+
+### History — earlier `/hb /u: /p:` format
+
+Through alpha.31 the launcher passed `/hb /u:<SID> /p:<OTP>` flags
+based on docs scraped from `pungin/Beanfun`. M8 attempted to use this
+format, found that the current TW build no longer honored it
+(verified during alpha.6), and pivoted to WM_CHAR injection. M10
+piled an automated form-ready detector on top of that detour — which
+collapsed in alpha.31 testing once we realized the form's actual
+render produces zero Win32 events (only the painted pixels move,
+inside the game's own DirectX surface).
+
+The current 5-arg positional format was discovered in M10.1 by
+inspecting the official launcher's running `MapleStory.exe`:
+
+```
+wmic process where name="MapleStory.exe" get commandline /value
+```
+
+This technique generalizes: anytime Gamania rotates the protocol, the
+official client itself is the ground-truth reference. Repeat the wmic
+probe before assuming any encoded constant is stable.
+
+### `Launch` retained as M8 fallback
+
+The argv path requires a fresh process — credentials can't be
+retroactively supplied to an already-running game. For users who
+opened the game outside our launcher, M8's `Launch` (PostMessage
+WM_CHAR injection into the running window) survives as the fallback,
+routed via the FE's `useGameStateQuery`: button label flips to
+「帶入帳密」 when `running=true`, calling `LauncherService.Launch`
+instead of `SpawnGame`.
 
 ### Deferred: Locale_Remulator
 
