@@ -5,6 +5,7 @@ import { LauncherService } from "@bindings/launcher";
 
 export const spawnGameMutationKey = ["spawn-game"] as const;
 export const launchMutationKey = ["launch"] as const;
+export const spawnAndInjectMutationKey = ["spawn-and-inject"] as const;
 export const fetchOTPMutationKey = ["fetch-otp"] as const;
 
 /**
@@ -41,6 +42,32 @@ export function useLaunchGameMutation() {
   return useMutation({
     mutationKey: launchMutationKey,
     mutationFn: (account: Account) => LauncherService.Launch(account),
+  });
+}
+
+/**
+ * useSpawnAndInjectMutation fires LauncherService.SpawnAndInject —
+ * the M10 1-click orchestrator. Spawns the game (or reuses an
+ * existing window), waits for the form-ready caret-burst signal,
+ * injects credentials, and verifies success by watching for the
+ * new MapleStoryClassTW window. Returns:
+ *
+ *   - { autoFilled: true } — happy path; login submitted, character
+ *     select reached.
+ *   - { autoFilled: false, otp, failReason } — fallback; the OTP
+ *     is for clipboard-paste manual login. failReason ∈
+ *     "no-window" | "form-not-ready" | "inject-failed" |
+ *     "no-transition".
+ *
+ * Driven by the per-account "啟動並帶入" button. Replaces the
+ * 2-step useSpawnGameMutation + useLaunchGameMutation combo for
+ * the primary launch flow; those hooks are kept around as fallback
+ * surface area but no longer have a button in HomePage.
+ */
+export function useSpawnAndInjectMutation() {
+  return useMutation({
+    mutationKey: spawnAndInjectMutationKey,
+    mutationFn: (account: Account) => LauncherService.SpawnAndInject(account),
   });
 }
 

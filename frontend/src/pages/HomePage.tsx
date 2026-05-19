@@ -11,8 +11,7 @@ import { cn } from "@/lib/utils";
 import { useAccountsQuery } from "@/queries/accounts";
 import {
   useFetchOTPMutation,
-  useLaunchGameMutation,
-  useSpawnGameMutation,
+  useSpawnAndInjectMutation,
 } from "@/queries/launch";
 import { loggedInAtom } from "@/state/auth";
 
@@ -21,13 +20,7 @@ interface FallbackOTP {
   otp: string;
 }
 
-type LaunchStatus =
-  | "idle"
-  | "pending"
-  | "error"
-  | "success"
-  | "fallback"
-  | "no-window";
+type LaunchStatus = "idle" | "pending" | "error" | "success" | "fallback";
 
 // statusPillFor maps the per-account launch state to the top-right
 // pill on the card. Returning null hides the pill (idle).
@@ -37,12 +30,12 @@ function statusPillFor(
   switch (s) {
     case "pending":
       return {
-        label: "帶入中…",
+        label: "啟動並帶入中…",
         className: "bg-blue-500/15 text-blue-700 dark:text-blue-300",
       };
     case "success":
       return {
-        label: "✓ 已送出",
+        label: "✓ 已帶入",
         className:
           "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
       };
@@ -51,11 +44,6 @@ function statusPillFor(
         label: "手動貼上",
         className: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
       };
-    case "no-window":
-      return {
-        label: "請先按啟動",
-        className: "bg-muted text-muted-foreground",
-      };
     case "error":
       return { label: "失敗", className: "bg-destructive/15 text-destructive" };
     default:
@@ -63,25 +51,44 @@ function statusPillFor(
   }
 }
 
+// failReasonHint converts the backend's failReason code into a
+// user-readable line shown above the fallback OTP. Each variant
+// matches one SpawnAndInject failure path; an unknown code falls
+// back to a generic message.
+function failReasonHint(reason: string): string {
+  switch (reason) {
+    case "no-window":
+      return "找不到遊戲視窗,改用下方 OTP 手動貼上。";
+    case "form-not-ready":
+      return "登入畫面遲遲沒就緒,改用下方 OTP 手動貼上。";
+    case "inject-failed":
+      return "鍵盤注入失敗,改用下方 OTP 手動貼上。";
+    case "no-transition":
+      return "未偵測到登入成功,可能 OTP 已輸入但要再按一次 Enter,或改用下方 OTP 手動貼上。";
+    default:
+      return "自動帶入失敗,改用下方 OTP 手動貼上。";
+  }
+}
+
 export function HomePage() {
   const setLoggedIn = useSetAtom(loggedInAtom);
   const qc = useQueryClient();
   const accounts = useAccountsQuery();
-  const spawn = useSpawnGameMutation();
-  const launch = useLaunchGameMutation();
+  const spawnAndInject = useSpawnAndInjectMutation();
   const fetchOTP = useFetchOTPMutation();
   const [copiedSid, setCopiedSid] = useState<string | null>(null);
   const [fallbackOTP, setFallbackOTP] = useState<FallbackOTP | null>(null);
 
-  // Reset spawn.isSuccess when the backend emits "game:exited" —
-  // a Go-side watcher (internal/launcher/watcher.go) blocks on
-  // Win32 WaitForSingleObject against the game process handle and
-  // fires this event when the kernel signals exit. Real lifecycle
-  // signal instead of alpha.25's 10s setTimeout heuristic (issue
-  // #62).
+  // Reset the per-account 啟動並帶入 state when the watcher reports
+  // the game process exited (issue #62 — same hook M9's bgtask
+  // watcher emits). User coming back to launcher sees a clean
+  // button instead of stale "✓ 已帶入" from the last session.
   useEffect(() => {
-    return Events.On("game:exited", () => spawn.reset());
-  }, [spawn]);
+    return Events.On("game:exited", () => {
+      spawnAndInject.reset();
+      setFallbackOTP(null);
+    });
+  }, [spawnAndInject]);
 
   function logout() {
     qc.clear();
@@ -136,15 +143,15 @@ export function HomePage() {
       .catch((e) => console.error("clipboard write failed:", e));
   }
 
-  function spawnGame() {
+  function launchWithInject(acc: Account) {
     setFallbackOTP(null);
-    spawn.mutate(undefined, { onError: handleMutationError });
-  }
-
-  function injectCredentials(acc: Account) {
-    setFallbackOTP(null);
-    launch.mutate(acc, {
+    spawnAndInject.mutate(acc, {
       onSuccess: (result) => {
+        // autoFilled=false is the fallback path: backend already
+        // declined to submit credentials (form not ready, etc.)
+        // and surfaced the OTP for clipboard-paste. otp is empty
+        // on the happy path so we never expose it when the auto
+        // flow succeeded.
         if (!result.autoFilled && result.otp) {
           setFallbackOTP({ sid: acc.sid, otp: result.otp });
         }
@@ -160,16 +167,12 @@ export function HomePage() {
       .catch((e) => console.error("clipboard write failed:", e));
   }
 
-  function launchStatusFor(
-    acc: Account,
-  ): "idle" | "pending" | "error" | "success" | "fallback" | "no-window" {
-    if (launch.variables?.sid !== acc.sid) return "idle";
-    if (launch.isPending) return "pending";
-    if (launch.isError) return "error";
-    if (launch.isSuccess) {
-      if (launch.data?.autoFilled) return "success";
-      if (launch.data?.noWindow) return "no-window";
-      return "fallback";
+  function launchStatusFor(acc: Account): LaunchStatus {
+    if (spawnAndInject.variables?.sid !== acc.sid) return "idle";
+    if (spawnAndInject.isPending) return "pending";
+    if (spawnAndInject.isError) return "error";
+    if (spawnAndInject.isSuccess) {
+      return spawnAndInject.data?.autoFilled ? "success" : "fallback";
     }
     return "idle";
   }
@@ -182,12 +185,6 @@ export function HomePage() {
     return "idle";
   }
 
-  function spawnLabel() {
-    if (spawn.isPending) return "啟動中…";
-    if (spawn.isSuccess) return "✓ 已啟動";
-    return "啟動遊戲";
-  }
-
   function renderAccountCard(acc: Account) {
     const launchStatus = launchStatusFor(acc);
     const copyStatus = copyStatusFor(acc);
@@ -195,6 +192,8 @@ export function HomePage() {
       launchStatus === "pending" || copyStatus === "pending";
     const fallback = fallbackOTP?.sid === acc.sid ? fallbackOTP : null;
     const pill = statusPillFor(launchStatus);
+    const failReason =
+      launchStatus === "fallback" ? spawnAndInject.data?.failReason : undefined;
 
     return (
       <li
@@ -222,14 +221,14 @@ export function HomePage() {
           )}
         </div>
 
-        {launchStatus === "success" && (
+        {failReason && (
           <p className="mt-2 text-xs text-muted-foreground">
-            若沒帶入,點一下遊戲帳號欄位讓游標進入,再按一次
+            {failReasonHint(failReason)}
           </p>
         )}
-        {launchStatus === "error" && launch.error && (
+        {launchStatus === "error" && spawnAndInject.error && (
           <p className="mt-2 break-words text-xs text-destructive">
-            {String(launch.error)}
+            {String(spawnAndInject.error)}
           </p>
         )}
 
@@ -266,9 +265,9 @@ export function HomePage() {
           <Button
             size="sm"
             disabled={anyPending}
-            onClick={() => injectCredentials(acc)}
+            onClick={() => launchWithInject(acc)}
           >
-            帶入帳密
+            啟動並帶入
           </Button>
         </div>
       </li>
@@ -323,18 +322,12 @@ export function HomePage() {
         }
       />
 
-      {/* Body — spawn + accounts on solid bg */}
+      {/* Body — accounts list only. The pre-M10 global [啟動遊戲]
+          button was dropped per Q1=A in the plan (per-account card
+          owns the entire launch trigger now); the M8 [帶入帳密] +
+          M8 [複製帳密] pair becomes [複製帳密] + [啟動並帶入]. */}
       <section className="flex flex-1 flex-col gap-3 px-4 pb-4">
-        <Button onClick={spawnGame} disabled={spawn.isPending}>
-          {spawnLabel()}
-        </Button>
-        {spawn.isError && (
-          <p className="break-words text-xs text-destructive">
-            啟動失敗:{String(spawn.error)}
-          </p>
-        )}
-
-        <p className="mt-1 text-xs font-medium text-muted-foreground">分帳</p>
+        <p className="text-xs font-medium text-muted-foreground">分帳</p>
         {renderAccounts()}
       </section>
     </AppShell>
