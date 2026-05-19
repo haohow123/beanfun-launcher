@@ -75,38 +75,19 @@ jobs:
           # runtime log filename can carry the tag.
           VERSION: ${{ steps.ver.outputs.tag }}
 
-      - name: Build eventprobe diagnostic
-        # Standalone Win32 SetWinEventHook event-stream tool (see
-        # cmd/eventprobe/README.md). Originally written for the M10
-        # spike; bundled into every release so future "did the
-        # window class rename?" debug doesn't require a fresh
-        # cross-build setup. CGO_ENABLED=0 to keep it mingw-free.
-        shell: bash
-        env:
-          CGO_ENABLED: "0"
-          GOOS: windows
-          GOARCH: amd64
-        run: go build -o bin/eventprobe.exe ./cmd/eventprobe
-
       - name: Locate artifacts
         id: art
         shell: bash
         run: |
           set -e
-          # Filter eventprobe out of the "main exe" glob — same
-          # `bin/*.exe` pattern, but now there's a second non-
-          # installer binary we DON'T want to mistake for the
-          # launcher.
-          exe=$(ls bin/*.exe 2>/dev/null | grep -v -- '-installer' | grep -v eventprobe | head -1)
+          exe=$(ls bin/*.exe 2>/dev/null | grep -v -- '-installer' | head -1)
           inst=$(ls bin/*-installer.exe 2>/dev/null | head -1)
           if [ -z "$inst" ]; then
             inst=$(ls build/windows/nsis/*-installer.exe 2>/dev/null | head -1)
           fi
-          probe=$(ls bin/eventprobe.exe 2>/dev/null | head -1)
           echo "exe=$exe"     >> "$GITHUB_OUTPUT"
           echo "inst=$inst"   >> "$GITHUB_OUTPUT"
-          echo "probe=$probe" >> "$GITHUB_OUTPUT"
-          echo "Found: $exe + $inst + $probe"
+          echo "Found: $exe + $inst"
 
       - name: Create GitHub Release
         # No --prerelease, no --latest. The alpha.26 attempt taught us
@@ -128,5 +109,4 @@ jobs:
             --title '${{ steps.ver.outputs.tag }}' \
             --generate-notes \
             '${{ steps.art.outputs.exe }}' \
-            '${{ steps.art.outputs.inst }}' \
-            '${{ steps.art.outputs.probe }}'
+            '${{ steps.art.outputs.inst }}'
