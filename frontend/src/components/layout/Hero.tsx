@@ -70,11 +70,11 @@ export function Hero({ action }: { action?: ReactNode }) {
           <h1 className="text-lg font-bold text-white [text-shadow:0_2px_6px_rgba(0,0,0,0.55)]">
             新楓之谷 MapleStory
           </h1>
-          <p className="mt-0.5 text-xs text-white/95 [text-shadow:0_1px_4px_rgba(0,0,0,0.55)]">
+          <p className="mt-0.5 flex items-center gap-1.5 text-xs text-white/95 [text-shadow:0_1px_4px_rgba(0,0,0,0.55)]">
             <span
-              className={`inline-block size-1.5 rounded-full align-middle ${visual.dotClass}`}
-            />{" "}
-            {visual.label}
+              className={`size-1.5 shrink-0 rounded-full ${visual.dotClass}`}
+            />
+            <span>{visual.label}</span>
           </p>
         </div>
         {action && <div className="shrink-0">{action}</div>}
