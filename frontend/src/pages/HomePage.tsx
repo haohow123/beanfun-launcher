@@ -184,7 +184,7 @@ export function HomePage() {
 
   function spawnLabel() {
     if (spawn.isPending) return "啟動中…";
-    if (spawn.isSuccess) return "✓ 已啟動,等登入畫面";
+    if (spawn.isSuccess) return "✓ 已啟動";
     return "啟動遊戲";
   }
 
