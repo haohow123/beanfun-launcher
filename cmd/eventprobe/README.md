@@ -22,19 +22,20 @@ Copy `eventprobe.exe` to your Windows machine.
 
 ## Usage — two terminals
 
-**Terminal 1 — start the probe first.** It enumerates top-level
-windows continuously until it finds one matching `--class`; once
-found, it derives the PID and installs a Win32 WinEvent hook for
-that whole process.
+**Terminal 1 — start the probe first.** It polls every 500 ms for
+a window matching one of the `--class` values until found (or the
+2 min timeout fires); once found, it derives the PID and installs
+a Win32 WinEvent hook for that whole process.
 
 ```cmd
-eventprobe.exe --class MapleStoryClass > probe.log
+eventprobe.exe --class MapleStoryClass,MapleStoryClassTW > probe.log
 ```
 
-(MapleStory TW historically used `MapleStoryClassTW` too — if
-`MapleStoryClass` finds nothing, try the TW variant. The two-tier
-fallback exists for exactly this reason in
-`internal/launcher/inject_windows.go`.)
+`--class` accepts a comma-separated list — the probe tries each
+per tick and the first match wins. The two MapleStory class names
+above mirror the two-tier fallback in
+`internal/launcher/inject_windows.go`; pass both to avoid having
+to guess which one TW actually uses on this Beanfun build.
 
 You can also target by PID if you already know it:
 

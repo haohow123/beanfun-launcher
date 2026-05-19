@@ -19,9 +19,11 @@ package main
 import (
 	"errors"
 	"fmt"
+	"os"
 	"runtime"
 	"sync/atomic"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -181,46 +183,114 @@ var winEventShim = syscall.NewCallback(func(
 // findTargetWindow
 // ---------------------------------------------------------------------------
 
-// findTargetWindow locates the target HWND by window class name or PID.
+// pollInterval is the gap between successive window-search attempts
+// in findTargetWindow's wait loop. 500 ms matches the launcher's other
+// polling cadences.
+const pollInterval = 500 * time.Millisecond
+
+// pollTimeout caps how long findTargetWindow will wait for the target
+// window to appear before giving up. 2 min covers cold-start of a
+// game executable plus a UAC dance; longer than that is a user
+// problem (game didn't actually launch).
+const pollTimeout = 2 * time.Minute
+
+// findTargetWindow locates the target HWND by window class name(s)
+// or PID, polling until one is found or until pollTimeout elapses.
+// The polling loop lets the user run eventprobe BEFORE launching the
+// game — the tool waits, latches the window the moment it appears,
+// and starts capturing events from the very first one (including
+// EVENT_OBJECT_CREATE on the main window).
 //
-//   - If className is non-empty: FindWindowW(class, nil) then derive PID.
-//   - If pid is non-zero: enumerate top-level windows, return first whose
-//     owning process matches pid.
-//   - Both zero/empty: error.
-func findTargetWindow(className string, pid uint32) (hwnd uintptr, foundPID uint32, err error) {
-	switch {
-	case className != "":
-		return findWindowByClass(className)
-	case pid != 0:
-		return findWindowByPID(pid)
-	default:
+//   - classNames non-empty: try FindWindowW for each class per tick;
+//     first match wins. Lets the caller pass a fallback list
+//     (e.g. "MapleStoryClass,MapleStoryClassTW") without having to
+//     rerun the tool when the first guess misses.
+//   - pid non-zero: enumerate top-level windows per tick.
+//   - Both empty: error.
+func findTargetWindow(classNames []string, pid uint32) (hwnd uintptr, foundPID uint32, err error) {
+	if len(classNames) == 0 && pid == 0 {
 		return 0, 0, errors.New("findTargetWindow: must provide --class or --pid")
 	}
-}
 
-// findWindowByClass calls FindWindowW then GetWindowThreadProcessId.
-func findWindowByClass(className string) (hwnd uintptr, pid uint32, err error) {
-	classW, err := windows.UTF16PtrFromString(className)
-	if err != nil {
-		return 0, 0, fmt.Errorf("findWindowByClass: UTF16PtrFromString(%q): %w", className, err)
+	deadline := time.Now().Add(pollTimeout)
+	announced := false
+
+	for time.Now().Before(deadline) {
+		var (
+			h      uintptr
+			outPID uint32
+			found  bool
+			sysErr error
+		)
+		switch {
+		case len(classNames) > 0:
+			for _, c := range classNames {
+				h, outPID, found, sysErr = findWindowByClass(c)
+				if sysErr != nil || found {
+					break
+				}
+			}
+		default:
+			h, outPID, found, sysErr = findWindowByPID(pid)
+		}
+		if sysErr != nil {
+			// Real Win32 system error (not "not found yet") — fail
+			// fast, polling more won't help.
+			return 0, 0, sysErr
+		}
+		if found {
+			return h, outPID, nil
+		}
+
+		if !announced {
+			if len(classNames) > 0 {
+				fmt.Fprintf(os.Stderr, "waiting for window matching --class=%v (Ctrl-C to abort, %s timeout)…\n", classNames, pollTimeout)
+			} else {
+				fmt.Fprintf(os.Stderr, "waiting for window owned by --pid=%d (Ctrl-C to abort, %s timeout)…\n", pid, pollTimeout)
+			}
+			announced = true
+		}
+		time.Sleep(pollInterval)
 	}
 
-	// FindWindowW wraps Win32 FindWindowW (user32.dll).
-	h, _, lastErr := procFindWindowW.Call(
+	if len(classNames) > 0 {
+		return 0, 0, fmt.Errorf("no window matching any of --class=%v found within %s", classNames, pollTimeout)
+	}
+	return 0, 0, fmt.Errorf("no window owned by --pid=%d found within %s", pid, pollTimeout)
+}
+
+// findWindowByClass calls FindWindowW once, then GetWindowThreadProcessId.
+// Returns found=false (no error) when no matching window exists yet —
+// the polling loop in findTargetWindow handles the retry. Real Win32
+// failures (UTF16 conversion, malformed input) surface as sysErr.
+func findWindowByClass(className string) (hwnd uintptr, pid uint32, found bool, sysErr error) {
+	classW, err := windows.UTF16PtrFromString(className)
+	if err != nil {
+		return 0, 0, false, fmt.Errorf("findWindowByClass: UTF16PtrFromString(%q): %w", className, err)
+	}
+
+	// FindWindowW wraps Win32 FindWindowW (user32.dll). Returns 0
+	// when no matching window exists. We treat that as "not yet,
+	// keep polling" rather than a hard error — GetLastError is
+	// unreliable here (Win32 doesn't consider "no match" an
+	// error, so it usually leaves last-error untouched, leading
+	// to the confusing "the operation completed successfully"
+	// formatting).
+	h, _, _ := procFindWindowW.Call(
 		uintptr(unsafe.Pointer(classW)),
 		0, // lpWindowName — NULL matches any title
 	)
 	if h == 0 {
-		return 0, 0, fmt.Errorf("FindWindowW(class=%q): %w", className, lastErr)
+		return 0, 0, false, nil
 	}
 
 	var outPID uint32
 	procGetWindowThreadProcessId.Call(h, uintptr(unsafe.Pointer(&outPID)))
 	if outPID == 0 {
-		return 0, 0, fmt.Errorf("GetWindowThreadProcessId(hwnd=0x%X): pid=0: %w",
+		return 0, 0, false, fmt.Errorf("GetWindowThreadProcessId(hwnd=0x%X): pid=0: %w",
 			h, windows.GetLastError())
 	}
-	return h, outPID, nil
+	return h, outPID, true, nil
 }
 
 // enumState is the carry struct for the EnumWindows callback.
@@ -247,18 +317,20 @@ var enumWindowsCallback = syscall.NewCallback(func(hwnd, _ uintptr) uintptr {
 	return 1 // continue
 })
 
-// findWindowByPID enumerates top-level windows and returns the first HWND
-// owned by the given PID.
-func findWindowByPID(pid uint32) (hwnd uintptr, foundPID uint32, err error) {
+// findWindowByPID enumerates top-level windows and returns the first
+// HWND owned by the given PID. Returns found=false (no error) when no
+// match exists yet — the polling loop in findTargetWindow handles the
+// retry.
+func findWindowByPID(pid uint32) (hwnd uintptr, foundPID uint32, found bool, sysErr error) {
 	enumCtx = enumState{targetPID: pid}
 
 	// EnumWindows wraps Win32 EnumWindows (user32.dll).
 	procEnumWindows.Call(enumWindowsCallback, 0)
 
 	if enumCtx.result == 0 {
-		return 0, 0, fmt.Errorf("findWindowByPID: no top-level window found for pid=%d", pid)
+		return 0, 0, false, nil
 	}
-	return enumCtx.result, pid, nil
+	return enumCtx.result, pid, true, nil
 }
 
 // ---------------------------------------------------------------------------
