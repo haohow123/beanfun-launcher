@@ -63,9 +63,12 @@ When making changes, Claude Code should:
 
 1. Make working-tree changes.
 2. Stage relevant files (`git add <paths>`).
-3. Run `git status` and `git diff --cached`, show me the diff.
+3. Run `git status` and `git diff --cached`, show me the diff (per atomic commit).
 4. Propose commit message(s), splitting into atomic commits when logically separate.
-5. Wait for explicit "ok commit" / "ok push" before executing.
+5. Chain through: commit → next commit → ... → push → open PR in one continuous sequence, showing each commit's diff stat + message for visibility but not gating on a response between steps.
+6. Stop and wait only at PR open — for CI + my explicit "ok merge". The "ok merge" gate is non-negotiable; never `gh pr merge --auto`.
+
+Never push to `main` directly.
 
 ## Branching workflow
 
