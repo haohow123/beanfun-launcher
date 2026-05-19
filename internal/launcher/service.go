@@ -22,63 +22,135 @@ const gameExeEnvVar = "BEANFUN_GAME_EXE"
 // game's watcher cleanly without needing a manual cancel field.
 const gameExitWatcherTaskName = "launcher-game-exit"
 
+// Beanfun launch protocol — positional argv passed to MapleStory.exe.
+//
+// Verified 2026-05-19 against the running official Beanfun client via
+//
+//	wmic process where name="MapleStory.exe" get commandline /value
+//
+// The game spawns with five positional arguments, NOT slash-prefixed
+// flags. Earlier docs (and the pungin reference) described
+// `/hb /u:<SID> /p:<OTP>` which Gamania has since replaced. The exact
+// format is:
+//
+//	MapleStory.exe <host> <port> BeanFun <SID> <OTP>
+//
+// On a fresh spawn the game.exe contacts <host>:<port> directly with
+// the OTP, validates server-side, and proceeds straight to character
+// select — no login form, no WM_CHAR injection needed. This replaces
+// the M8 PostMessage path for fresh spawns; M8's Launch method is
+// retained as a fallback for users who already have the game open
+// (where argv can't be retroactively supplied).
+const (
+	gameServerHost   = "tw.login.maplestory.beanfun.com"
+	gameServerPort   = "8484"
+	gameLaunchMarker = "BeanFun"
+)
+
+// gameStateChangedEvent is the Wails event name the frontend's
+// useGameStateQuery hook subscribes to. The payload is a GameState
+// struct serialized to JSON. Single event for both "started" and
+// "exited" transitions — the Running field discriminates.
+const gameStateChangedEvent = "game:state-changed"
+
+// GameState mirrors the FE's gameStateAtom shape. JSON-tagged for
+// Wails event marshalling + GetGameState's RPC return.
+//
+//   - Running=true with Hwnd>0 — watcher confirmed window present.
+//   - Running=true with Hwnd=0 — SpawnGame's spawnFn returned but
+//     window not yet detected (race window of ~0.5-4s before the
+//     game's first paint). FE treats this the same as the
+//     hwnd-known case.
+//   - Running=false — watcher detected exit, or app start probe
+//     found no game window.
+type GameState struct {
+	Running bool    `json:"running"`
+	Hwnd    uintptr `json:"hwnd,omitempty"`
+}
+
+// errGameAlreadyRunning is returned by SpawnGame when a MapleStory
+// window already exists. The argv path requires a fresh process —
+// you can't retroactively pass credentials. The FE button should
+// hide 啟動遊戲 when GameState.Running is true, switching to the
+// Launch (帶入帳密) action instead; this error is the defensive
+// backstop if the FE somehow calls SpawnGame anyway.
+var errGameAlreadyRunning = errors.New("game already running; use Launch to inject into the existing window")
+
 // LauncherService is the Wails-bound facade for "click an account →
-// game window opens". Its single method, Launch, runs the post-login
-// OTP flow and spawns the game process with the OTP on the command
-// line. The OTP byte slice is zeroed immediately after spawn.
+// game launches with credentials filled". Two flows:
+//
+//   - SpawnGame(account): fresh launch via argv (host port BeanFun
+//     SID OTP). Game auto-logs in to character select. Primary path.
+//   - Launch(account): inject credentials into an already-running
+//     game window via WM_CHAR. M8 path retained as a fallback for
+//     users who started the game outside our launcher.
+//
+// State changes (started/exited) are reported asynchronously via the
+// gameStateChangedEvent Wails event.
 type LauncherService struct {
 	mu    sync.Mutex
 	login *beanfun.LoginService
-	// mgr owns the game-exit watcher goroutine (registered under
-	// gameExitWatcherTaskName). Constructor injection so tests can
-	// plug a fresh manager; main.go shares a single instance across
-	// all services so app shutdown can StopAll() them in one go.
-	mgr *bgtask.Manager
+	mgr   *bgtask.Manager
 }
 
+// NewLauncherService wires the service and, if a game window already
+// exists at startup, attaches the exit watcher to it. This handles
+// the launcher-restart-while-game-running case so closing the game
+// later still produces a clean state-changed event. The watcher's
+// emit is a no-op until application.New() runs (see
+// watcher_emit_windows.go's init), so this early registration is
+// safe: the watcher will block on WaitForSingleObject until the
+// game exits, then emit once the Wails app is live.
 func NewLauncherService(login *beanfun.LoginService, mgr *bgtask.Manager) *LauncherService {
-	return &LauncherService{login: login, mgr: mgr}
+	s := &LauncherService{login: login, mgr: mgr}
+	if hwnd := findGameWindowFn(); hwnd != 0 {
+		slog.Info("launcher: game already running at startup, attaching watcher",
+			"hwnd", hwnd)
+		s.restartWatcher(hwnd)
+	}
+	return s
 }
 
-// LaunchResult signals the outcome reported back to the frontend.
-//
-//   - AutoFilled=true → the game's login form received the
-//     credentials. OTP empty (never exposed to frontend).
-//
-//   - NoWindow=true → no game window is open. Frontend should
-//     prompt the user to press 啟動遊戲 first. OTP is not fetched
-//     in this path (saves a wasted single-use token).
-//
-//   - AutoFilled=false (NoWindow=false) → window was found but
-//     inject failed mid-sequence. OTP is populated so the frontend
-//     can offer the user manual-paste.
-//
-// Hard errors (no session, OTP fetch failure) come back as a plain
-// Go error and never produce a LaunchResult.
-type LaunchResult struct {
-	AutoFilled bool   `json:"autoFilled"`
-	NoWindow   bool   `json:"noWindow,omitempty"`
-	OTP        string `json:"otp,omitempty"`
+// GetGameState is the initial-state RPC the FE's useGameStateQuery
+// calls on mount. Subsequent updates arrive via the
+// gameStateChangedEvent push event, so this is read once per FE
+// lifecycle (per the queryClient cache). Probes findGameWindowFn
+// synchronously; cheap.
+func (s *LauncherService) GetGameState() GameState {
+	hwnd := findGameWindowFn()
+	return GameState{Running: hwnd != 0, Hwnd: hwnd}
 }
 
-// SpawnGame opens the configured MapleStory.exe but does not wait
-// for the login form. Returns nil when the game has been spawned
-// (or was already running).
+// SpawnGame fetches an OTP for the given account and spawns
+// MapleStory.exe with the canonical 5-arg positional argv that
+// triggers Gamania's auto-login path. Game.exe takes the OTP from
+// argv, validates server-side, and lands the user directly on
+// character select — no login form rendered, no WM_CHAR injection,
+// no form-ready timing window to navigate.
 //
-// Split out from Launch so the frontend can drive an explicit
-// two-step flow: user clicks 啟動遊戲 (this method) → waits visually
-// for the login form → clicks 帶入帳密 per account (Launch). That
-// design sidesteps the +20s "form input-ready" gap between window
-// visibility and the textbox actually accepting WM_CHAR; once the
-// user can see the form they're guaranteed it's ready, and inject
-// lands within ~100ms.
+// Returns when the spawn syscall has completed (typically <100ms);
+// the game's loading + server handshake + character-select render
+// happen afterward without the launcher's involvement. State
+// transitions (window-appeared, process-exited) reach the FE via
+// the gameStateChangedEvent push event, fired by the goroutine
+// kicked off via restartWatcher.
 //
-// Requires:
-//   - An active session (so we know there's a logged-in user
-//     intending to play; resolveGameExe is independent of session).
-//   - Either BEANFUN_GAME_EXE env var or the registry value to
-//     locate the game executable.
-func (s *LauncherService) SpawnGame() error {
+// Errors and their FE handling:
+//
+//   - ErrLoginRequired: session expired or absent. FE shows QR
+//     re-login.
+//   - errGameAlreadyRunning: defensive — FE should route to Launch
+//     when GameState.Running is true. Surface error directly.
+//   - resolveGameExe errors: registry value missing or override env
+//     var unset. Surface error directly.
+//   - spawn / FetchOTP errors: real failures. Surface error directly.
+//
+// The OTP byte slice is zeroed via defer before this method returns,
+// matching the discipline of [[security-principles-beanfun]]. The
+// OS-side argv copy in the spawned process's memory is unavoidable
+// (kernel copies before we can scrub) but bounded by the OTP's
+// single-use server-side ticket lifetime.
+func (s *LauncherService) SpawnGame(account beanfun.Account) error {
 	s.mu.Lock()
 	client, session := s.login.Snapshot()
 	s.mu.Unlock()
@@ -93,43 +165,103 @@ func (s *LauncherService) SpawnGame() error {
 	}
 
 	if hwnd := findGameWindowFn(); hwnd != 0 {
-		slog.Info("SpawnGame: game already running, attaching watcher")
-		s.restartWatcher(hwnd)
-		return nil
+		slog.Warn("SpawnGame: game already running, refusing to spawn",
+			"hwnd", hwnd, "sid", account.SID)
+		return errGameAlreadyRunning
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if err := spawnFn(ctx, gameExe, nil); err != nil {
-		slog.Error("SpawnGame: spawnFn failed", "err", err)
+	otp, err := client.FetchOTP(ctx, session, account)
+	if err != nil {
+		if isSessionExpired(err) {
+			slog.Warn("SpawnGame: session expired, clearing local state",
+				"sid", account.SID)
+			s.login.Reset()
+			return beanfun.ErrLoginRequired()
+		}
+		slog.Error("SpawnGame: FetchOTP failed", "err", err, "sid", account.SID)
 		return err
 	}
-	slog.Info("SpawnGame: game spawned", "exe", gameExe)
+	defer beanfun.Zero(otp.Token)
+
+	args := []string{
+		gameServerHost,
+		gameServerPort,
+		gameLaunchMarker,
+		account.SID,
+		string(otp.Token),
+	}
+
+	spawnCtx, spawnCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer spawnCancel()
+	if err := spawnFn(spawnCtx, gameExe, args); err != nil {
+		slog.Error("SpawnGame: spawnFn failed", "err", err, "sid", account.SID)
+		return err
+	}
+	slog.Info("SpawnGame: game spawned with credentials via argv",
+		"sid", account.SID, "exe", gameExe)
+
+	// Optimistic running:true emit — spawnFn syscall returned, the
+	// game process exists. Window may not be visible yet (~0.5-4s
+	// race), but Running with Hwnd=0 is the documented "spawned but
+	// not yet detected" state. The watcher we kick off next is
+	// responsible for the running:false transition on process exit;
+	// it stays silent on window-appearance since this event already
+	// covered that.
+	eventEmitFn(gameStateChangedEvent, GameState{Running: true})
+
 	s.restartWatcher(0)
 	return nil
 }
 
 // restartWatcher registers (or re-registers) the game-exit watcher
-// against s.mgr. SpawnGame calls this in both paths: already-running
-// passes the known hwnd so the watcher skips its window-appears
-// phase; fresh-spawn passes 0 so the watcher polls for the
-// cold-start window. The watcher emits "game:exited" when the game
-// process terminates, so the frontend can reset its post-launch
-// button state (issue #62). bgtask auto-supersedes the previous
-// registration under the same name — no manual cancel field needed.
+// against s.mgr. SpawnGame calls this with hwnd=0 so the watcher
+// runs its phase-1 window-poll; NewLauncherService calls it with a
+// pre-known hwnd to skip phase 1 (game was already running). The
+// watcher emits gameStateChangedEvent with Running=false when the
+// game process terminates (or never appears within the phase-1
+// timeout). bgtask auto-supersedes the previous registration under
+// the same name — no manual cancel field needed.
 func (s *LauncherService) restartWatcher(hwnd uintptr) {
 	s.mgr.Watcher(gameExitWatcherTaskName, func(ctx context.Context) {
 		runGameWatcher(ctx, hwnd)
 	})
 }
 
-// Launch finds the running MapleStory window and injects the given
-// account's credentials into its login form. Does NOT spawn the
-// game — see SpawnGame for that. Returns:
+// LaunchResult signals the outcome reported back to the frontend.
 //
+//   - AutoFilled=true → the game's login form received the
+//     credentials. OTP empty (never exposed to frontend).
+//
+//   - NoWindow=true → no game window is open. With M10.1's argv
+//     SpawnGame path this should be rare — FE only routes to Launch
+//     when GameState.Running is true. Returned anyway for defensive
+//     handling.
+//
+//   - AutoFilled=false (NoWindow=false) → window was found but
+//     inject failed mid-sequence. OTP is populated so the frontend
+//     can offer the user manual-paste.
+//
+// Hard errors (no session, OTP fetch failure) come back as a plain
+// Go error and never produce a LaunchResult.
+type LaunchResult struct {
+	AutoFilled bool   `json:"autoFilled"`
+	NoWindow   bool   `json:"noWindow,omitempty"`
+	OTP        string `json:"otp,omitempty"`
+}
+
+// Launch finds the running MapleStory window and injects the given
+// account's credentials into its login form via WM_CHAR (M8 path).
+// Used as a fallback when the user already has the game open from
+// outside our launcher — the argv-based SpawnGame can't help retroactively
+// since credentials must be passed at spawn time.
+//
+// Returns:
 //   - LaunchResult{NoWindow: true} when no game window is open.
-//     Frontend should prompt the user to press 啟動遊戲 first.
+//     FE handles this by re-querying GameState (the state may have
+//     just transitioned away).
 //   - LaunchResult{AutoFilled: true} on successful inject.
 //   - LaunchResult{AutoFilled: false, OTP: ...} when the window
 //     exists but inject failed mid-sequence — frontend shows the
@@ -178,209 +310,23 @@ func (s *LauncherService) Launch(account beanfun.Account) (LaunchResult, error) 
 
 // isSessionExpired reports whether err signals that the Beanfun
 // server-side session has been invalidated and the user must
-// re-login. Used by Launch + GetOTP to fold session-expired errors
-// into the same "login required" shape the rest of the service
-// uses.
+// re-login. Used by SpawnGame + Launch + GetOTP to fold session-
+// expired errors into the same "login required" shape the rest of
+// the service uses.
 func isSessionExpired(err error) bool {
 	var le *beanfun.LoginError
 	return errors.As(err, &le) && le.Kind == beanfun.KindSessionExpired
 }
 
-// SpawnAndInjectResult signals the outcome reported back to the
-// frontend for the M10 1-click 啟動並帶入 path.
-//
-//   - AutoFilled=true: spawn + form-ready + inject + login-success
-//     transition all confirmed via Win32 events. The OTP was
-//     consumed by Beanfun's auth backend; no OTP exposed to
-//     frontend.
-//   - AutoFilled=false: any leg failed; OTP populated so the
-//     frontend can put it on the clipboard for manual paste.
-//     FailReason describes which leg.
-//
-// FailReason values: "no-window" | "form-not-ready" |
-// "inject-failed" | "no-transition". Empty when AutoFilled=true.
-type SpawnAndInjectResult struct {
-	AutoFilled bool   `json:"autoFilled"`
-	OTP        string `json:"otp,omitempty"`
-	FailReason string `json:"failReason,omitempty"`
-}
-
-// Tunable timeouts for SpawnAndInject. Vars (not consts) so tests
-// can override to keep runs fast.
-var (
-	spawnAndInjectWindowTimeout    = 30 * time.Second // game window must appear after spawn
-	spawnAndInjectOTPTimeout       = 30 * time.Second // FetchOTP must complete
-	spawnAndInjectFormReadyTimeout = 60 * time.Second // form must render + caret burst
-	spawnAndInjectLoggedInTimeout  = 10 * time.Second // post-inject transition window
-)
-
-// SpawnAndInject is the M10 1-click orchestrator: spawn the game (or
-// reuse a running one), wait for the login form's caret-burst signal,
-// inject credentials, and verify success by watching for the new
-// MapleStoryClassTW window that signals "logged into character
-// select." Each phase has a timeout; on any phase failing, the OTP
-// is returned for clipboard-paste fallback. See
-// docs/zazzy-painting-turing.md (M10 plan) and the eventprobe spike
-// logs (probe1–probe3) for the empirical basis of the timing
-// signals.
-//
-// Reuses the building blocks from M8 (spawnFn + injectFn), M9
-// (pollForWindow + windowPIDFn), and M10a (runLoginWatcher). No new
-// Beanfun network endpoints touched.
-func (s *LauncherService) SpawnAndInject(account beanfun.Account) (SpawnAndInjectResult, error) {
-	s.mu.Lock()
-	client, session := s.login.Snapshot()
-	s.mu.Unlock()
-
-	if client == nil || session == nil {
-		return SpawnAndInjectResult{}, beanfun.ErrLoginRequired()
-	}
-
-	gameExe, err := resolveGameExe()
-	if err != nil {
-		return SpawnAndInjectResult{}, err
-	}
-
-	// 1. Spawn (or reuse existing game window).
-	loginHwnd := findGameWindowFn()
-	if loginHwnd == 0 {
-		spawnCtx, spawnCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		if err := spawnFn(spawnCtx, gameExe, nil); err != nil {
-			spawnCancel()
-			slog.Error("SpawnAndInject: spawnFn failed", "err", err)
-			return SpawnAndInjectResult{}, err
-		}
-		spawnCancel()
-		slog.Info("SpawnAndInject: game spawned", "exe", gameExe)
-
-		windowCtx, windowCancel := context.WithTimeout(context.Background(), spawnAndInjectWindowTimeout)
-		var ok bool
-		loginHwnd, ok = pollForWindow(windowCtx)
-		windowCancel()
-		if !ok {
-			slog.Warn("SpawnAndInject: window never appeared")
-			return SpawnAndInjectResult{FailReason: "no-window"}, nil
-		}
-	} else {
-		slog.Info("SpawnAndInject: game already running, reusing window", "hwnd", loginHwnd)
-	}
-
-	pid, err := windowPIDFn(loginHwnd)
-	if err != nil {
-		slog.Error("SpawnAndInject: windowPIDFn failed", "err", err, "hwnd", loginHwnd)
-		return SpawnAndInjectResult{}, err
-	}
-
-	// 2. Start the login watcher. ctx scopes the watcher's lifetime
-	//    to this method — it'll be cancelled (cleanly via the cleanup
-	//    closure inside runLoginWatcher's goroutine) on return.
-	watchCtx, watchCancel := context.WithCancel(context.Background())
-	defer watchCancel()
-	events := runLoginWatcher(watchCtx, loginHwnd, pid)
-
-	// 3. Kick off FetchOTP in parallel with the form-ready wait —
-	//    OTP fetch (~3s) typically completes well before form-ready
-	//    (~11+s), but parallel is strictly faster than sequential
-	//    even when not.
-	type otpRes struct {
-		otp beanfun.OTPResult
-		err error
-	}
-	otpCh := make(chan otpRes, 1)
-	go func() {
-		otpCtx, cancel := context.WithTimeout(context.Background(), spawnAndInjectOTPTimeout)
-		defer cancel()
-		o, e := client.FetchOTP(otpCtx, session, account)
-		otpCh <- otpRes{otp: o, err: e}
-	}()
-
-	// 4. Wait for the form-ready signal (caret burst) — or timeout.
-	formReadyTimedOut := false
-	select {
-	case ev := <-events:
-		if ev != formReady {
-			slog.Warn("SpawnAndInject: unexpected event before formReady", "event", ev)
-		}
-	case <-time.After(spawnAndInjectFormReadyTimeout):
-		slog.Warn("SpawnAndInject: form-not-ready timeout",
-			"timeout", spawnAndInjectFormReadyTimeout)
-		formReadyTimedOut = true
-	}
-
-	// 5. Always drain the OTP result, regardless of form-ready outcome
-	//    — we need it for the success inject AND for the fallback
-	//    clipboard path. By this point the OTP goroutine has either
-	//    completed (typical) or is about to (worst case: hit its own
-	//    30s timeout).
-	res := <-otpCh
-	if res.err != nil {
-		if isSessionExpired(res.err) {
-			slog.Warn("SpawnAndInject: session expired", "sid", account.SID)
-			s.login.Reset()
-			return SpawnAndInjectResult{}, beanfun.ErrLoginRequired()
-		}
-		slog.Error("SpawnAndInject: FetchOTP failed", "err", res.err)
-		return SpawnAndInjectResult{}, res.err
-	}
-	defer beanfun.Zero(res.otp.Token)
-
-	if formReadyTimedOut {
-		return SpawnAndInjectResult{
-			OTP:        string(res.otp.Token),
-			FailReason: "form-not-ready",
-		}, nil
-	}
-
-	// 6. Inject credentials. injectFn does SetForegroundWindow +
-	//    WM_CHAR sequence + RETURN synchronously; returns when the
-	//    last char is posted.
-	if ierr := injectFn(loginHwnd, []byte(account.SID), res.otp.Token); ierr != nil {
-		slog.Error("SpawnAndInject: inject failed, falling back to manual paste",
-			"err", ierr, "sid", account.SID)
-		return SpawnAndInjectResult{
-			OTP:        string(res.otp.Token),
-			FailReason: "inject-failed",
-		}, nil
-	}
-	slog.Info("SpawnAndInject: credentials injected, awaiting login transition",
-		"sid", account.SID)
-
-	// 7. Wait for the login-success signal (new MapleStoryClassTW
-	//    HWND, fired by the watcher's onLoggedIn callback). probe3
-	//    measured ~6.5s between RETURN and transition. 10s budget
-	//    covers a slow network round-trip + game animation.
-	select {
-	case ev := <-events:
-		if ev != loggedIn {
-			slog.Warn("SpawnAndInject: unexpected event after inject",
-				"event", ev, "sid", account.SID)
-			return SpawnAndInjectResult{
-				OTP:        string(res.otp.Token),
-				FailReason: "no-transition",
-			}, nil
-		}
-		slog.Info("SpawnAndInject: login success confirmed",
-			"sid", account.SID)
-		return SpawnAndInjectResult{AutoFilled: true}, nil
-	case <-time.After(spawnAndInjectLoggedInTimeout):
-		slog.Warn("SpawnAndInject: no-transition timeout — credentials may not have landed",
-			"sid", account.SID)
-		return SpawnAndInjectResult{
-			OTP:        string(res.otp.Token),
-			FailReason: "no-transition",
-		}, nil
-	}
-}
-
 // GetOTP runs the OTP fetch flow and returns the plaintext token for
 // display + clipboard copy on the frontend. The "show credentials so
 // the user can paste into another launcher" path that runs alongside
-// the direct-spawn Launch method.
+// the direct-spawn SpawnGame method.
 //
 // Two callers:
-//   - macOS dev verification: the spawn path returns
-//     ErrPlatformUnsupported, so the user uses GetOTP + paste into a
-//     Windows Beanfun client (or just to confirm the wire format).
+//   - macOS dev verification: SpawnGame errors with platform-unsupported,
+//     so dev uses GetOTP + paste into a Windows Beanfun client (or
+//     just to confirm the wire format).
 //   - Windows users who prefer to launch the game through their own
 //     tooling rather than letting us spawn it.
 //
@@ -411,10 +357,6 @@ func (s *LauncherService) GetOTP(account beanfun.Account) (string, error) {
 		slog.Error("GetOTP: FetchOTP failed", "err", err, "sid", account.SID)
 		return "", err
 	}
-	// Copy bytes into a string, then zero the source. The string copy
-	// lives in Go GC heap until reclaimed; the JS heap copy lives
-	// until the frontend clears its ref. Both are acceptable given
-	// the OTP's single-use lifecycle.
 	otpStr := string(otp.Token)
 	beanfun.Zero(otp.Token)
 	return otpStr, nil

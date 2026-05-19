@@ -8,6 +8,6 @@ export {
 };
 
 export {
-    LaunchResult,
-    SpawnAndInjectResult
+    GameState,
+    LaunchResult
 } from "./models.js";

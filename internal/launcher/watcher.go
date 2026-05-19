@@ -42,29 +42,31 @@ var (
 	gameWindowAppearTimeout = 60 * time.Second
 )
 
-// gameExitedEvent is the Wails event name the frontend subscribes to
-// in HomePage.tsx to reset spawn.isSuccess when the game closes.
-const gameExitedEvent = "game:exited"
-
-// runGameWatcher learns when the spawned MapleStory process exits and
-// emits "game:exited" so the frontend can reset spawn.isSuccess. One
-// watcher per active spawn — LauncherService cancels the prior
-// watcher when a new SpawnGame call lands.
+// runGameWatcher learns when the spawned MapleStory process exits
+// and emits gameStateChangedEvent{Running:false} so the frontend's
+// useGameStateQuery cache flips back to "not running." One watcher
+// per active spawn — LauncherService cancels the prior watcher when
+// a new SpawnGame call lands, or when NewLauncherService finds an
+// already-running game at startup.
 //
 // Two phases:
 //
 //	Phase 1 (initialHwnd == 0): poll findGameWindowFn every 500ms
 //	  for up to gameWindowAppearTimeout waiting for cold-start.
-//	  Timeout → emit anyway with PID=0 so the frontend doesn't stay
-//	  stuck in success state (we don't know what went wrong — AV
-//	  blocked, slow disk, crash mid-launch — but we know the user
-//	  shouldn't keep seeing "✓ 已啟動" indefinitely).
+//	  Timeout → emit running:false so the FE doesn't stay stuck in
+//	  the optimistic running:true state SpawnGame emitted (we don't
+//	  know what went wrong — AV blocked, slow disk, crash mid-launch
+//	  — but the FE shouldn't keep showing 帶入帳密 indefinitely).
 //	Phase 2: derive PID from hwnd, then waitForProcessExitFn blocks
-//	  until the kernel signals process exit → emit "game:exited"
-//	  with the PID.
+//	  until the kernel signals process exit → emit running:false.
 //
 // ctx cancel (new SpawnGame supersedes, or service shutdown) →
 // return without emitting; the new watcher (if any) takes over.
+//
+// Note: SpawnGame emits the running:true transition itself
+// (optimistically, right after spawnFn returns). The watcher does
+// NOT re-emit running:true on phase-1 success — that would be a
+// redundant cache write for the same logical state.
 func runGameWatcher(ctx context.Context, initialHwnd uintptr) {
 	hwnd := initialHwnd
 	if hwnd == 0 {
@@ -90,20 +92,21 @@ func runGameWatcher(ctx context.Context, initialHwnd uintptr) {
 			return
 		}
 		// Unexpected error from the wait. Fall through to emit so
-		// the frontend's reset path still runs — a premature reset
-		// is better UX than a permanently stuck "✓ 已啟動" button.
+		// the FE reset path still runs — a premature flip to
+		// running:false is better UX than a permanently stuck
+		// "帶入帳密" button.
 		slog.Error("gameWatcher: waitForProcessExitFn failed",
 			"err", err, "pid", pid)
 	}
-	slog.Info("gameWatcher: emitting game:exited", "pid", pid)
-	eventEmitFn(gameExitedEvent, pid)
+	slog.Info("gameWatcher: emitting state-changed running:false", "pid", pid)
+	eventEmitFn(gameStateChangedEvent, GameState{Running: false})
 }
 
 // pollForWindow polls findGameWindowFn until the game window appears,
 // the appear-timeout elapses, or ctx is cancelled. Returns (hwnd,
-// true) on success. On timeout it emits the synthetic "game:exited"
-// signal (PID=0) so the frontend resets; on ctx cancel it returns
-// silently for the new watcher to take over.
+// true) on success. On timeout it emits running:false so the FE
+// resets; on ctx cancel it returns silently for the new watcher to
+// take over.
 func pollForWindow(ctx context.Context) (uintptr, bool) {
 	deadline := time.Now().Add(gameWindowAppearTimeout)
 	ticker := time.NewTicker(gameWindowPollInterval)
@@ -113,9 +116,9 @@ func pollForWindow(ctx context.Context) (uintptr, bool) {
 			return hwnd, true
 		}
 		if time.Now().After(deadline) {
-			slog.Warn("gameWatcher: window never appeared, emitting timeout signal",
+			slog.Warn("gameWatcher: window never appeared, emitting running:false",
 				"timeout", gameWindowAppearTimeout)
-			eventEmitFn(gameExitedEvent, uint32(0))
+			eventEmitFn(gameStateChangedEvent, GameState{Running: false})
 			return 0, false
 		}
 		select {
