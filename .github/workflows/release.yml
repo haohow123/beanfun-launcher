@@ -90,13 +90,17 @@ jobs:
           echo "Found: $exe + $inst"
 
       - name: Create GitHub Release
-        # --prerelease keeps the "Pre-release" badge on the release
-        # page (alpha quality signal). --latest is an independent
-        # axis that controls which release /releases/latest redirects
-        # to — GitHub's default auto-pick skips prereleases, so
-        # without --latest our /releases/latest URL would 404 and
-        # the README download links would die. Both flags coexist:
-        # this is THE latest, and it IS a prerelease.
+        # No --prerelease, no --latest. The alpha.26 attempt taught us
+        # (via HTTP 422 "Latest release cannot be draft or prerelease")
+        # that the GitHub release API treats those two flags as
+        # mutually exclusive. README links rely on the
+        # /releases/latest/download/<asset> redirect (see #63), so
+        # "Latest" wins. The alpha-quality signal lives in the tag
+        # name (`v0.1.0-alpha.N`) and the auto-generated notes — losing
+        # the prerelease badge is a cosmetic-only cost for an
+        # audience that already knows this is a third-party launcher.
+        # --latest is omitted because it's the default behavior when
+        # there are no other non-prerelease releases to compete with.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
@@ -104,7 +108,5 @@ jobs:
           gh release create '${{ steps.ver.outputs.tag }}' \
             --title '${{ steps.ver.outputs.tag }}' \
             --generate-notes \
-            --prerelease \
-            --latest \
             '${{ steps.art.outputs.exe }}' \
             '${{ steps.art.outputs.inst }}'
