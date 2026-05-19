@@ -15,6 +15,7 @@ import {
 import {
   useFetchOTPMutation,
   useLaunchGameMutation,
+  useSpawnGameCleanMutation,
   useSpawnGameMutation,
 } from "@/queries/launch";
 import { loggedInAtom } from "@/state/auth";
@@ -70,12 +71,14 @@ export function HomePage() {
   const accounts = useAccountsQuery();
   const gameState = useGameStateQuery();
   const spawnGame = useSpawnGameMutation();
+  const spawnGameClean = useSpawnGameCleanMutation();
   const launchGame = useLaunchGameMutation();
   const fetchOTP = useFetchOTPMutation();
   const [copiedSid, setCopiedSid] = useState<string | null>(null);
   const [fallbackOTP, setFallbackOTP] = useState<FallbackOTP | null>(null);
 
   const isGameRunning = gameState.data?.running ?? false;
+  const lastUsedSid = gameState.data?.lastUsedSid ?? "";
 
   function logout() {
     qc.clear();
@@ -168,11 +171,14 @@ export function HomePage() {
         return "fallback";
       }
     }
-    // Pill shows "遊戲執行中" globally when state says running, so the
-    // user can confirm at a glance that something is launched. Each
-    // account's own primary mutation state still wins (above) when
-    // they're actively spawning / injecting.
-    if (isGameRunning) return "running";
+    // Pill shows "遊戲執行中" only on the card whose credentials are
+    // currently live in the game session — backend tracks this as
+    // lastUsedSid (updated by SpawnGame + Launch, cleared by watcher
+    // exit). Clean-spawned sessions have lastUsedSid="" until the
+    // user injects via 帶入帳密, so no card shows the pill in that
+    // window. Each account's own primary mutation state still wins
+    // (above) when they're actively spawning / injecting.
+    if (isGameRunning && lastUsedSid === acc.sid) return "running";
     return "idle";
   }
 
@@ -315,6 +321,13 @@ export function HomePage() {
     );
   }
 
+  function cleanSpawn() {
+    setFallbackOTP(null);
+    spawnGameClean.mutate(undefined, {
+      onError: handleMutationError,
+    });
+  }
+
   return (
     <AppShell mainClassName="flex-col">
       <Hero
@@ -329,6 +342,24 @@ export function HomePage() {
           </Button>
         }
       />
+
+      {/* Clean-spawn row — only visible when the game isn't already
+          running. Lets multi-account users open the login form once
+          and switch accounts mid-play via 帶入帳密, since argv-spawned
+          OTPs are single-use and the game refuses to return to the
+          login screen after consuming them. */}
+      {!isGameRunning && (
+        <div className="flex justify-center px-4 py-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={spawnGameClean.isPending || gameState.isPending}
+            onClick={cleanSpawn}
+          >
+            {spawnGameClean.isPending ? "啟動中…" : "啟動(可切換帳號)"}
+          </Button>
+        </div>
+      )}
 
       <section className="flex flex-1 flex-col gap-3 px-4 pb-4">
         <p className="text-xs font-medium text-muted-foreground">分帳</p>

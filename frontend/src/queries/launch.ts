@@ -4,6 +4,7 @@ import { type Account } from "@bindings/beanfun";
 import { LauncherService } from "@bindings/launcher";
 
 export const spawnGameMutationKey = ["spawn-game"] as const;
+export const spawnGameCleanMutationKey = ["spawn-game-clean"] as const;
 export const launchMutationKey = ["launch"] as const;
 export const fetchOTPMutationKey = ["fetch-otp"] as const;
 
@@ -22,6 +23,25 @@ export function useSpawnGameMutation() {
   return useMutation({
     mutationKey: spawnGameMutationKey,
     mutationFn: (account: Account) => LauncherService.SpawnGame(account),
+  });
+}
+
+/**
+ * useSpawnGameCleanMutation fires LauncherService.SpawnGameClean() —
+ * spawns MapleStory.exe with no argv so the login form renders. Used
+ * by the multi-account flow: open the game once, switch accounts
+ * mid-play via the in-game "back to login" → 帶入帳密 each time.
+ * The argv-based useSpawnGameMutation can't support this because
+ * its OTP is single-use and the game refuses to return to login
+ * after consuming it.
+ *
+ * Driven by the standalone 「啟動(可切換帳號)」 button under the Hero
+ * area in HomePage, visible only when gameState.running is false.
+ */
+export function useSpawnGameCleanMutation() {
+  return useMutation({
+    mutationKey: spawnGameCleanMutationKey,
+    mutationFn: () => LauncherService.SpawnGameClean(),
   });
 }
 
