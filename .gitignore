@@ -5,6 +5,9 @@ frontend/node_modules
 build/linux/appimage/build
 build/windows/nsis/MicrosoftEdgeWebview2Setup.exe
 
+# Stray binary outputs (e.g. cmd/eventprobe stops here if -o omitted)
+/*.exe
+
 # Claude Code local state
 .claude/settings.local.json
 .claude/cache/
