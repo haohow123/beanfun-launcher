@@ -167,6 +167,16 @@ func (s *LauncherService) SpawnGame(account beanfun.Account) error {
 	if hwnd := findGameWindowFn(); hwnd != 0 {
 		slog.Warn("SpawnGame: game already running, refusing to spawn",
 			"hwnd", hwnd, "sid", account.SID)
+		// FE state was stale — external transition (game opened
+		// outside our launcher, or by us before this launcher
+		// session started) we missed. Push correct state so the FE
+		// button flips to 帶入帳密, AND start the watcher so we
+		// catch the eventual exit. Together with the FE's
+		// refetchOnWindowFocus, this covers both "user clicked
+		// before alt-tabbing" and "user alt-tabbed first" recovery
+		// paths.
+		eventEmitFn(gameStateChangedEvent, GameState{Running: true, Hwnd: hwnd})
+		s.restartWatcher(hwnd)
 		return errGameAlreadyRunning
 	}
 
