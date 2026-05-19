@@ -63,9 +63,17 @@ const gameStateChangedEvent = "game:state-changed"
 //     hwnd-known case.
 //   - Running=false — watcher detected exit, or app start probe
 //     found no game window.
+//
+// LastUsedSID identifies which account's credentials were last
+// pushed into this game session (via SpawnGame argv or Launch
+// WM_CHAR). Empty when the game was spawned cleanly via
+// SpawnGameClean (multi-account flow — user picks via 帶入帳密
+// afterwards) or detected at app start. The FE's per-account
+// 「遊戲執行中」pill shows only on the card whose sid matches.
 type GameState struct {
-	Running bool    `json:"running"`
-	Hwnd    uintptr `json:"hwnd,omitempty"`
+	Running     bool    `json:"running"`
+	Hwnd        uintptr `json:"hwnd,omitempty"`
+	LastUsedSID string  `json:"lastUsedSid,omitempty"`
 }
 
 // errGameAlreadyRunning is returned by SpawnGame when a MapleStory
@@ -77,20 +85,33 @@ type GameState struct {
 var errGameAlreadyRunning = errors.New("game already running; use Launch to inject into the existing window")
 
 // LauncherService is the Wails-bound facade for "click an account →
-// game launches with credentials filled". Two flows:
+// game launches with credentials filled". Three flows:
 //
 //   - SpawnGame(account): fresh launch via argv (host port BeanFun
-//     SID OTP). Game auto-logs in to character select. Primary path.
+//     SID OTP). Game auto-logs in to character select. Primary
+//     single-account path.
+//   - SpawnGameClean(): fresh launch with no argv — game renders
+//     its login form so a multi-account user can choose which
+//     account to inject (via Launch) afterwards. The argv'd OTP
+//     is single-use server-side, which means an argv-spawned
+//     session can't return to the login screen mid-play; clean
+//     spawn avoids that lock-in.
 //   - Launch(account): inject credentials into an already-running
-//     game window via WM_CHAR. M8 path retained as a fallback for
-//     users who started the game outside our launcher.
+//     game window via WM_CHAR. Drives the "帶入帳密" button.
 //
-// State changes (started/exited) are reported asynchronously via the
-// gameStateChangedEvent Wails event.
+// lastUsedSID is the SID whose credentials are currently in the
+// live game session — set by SpawnGame + Launch (success paths),
+// stays empty for SpawnGameClean until the user injects, cleared
+// when the watcher detects exit. Surfaces in GameState so the FE
+// can render the per-account pill correctly.
+//
+// State changes (started/exited/credentials-switched) are reported
+// asynchronously via the gameStateChangedEvent Wails event.
 type LauncherService struct {
-	mu    sync.Mutex
-	login *beanfun.LoginService
-	mgr   *bgtask.Manager
+	mu          sync.Mutex
+	login       *beanfun.LoginService
+	mgr         *bgtask.Manager
+	lastUsedSID string
 }
 
 // NewLauncherService wires the service and, if a game window already
@@ -112,13 +133,27 @@ func NewLauncherService(login *beanfun.LoginService, mgr *bgtask.Manager) *Launc
 }
 
 // GetGameState is the initial-state RPC the FE's useGameStateQuery
-// calls on mount. Subsequent updates arrive via the
-// gameStateChangedEvent push event, so this is read once per FE
-// lifecycle (per the queryClient cache). Probes findGameWindowFn
-// synchronously; cheap.
+// calls on mount, plus the refetchOnWindowFocus refresh. Subsequent
+// updates arrive via the gameStateChangedEvent push event; this
+// covers the seed value + external transitions our event emission
+// can't see. Probes findGameWindowFn synchronously; cheap.
 func (s *LauncherService) GetGameState() GameState {
 	hwnd := findGameWindowFn()
-	return GameState{Running: hwnd != 0, Hwnd: hwnd}
+	s.mu.Lock()
+	sid := s.lastUsedSID
+	s.mu.Unlock()
+	return GameState{Running: hwnd != 0, Hwnd: hwnd, LastUsedSID: sid}
+}
+
+// setLastUsedSID is the only writer for s.lastUsedSID — guarded so
+// concurrent SpawnGame/Launch/Watcher-exit calls can't race on the
+// field. Pair every mutation with a fresh emit of GameState so the
+// FE cache stays in sync (the pill on the per-account card derives
+// from lastUsedSID).
+func (s *LauncherService) setLastUsedSID(sid string) {
+	s.mu.Lock()
+	s.lastUsedSID = sid
+	s.mu.Unlock()
 }
 
 // SpawnGame fetches an OTP for the given account and spawns
@@ -171,11 +206,15 @@ func (s *LauncherService) SpawnGame(account beanfun.Account) error {
 		// outside our launcher, or by us before this launcher
 		// session started) we missed. Push correct state so the FE
 		// button flips to 帶入帳密, AND start the watcher so we
-		// catch the eventual exit. Together with the FE's
-		// refetchOnWindowFocus, this covers both "user clicked
-		// before alt-tabbing" and "user alt-tabbed first" recovery
-		// paths.
-		eventEmitFn(gameStateChangedEvent, GameState{Running: true, Hwnd: hwnd})
+		// catch the eventual exit. lastUsedSID stays unchanged: we
+		// don't actually know who's logged into the existing
+		// session (clean-spawned externally → empty; previous
+		// SpawnGame in the same launcher session → still set from
+		// then).
+		s.mu.Lock()
+		sid := s.lastUsedSID
+		s.mu.Unlock()
+		eventEmitFn(gameStateChangedEvent, GameState{Running: true, Hwnd: hwnd, LastUsedSID: sid})
 		s.restartWatcher(hwnd)
 		return errGameAlreadyRunning
 	}
@@ -213,6 +252,11 @@ func (s *LauncherService) SpawnGame(account beanfun.Account) error {
 	slog.Info("SpawnGame: game spawned with credentials via argv",
 		"sid", account.SID, "exe", gameExe)
 
+	// Track the SID whose credentials are now live in the game session
+	// — used by the FE pill to mark "this account is logged in." Set
+	// BEFORE the emit so the event payload carries it.
+	s.setLastUsedSID(account.SID)
+
 	// Optimistic running:true emit — spawnFn syscall returned, the
 	// game process exists. Window may not be visible yet (~0.5-4s
 	// race), but Running with Hwnd=0 is the documented "spawned but
@@ -220,6 +264,71 @@ func (s *LauncherService) SpawnGame(account beanfun.Account) error {
 	// responsible for the running:false transition on process exit;
 	// it stays silent on window-appearance since this event already
 	// covered that.
+	eventEmitFn(gameStateChangedEvent, GameState{Running: true, LastUsedSID: account.SID})
+
+	s.restartWatcher(0)
+	return nil
+}
+
+// SpawnGameClean fetches no OTP and spawns MapleStory.exe with no
+// argv — the game renders its login form and waits for the user to
+// type credentials. Useful in the multi-account scenario where the
+// user wants to log in as one account, return to the login screen
+// mid-play, and switch to a different account — something the
+// argv-based SpawnGame can't support because the OTP is single-use
+// server-side (game refuses to return to login after consuming it).
+//
+// Driven by the standalone 「啟動(可切換帳號)」 button under the Hero
+// area, visible only when GameState.Running is false. After the game
+// window appears the user clicks 「帶入帳密」on whichever account they
+// want first; Launch's WM_CHAR path takes over from there.
+//
+// Same shape as SpawnGame minus the FetchOTP + argv branch:
+//   - Session required (so 啟動 doesn't work post-logout).
+//   - Same errGameAlreadyRunning defensive guard with corrective
+//     emit + restartWatcher.
+//   - Same optimistic emit + watcher kickoff on success.
+//
+// lastUsedSID is intentionally NOT set here: clean spawn means "no
+// account chosen yet"; the per-account pill stays off until the
+// user invokes Launch.
+func (s *LauncherService) SpawnGameClean() error {
+	s.mu.Lock()
+	client, session := s.login.Snapshot()
+	s.mu.Unlock()
+
+	if client == nil || session == nil {
+		return beanfun.ErrLoginRequired()
+	}
+
+	gameExe, err := resolveGameExe()
+	if err != nil {
+		return err
+	}
+
+	if hwnd := findGameWindowFn(); hwnd != 0 {
+		slog.Warn("SpawnGameClean: game already running, refusing to spawn",
+			"hwnd", hwnd)
+		s.mu.Lock()
+		sid := s.lastUsedSID
+		s.mu.Unlock()
+		eventEmitFn(gameStateChangedEvent, GameState{Running: true, Hwnd: hwnd, LastUsedSID: sid})
+		s.restartWatcher(hwnd)
+		return errGameAlreadyRunning
+	}
+
+	spawnCtx, spawnCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer spawnCancel()
+	if err := spawnFn(spawnCtx, gameExe, nil); err != nil {
+		slog.Error("SpawnGameClean: spawnFn failed", "err", err)
+		return err
+	}
+	slog.Info("SpawnGameClean: game spawned without credentials", "exe", gameExe)
+
+	// Clean spawn → no account chosen yet → clear lastUsedSID so any
+	// stale value from a previous session in this launcher run doesn't
+	// pin the pill to the wrong card.
+	s.setLastUsedSID("")
 	eventEmitFn(gameStateChangedEvent, GameState{Running: true})
 
 	s.restartWatcher(0)
@@ -227,16 +336,25 @@ func (s *LauncherService) SpawnGame(account beanfun.Account) error {
 }
 
 // restartWatcher registers (or re-registers) the game-exit watcher
-// against s.mgr. SpawnGame calls this with hwnd=0 so the watcher
-// runs its phase-1 window-poll; NewLauncherService calls it with a
-// pre-known hwnd to skip phase 1 (game was already running). The
-// watcher emits gameStateChangedEvent with Running=false when the
-// game process terminates (or never appears within the phase-1
-// timeout). bgtask auto-supersedes the previous registration under
-// the same name — no manual cancel field needed.
+// against s.mgr. SpawnGame / SpawnGameClean call this with hwnd=0
+// so the watcher runs its phase-1 window-poll; NewLauncherService
+// calls it with a pre-known hwnd to skip phase 1 (game was already
+// running). The watcher emits gameStateChangedEvent with
+// Running=false when the game process terminates (or never appears
+// within the phase-1 timeout). bgtask auto-supersedes the previous
+// registration under the same name — no manual cancel field needed.
+//
+// The closure wraps runGameWatcher so we can clear lastUsedSID after
+// the watcher returns: when the game exits, the SID becomes stale
+// and shouldn't carry over to a future external-spawn detection
+// (which would mistakenly pin the pill to whoever was logged in
+// last session). Ordering matters: runGameWatcher emits running:false
+// internally, then the closure clears the SID. The FE's next
+// refetchOnWindowFocus or push event would carry the cleared value.
 func (s *LauncherService) restartWatcher(hwnd uintptr) {
 	s.mgr.Watcher(gameExitWatcherTaskName, func(ctx context.Context) {
 		runGameWatcher(ctx, hwnd)
+		s.setLastUsedSID("")
 	})
 }
 
@@ -315,6 +433,15 @@ func (s *LauncherService) Launch(account beanfun.Account) (LaunchResult, error) 
 		return LaunchResult{AutoFilled: false, OTP: string(otp.Token)}, nil
 	}
 	slog.Info("Launch: credentials injected", "sid", account.SID)
+
+	// State stays Running=true but the active account changed
+	// (or just became known after a clean spawn). Re-emit so the FE
+	// pill follows the credentials. Set lastUsedSID first so a
+	// concurrent GetGameState refetch reads the same value the event
+	// carries.
+	s.setLastUsedSID(account.SID)
+	eventEmitFn(gameStateChangedEvent, GameState{Running: true, Hwnd: hwnd, LastUsedSID: account.SID})
+
 	return LaunchResult{AutoFilled: true}, nil
 }
 
