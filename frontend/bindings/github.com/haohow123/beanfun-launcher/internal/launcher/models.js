@@ -17,6 +17,13 @@ import { Create as $Create } from "@wailsio/runtime";
  *     hwnd-known case.
  *   - Running=false — watcher detected exit, or app start probe
  *     found no game window.
+ * 
+ * LastUsedSID identifies which account's credentials were last
+ * pushed into this game session (via SpawnGame argv or Launch
+ * WM_CHAR). Empty when the game was spawned cleanly via
+ * SpawnGameClean (multi-account flow — user picks via 帶入帳密
+ * afterwards) or detected at app start. The FE's per-account
+ * 「遊戲執行中」pill shows only on the card whose sid matches.
  */
 export class GameState {
     /**
@@ -37,6 +44,13 @@ export class GameState {
              * @type {number | undefined}
              */
             this["hwnd"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * @member
+             * @type {string | undefined}
+             */
+            this["lastUsedSid"] = undefined;
         }
 
         Object.assign(this, $$source);

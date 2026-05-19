@@ -4,16 +4,28 @@
 
 /**
  * LauncherService is the Wails-bound facade for "click an account →
- * game launches with credentials filled". Two flows:
+ * game launches with credentials filled". Three flows:
  * 
  *   - SpawnGame(account): fresh launch via argv (host port BeanFun
- *     SID OTP). Game auto-logs in to character select. Primary path.
+ *     SID OTP). Game auto-logs in to character select. Primary
+ *     single-account path.
+ *   - SpawnGameClean(): fresh launch with no argv — game renders
+ *     its login form so a multi-account user can choose which
+ *     account to inject (via Launch) afterwards. The argv'd OTP
+ *     is single-use server-side, which means an argv-spawned
+ *     session can't return to the login screen mid-play; clean
+ *     spawn avoids that lock-in.
  *   - Launch(account): inject credentials into an already-running
- *     game window via WM_CHAR. M8 path retained as a fallback for
- *     users who started the game outside our launcher.
+ *     game window via WM_CHAR. Drives the "帶入帳密" button.
  * 
- * State changes (started/exited) are reported asynchronously via the
- * gameStateChangedEvent Wails event.
+ * lastUsedSID is the SID whose credentials are currently in the
+ * live game session — set by SpawnGame + Launch (success paths),
+ * stays empty for SpawnGameClean until the user injects, cleared
+ * when the watcher detects exit. Surfaces in GameState so the FE
+ * can render the per-account pill correctly.
+ * 
+ * State changes (started/exited/credentials-switched) are reported
+ * asynchronously via the gameStateChangedEvent Wails event.
  * @module
  */
 
@@ -31,10 +43,10 @@ import * as $models from "./models.js";
 
 /**
  * GetGameState is the initial-state RPC the FE's useGameStateQuery
- * calls on mount. Subsequent updates arrive via the
- * gameStateChangedEvent push event, so this is read once per FE
- * lifecycle (per the queryClient cache). Probes findGameWindowFn
- * synchronously; cheap.
+ * calls on mount, plus the refetchOnWindowFocus refresh. Subsequent
+ * updates arrive via the gameStateChangedEvent push event; this
+ * covers the seed value + external transitions our event emission
+ * can't see. Probes findGameWindowFn synchronously; cheap.
  * @returns {$CancellablePromise<$models.GameState>}
  */
 export function GetGameState() {
@@ -128,6 +140,35 @@ export function Launch(account) {
  */
 export function SpawnGame(account) {
     return $Call.ByID(4030112748, account);
+}
+
+/**
+ * SpawnGameClean fetches no OTP and spawns MapleStory.exe with no
+ * argv — the game renders its login form and waits for the user to
+ * type credentials. Useful in the multi-account scenario where the
+ * user wants to log in as one account, return to the login screen
+ * mid-play, and switch to a different account — something the
+ * argv-based SpawnGame can't support because the OTP is single-use
+ * server-side (game refuses to return to login after consuming it).
+ * 
+ * Driven by the standalone 「啟動(可切換帳號)」 button under the Hero
+ * area, visible only when GameState.Running is false. After the game
+ * window appears the user clicks 「帶入帳密」on whichever account they
+ * want first; Launch's WM_CHAR path takes over from there.
+ * 
+ * Same shape as SpawnGame minus the FetchOTP + argv branch:
+ *   - Session required (so 啟動 doesn't work post-logout).
+ *   - Same errGameAlreadyRunning defensive guard with corrective
+ *     emit + restartWatcher.
+ *   - Same optimistic emit + watcher kickoff on success.
+ * 
+ * lastUsedSID is intentionally NOT set here: clean spawn means "no
+ * account chosen yet"; the per-account pill stays off until the
+ * user invokes Launch.
+ * @returns {$CancellablePromise<void>}
+ */
+export function SpawnGameClean() {
+    return $Call.ByID(320029797);
 }
 
 // Private type creation functions
