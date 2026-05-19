@@ -134,11 +134,15 @@ func TestRunGameWatcher_HappyPath(t *testing.T) {
 		t.Fatalf("emitCount = %d, want 1", got)
 	}
 	e, _ := fake.firstEmit()
-	if e.name != gameExitedEvent {
-		t.Errorf("event name = %q, want %q", e.name, gameExitedEvent)
+	if e.name != gameStateChangedEvent {
+		t.Errorf("event name = %q, want %q", e.name, gameStateChangedEvent)
 	}
-	if pid, ok := e.data.(uint32); !ok || pid != 1234 {
-		t.Errorf("event data = %v, want uint32(1234)", e.data)
+	state, ok := e.data.(GameState)
+	if !ok {
+		t.Fatalf("event data type = %T, want GameState", e.data)
+	}
+	if state.Running {
+		t.Errorf("event data Running = true, want false (exit emit)")
 	}
 }
 
@@ -162,11 +166,15 @@ func TestRunGameWatcher_Phase1Timeout(t *testing.T) {
 		t.Fatalf("emitCount = %d, want 1 (timeout should still emit)", got)
 	}
 	e, _ := fake.firstEmit()
-	if e.name != gameExitedEvent {
-		t.Errorf("event name = %q, want %q", e.name, gameExitedEvent)
+	if e.name != gameStateChangedEvent {
+		t.Errorf("event name = %q, want %q", e.name, gameStateChangedEvent)
 	}
-	if pid, ok := e.data.(uint32); !ok || pid != 0 {
-		t.Errorf("event data = %v, want uint32(0) for phase-1 timeout", e.data)
+	state, ok := e.data.(GameState)
+	if !ok {
+		t.Fatalf("event data type = %T, want GameState", e.data)
+	}
+	if state.Running {
+		t.Errorf("event data Running = true, want false (timeout emit)")
 	}
 }
 
@@ -232,7 +240,11 @@ func TestRunGameWatcher_AlreadyPresentHwnd(t *testing.T) {
 		t.Fatalf("emitCount = %d, want 1", got)
 	}
 	e, _ := fake.firstEmit()
-	if pid, ok := e.data.(uint32); !ok || pid != 5555 {
-		t.Errorf("event data = %v, want uint32(5555)", e.data)
+	state, ok := e.data.(GameState)
+	if !ok {
+		t.Fatalf("event data type = %T, want GameState", e.data)
+	}
+	if state.Running {
+		t.Errorf("event data Running = true, want false (exit emit)")
 	}
 }

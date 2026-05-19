@@ -7,14 +7,62 @@
 import { Create as $Create } from "@wailsio/runtime";
 
 /**
+ * GameState mirrors the FE's gameStateAtom shape. JSON-tagged for
+ * Wails event marshalling + GetGameState's RPC return.
+ * 
+ *   - Running=true with Hwnd>0 — watcher confirmed window present.
+ *   - Running=true with Hwnd=0 — SpawnGame's spawnFn returned but
+ *     window not yet detected (race window of ~0.5-4s before the
+ *     game's first paint). FE treats this the same as the
+ *     hwnd-known case.
+ *   - Running=false — watcher detected exit, or app start probe
+ *     found no game window.
+ */
+export class GameState {
+    /**
+     * Creates a new GameState instance.
+     * @param {Partial<GameState>} [$$source = {}] - The source object to create the GameState.
+     */
+    constructor($$source = {}) {
+        if (!("running" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["running"] = false;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * @member
+             * @type {number | undefined}
+             */
+            this["hwnd"] = undefined;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new GameState instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {GameState}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new GameState(/** @type {Partial<GameState>} */($$parsedSource));
+    }
+}
+
+/**
  * LaunchResult signals the outcome reported back to the frontend.
  * 
  *   - AutoFilled=true → the game's login form received the
  *     credentials. OTP empty (never exposed to frontend).
  * 
- *   - NoWindow=true → no game window is open. Frontend should
- *     prompt the user to press 啟動遊戲 first. OTP is not fetched
- *     in this path (saves a wasted single-use token).
+ *   - NoWindow=true → no game window is open. With M10.1's argv
+ *     SpawnGame path this should be rare — FE only routes to Launch
+ *     when GameState.Running is true. Returned anyway for defensive
+ *     handling.
  * 
  *   - AutoFilled=false (NoWindow=false) → window was found but
  *     inject failed mid-sequence. OTP is populated so the frontend
@@ -62,62 +110,5 @@ export class LaunchResult {
     static createFrom($$source = {}) {
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         return new LaunchResult(/** @type {Partial<LaunchResult>} */($$parsedSource));
-    }
-}
-
-/**
- * SpawnAndInjectResult signals the outcome reported back to the
- * frontend for the M10 1-click 啟動並帶入 path.
- * 
- *   - AutoFilled=true: spawn + form-ready + inject + login-success
- *     transition all confirmed via Win32 events. The OTP was
- *     consumed by Beanfun's auth backend; no OTP exposed to
- *     frontend.
- *   - AutoFilled=false: any leg failed; OTP populated so the
- *     frontend can put it on the clipboard for manual paste.
- *     FailReason describes which leg.
- * 
- * FailReason values: "no-window" | "form-not-ready" |
- * "inject-failed" | "no-transition". Empty when AutoFilled=true.
- */
-export class SpawnAndInjectResult {
-    /**
-     * Creates a new SpawnAndInjectResult instance.
-     * @param {Partial<SpawnAndInjectResult>} [$$source = {}] - The source object to create the SpawnAndInjectResult.
-     */
-    constructor($$source = {}) {
-        if (!("autoFilled" in $$source)) {
-            /**
-             * @member
-             * @type {boolean}
-             */
-            this["autoFilled"] = false;
-        }
-        if (/** @type {any} */(false)) {
-            /**
-             * @member
-             * @type {string | undefined}
-             */
-            this["otp"] = undefined;
-        }
-        if (/** @type {any} */(false)) {
-            /**
-             * @member
-             * @type {string | undefined}
-             */
-            this["failReason"] = undefined;
-        }
-
-        Object.assign(this, $$source);
-    }
-
-    /**
-     * Creates a new SpawnAndInjectResult instance from a string or object.
-     * @param {any} [$$source = {}]
-     * @returns {SpawnAndInjectResult}
-     */
-    static createFrom($$source = {}) {
-        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
-        return new SpawnAndInjectResult(/** @type {Partial<SpawnAndInjectResult>} */($$parsedSource));
     }
 }

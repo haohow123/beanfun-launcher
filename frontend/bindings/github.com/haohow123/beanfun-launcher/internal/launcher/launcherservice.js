@@ -4,9 +4,16 @@
 
 /**
  * LauncherService is the Wails-bound facade for "click an account →
- * game window opens". Its single method, Launch, runs the post-login
- * OTP flow and spawns the game process with the OTP on the command
- * line. The OTP byte slice is zeroed immediately after spawn.
+ * game launches with credentials filled". Two flows:
+ * 
+ *   - SpawnGame(account): fresh launch via argv (host port BeanFun
+ *     SID OTP). Game auto-logs in to character select. Primary path.
+ *   - Launch(account): inject credentials into an already-running
+ *     game window via WM_CHAR. M8 path retained as a fallback for
+ *     users who started the game outside our launcher.
+ * 
+ * State changes (started/exited) are reported asynchronously via the
+ * gameStateChangedEvent Wails event.
  * @module
  */
 
@@ -23,15 +30,29 @@ import * as beanfun$0 from "../beanfun/models.js";
 import * as $models from "./models.js";
 
 /**
+ * GetGameState is the initial-state RPC the FE's useGameStateQuery
+ * calls on mount. Subsequent updates arrive via the
+ * gameStateChangedEvent push event, so this is read once per FE
+ * lifecycle (per the queryClient cache). Probes findGameWindowFn
+ * synchronously; cheap.
+ * @returns {$CancellablePromise<$models.GameState>}
+ */
+export function GetGameState() {
+    return $Call.ByID(4183131696).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType0($result);
+    }));
+}
+
+/**
  * GetOTP runs the OTP fetch flow and returns the plaintext token for
  * display + clipboard copy on the frontend. The "show credentials so
  * the user can paste into another launcher" path that runs alongside
- * the direct-spawn Launch method.
+ * the direct-spawn SpawnGame method.
  * 
  * Two callers:
- *   - macOS dev verification: the spawn path returns
- *     ErrPlatformUnsupported, so the user uses GetOTP + paste into a
- *     Windows Beanfun client (or just to confirm the wire format).
+ *   - macOS dev verification: SpawnGame errors with platform-unsupported,
+ *     so dev uses GetOTP + paste into a Windows Beanfun client (or
+ *     just to confirm the wire format).
  *   - Windows users who prefer to launch the game through their own
  *     tooling rather than letting us spawn it.
  * 
@@ -48,11 +69,15 @@ export function GetOTP(account) {
 
 /**
  * Launch finds the running MapleStory window and injects the given
- * account's credentials into its login form. Does NOT spawn the
- * game — see SpawnGame for that. Returns:
+ * account's credentials into its login form via WM_CHAR (M8 path).
+ * Used as a fallback when the user already has the game open from
+ * outside our launcher — the argv-based SpawnGame can't help retroactively
+ * since credentials must be passed at spawn time.
  * 
+ * Returns:
  *   - LaunchResult{NoWindow: true} when no game window is open.
- *     Frontend should prompt the user to press 啟動遊戲 first.
+ *     FE handles this by re-querying GameState (the state may have
+ *     just transitioned away).
  *   - LaunchResult{AutoFilled: true} on successful inject.
  *   - LaunchResult{AutoFilled: false, OTP: ...} when the window
  *     exists but inject failed mid-sequence — frontend shows the
@@ -64,57 +89,47 @@ export function GetOTP(account) {
  */
 export function Launch(account) {
     return $Call.ByID(1857854220, account).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType0($result);
-    }));
-}
-
-/**
- * SpawnAndInject is the M10 1-click orchestrator: spawn the game (or
- * reuse a running one), wait for the login form's caret-burst signal,
- * inject credentials, and verify success by watching for the new
- * MapleStoryClassTW window that signals "logged into character
- * select." Each phase has a timeout; on any phase failing, the OTP
- * is returned for clipboard-paste fallback. See
- * docs/zazzy-painting-turing.md (M10 plan) and the eventprobe spike
- * logs (probe1–probe3) for the empirical basis of the timing
- * signals.
- * 
- * Reuses the building blocks from M8 (spawnFn + injectFn), M9
- * (pollForWindow + windowPIDFn), and M10a (runLoginWatcher). No new
- * Beanfun network endpoints touched.
- * @param {beanfun$0.Account} account
- * @returns {$CancellablePromise<$models.SpawnAndInjectResult>}
- */
-export function SpawnAndInject(account) {
-    return $Call.ByID(940168538, account).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType1($result);
     }));
 }
 
 /**
- * SpawnGame opens the configured MapleStory.exe but does not wait
- * for the login form. Returns nil when the game has been spawned
- * (or was already running).
+ * SpawnGame fetches an OTP for the given account and spawns
+ * MapleStory.exe with the canonical 5-arg positional argv that
+ * triggers Gamania's auto-login path. Game.exe takes the OTP from
+ * argv, validates server-side, and lands the user directly on
+ * character select — no login form rendered, no WM_CHAR injection,
+ * no form-ready timing window to navigate.
  * 
- * Split out from Launch so the frontend can drive an explicit
- * two-step flow: user clicks 啟動遊戲 (this method) → waits visually
- * for the login form → clicks 帶入帳密 per account (Launch). That
- * design sidesteps the +20s "form input-ready" gap between window
- * visibility and the textbox actually accepting WM_CHAR; once the
- * user can see the form they're guaranteed it's ready, and inject
- * lands within ~100ms.
+ * Returns when the spawn syscall has completed (typically <100ms);
+ * the game's loading + server handshake + character-select render
+ * happen afterward without the launcher's involvement. State
+ * transitions (window-appeared, process-exited) reach the FE via
+ * the gameStateChangedEvent push event, fired by the goroutine
+ * kicked off via restartWatcher.
  * 
- * Requires:
- *   - An active session (so we know there's a logged-in user
- *     intending to play; resolveGameExe is independent of session).
- *   - Either BEANFUN_GAME_EXE env var or the registry value to
- *     locate the game executable.
+ * Errors and their FE handling:
+ * 
+ *   - ErrLoginRequired: session expired or absent. FE shows QR
+ *     re-login.
+ *   - errGameAlreadyRunning: defensive — FE should route to Launch
+ *     when GameState.Running is true. Surface error directly.
+ *   - resolveGameExe errors: registry value missing or override env
+ *     var unset. Surface error directly.
+ *   - spawn / FetchOTP errors: real failures. Surface error directly.
+ * 
+ * The OTP byte slice is zeroed via defer before this method returns,
+ * matching the discipline of [[security-principles-beanfun]]. The
+ * OS-side argv copy in the spawned process's memory is unavoidable
+ * (kernel copies before we can scrub) but bounded by the OTP's
+ * single-use server-side ticket lifetime.
+ * @param {beanfun$0.Account} account
  * @returns {$CancellablePromise<void>}
  */
-export function SpawnGame() {
-    return $Call.ByID(4030112748);
+export function SpawnGame(account) {
+    return $Call.ByID(4030112748, account);
 }
 
 // Private type creation functions
-const $$createType0 = $models.LaunchResult.createFrom;
-const $$createType1 = $models.SpawnAndInjectResult.createFrom;
+const $$createType0 = $models.GameState.createFrom;
+const $$createType1 = $models.LaunchResult.createFrom;
