@@ -1,0 +1,189 @@
+package maple
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"sync/atomic"
+	"testing"
+	"time"
+)
+
+// withFakeNet swaps the package-level network primitives with
+// caller-controlled fakes and restores them on test cleanup.
+// Matches the swap-and-restore pattern fakeSpawn uses in
+// internal/launcher.
+type fakeNet struct {
+	dial   func(ctx context.Context, addr string) error
+	canary func(ctx context.Context, c *http.Client) error
+}
+
+func withFakeNet(t *testing.T, f *fakeNet) {
+	t.Helper()
+	origDial := dialerFn
+	origCanary := canaryFn
+	origDelay := offlineConfirmDelay
+
+	dialerFn = func(ctx context.Context, addr string) error {
+		return f.dial(ctx, addr)
+	}
+	canaryFn = func(ctx context.Context, c *http.Client) error {
+		return f.canary(ctx, c)
+	}
+	offlineConfirmDelay = 5 * time.Millisecond
+
+	t.Cleanup(func() {
+		dialerFn = origDial
+		canaryFn = origCanary
+		offlineConfirmDelay = origDelay
+	})
+}
+
+func TestCheckStatus_AnyHostOnline_MarksOnline(t *testing.T) {
+	withFakeNet(t, &fakeNet{
+		dial: func(_ context.Context, addr string) error {
+			if addr == gameServerHosts[0] {
+				return nil // success
+			}
+			return errors.New("timeout")
+		},
+		canary: func(context.Context, *http.Client) error {
+			t.Fatal("canary should NOT run when probe succeeds")
+			return nil
+		},
+	})
+
+	c := NewChecker(nil)
+	got := c.CheckStatus(context.Background())
+	if !got.Online {
+		t.Fatalf("Online = false, want true (host 0 succeeded)")
+	}
+	if got.LastChecked.IsZero() {
+		t.Errorf("LastChecked is zero, want set")
+	}
+}
+
+func TestCheckStatus_AllFail_CanaryFail_PreservesLast(t *testing.T) {
+	// Simulate: launcher's network is broken. Don't flip Status —
+	// preserve last known good.
+	withFakeNet(t, &fakeNet{
+		dial: func(context.Context, string) error {
+			return errors.New("timeout")
+		},
+		canary: func(context.Context, *http.Client) error {
+			return errors.New("our wifi is down")
+		},
+	})
+
+	c := NewChecker(nil)
+	// Seed an "online" state to verify it's preserved.
+	c.status = Status{Online: true, CheckedSince: time.Now()}
+	c.everChecked = true
+
+	got := c.CheckStatus(context.Background())
+	if !got.Online {
+		t.Errorf("Online = false, want true (canary failed → preserve last status)")
+	}
+}
+
+func TestCheckStatus_AllFail_CanaryOK_FlipsToOffline(t *testing.T) {
+	var dialCalls int32
+	withFakeNet(t, &fakeNet{
+		dial: func(context.Context, string) error {
+			atomic.AddInt32(&dialCalls, 1)
+			return errors.New("timeout") // always fail
+		},
+		canary: func(context.Context, *http.Client) error {
+			return nil // our network is fine
+		},
+	})
+
+	c := NewChecker(nil)
+	got := c.CheckStatus(context.Background())
+	if got.Online {
+		t.Errorf("Online = true, want false (all probes failed, canary OK)")
+	}
+	// Re-verify pass should have doubled the dial count vs a
+	// single-pass probe (2 hosts × 2 passes = 4 calls).
+	if calls := atomic.LoadInt32(&dialCalls); calls != int32(len(gameServerHosts))*2 {
+		t.Errorf("dial calls = %d, want %d (probe + re-verify)",
+			calls, len(gameServerHosts)*2)
+	}
+}
+
+func TestCheckStatus_AllFail_ReverifyRecovers_StaysOnline(t *testing.T) {
+	// Simulate: first probe pass times out, but re-verify succeeds
+	// (the transient blip the offlineConfirmDelay is designed to
+	// absorb).
+	var pass int32
+	withFakeNet(t, &fakeNet{
+		dial: func(_ context.Context, _ string) error {
+			p := atomic.AddInt32(&pass, 1)
+			// First pass (calls 1, 2) fails; second pass succeeds.
+			if p <= int32(len(gameServerHosts)) {
+				return errors.New("transient")
+			}
+			return nil
+		},
+		canary: func(context.Context, *http.Client) error { return nil },
+	})
+
+	c := NewChecker(nil)
+	got := c.CheckStatus(context.Background())
+	if !got.Online {
+		t.Errorf("Online = false, want true (re-verify recovered)")
+	}
+}
+
+func TestCheckStatus_StateChangeUpdatesCheckedSince(t *testing.T) {
+	var fail int32 = 1 // first call: 1 (fail), then 0 (success)
+	withFakeNet(t, &fakeNet{
+		dial: func(context.Context, string) error {
+			if atomic.LoadInt32(&fail) == 1 {
+				return errors.New("offline")
+			}
+			return nil
+		},
+		canary: func(context.Context, *http.Client) error { return nil },
+	})
+
+	c := NewChecker(nil)
+	first := c.CheckStatus(context.Background())
+	if first.Online {
+		t.Fatal("first check should have been offline")
+	}
+	firstSince := first.CheckedSince
+
+	time.Sleep(2 * time.Millisecond)
+	atomic.StoreInt32(&fail, 0) // server "comes online"
+
+	second := c.CheckStatus(context.Background())
+	if !second.Online {
+		t.Fatal("second check should have been online")
+	}
+	if !second.CheckedSince.After(firstSince) {
+		t.Errorf("CheckedSince = %v, want after %v (state flipped)",
+			second.CheckedSince, firstSince)
+	}
+}
+
+func TestCheckStatus_NoStateChange_KeepsCheckedSince(t *testing.T) {
+	withFakeNet(t, &fakeNet{
+		dial:   func(context.Context, string) error { return nil },
+		canary: func(context.Context, *http.Client) error { return nil },
+	})
+
+	c := NewChecker(nil)
+	first := c.CheckStatus(context.Background())
+	time.Sleep(2 * time.Millisecond)
+	second := c.CheckStatus(context.Background())
+
+	if !first.CheckedSince.Equal(second.CheckedSince) {
+		t.Errorf("CheckedSince changed despite stable state: first=%v second=%v",
+			first.CheckedSince, second.CheckedSince)
+	}
+	if !second.LastChecked.After(first.LastChecked) {
+		t.Errorf("LastChecked didn't advance: first=%v second=%v",
+			first.LastChecked, second.LastChecked)
+	}
+}

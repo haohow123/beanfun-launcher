@@ -1,5 +1,7 @@
 import { type ReactNode } from "react";
 
+import { useMapleStatusQuery } from "@/queries/mapleStatus";
+
 // MapleStory event banner hosted on Beanfun's CDN. Loaded at runtime
 // so we don't bundle Gamania artwork into the repo; the gradient
 // underneath is the fallback when the URL 404s (network down,
@@ -23,7 +25,32 @@ const BANNER_FALLBACK_GRADIENT =
  * visual continuity from login → home doesn't break across the
  * boundary.
  */
+// statusVisual maps the cached MapleService.ServerStatus() outcome
+// to a (dot colour, label text) pair. Three states only — green
+// "登入口開啟", red "登入口關閉中", grey "檢查中…" (covers initial
+// load + the "all probes failed AND canary failed" preserve-last
+// branch, both of which mean "we don't have a confident reading").
+type StatusVisual = { dotClass: string; label: string };
+
+function statusVisualFor(
+  isPending: boolean,
+  isError: boolean,
+  online: boolean | undefined,
+): StatusVisual {
+  if (isPending) return { dotClass: "bg-slate-300", label: "檢查中…" };
+  if (isError) return { dotClass: "bg-amber-300", label: "狀態未知" };
+  if (online) return { dotClass: "bg-emerald-300", label: "登入口開啟" };
+  return { dotClass: "bg-rose-400", label: "登入口關閉中" };
+}
+
 export function Hero({ action }: { action?: ReactNode }) {
+  const status = useMapleStatusQuery();
+  const visual = statusVisualFor(
+    status.isPending,
+    status.isError,
+    status.data?.online,
+  );
+
   return (
     <section
       className="relative min-h-[200px] overflow-hidden px-4 pt-5 pb-14"
@@ -44,8 +71,10 @@ export function Hero({ action }: { action?: ReactNode }) {
             新楓之谷 MapleStory
           </h1>
           <p className="mt-0.5 text-xs text-white/95 [text-shadow:0_1px_4px_rgba(0,0,0,0.55)]">
-            <span className="inline-block size-1.5 rounded-full bg-emerald-300 align-middle" />{" "}
-            伺服器狀態 (TODO)
+            <span
+              className={`inline-block size-1.5 rounded-full align-middle ${visual.dotClass}`}
+            />{" "}
+            {visual.label}
           </p>
         </div>
         {action && <div className="shrink-0">{action}</div>}

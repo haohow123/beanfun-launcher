@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/haohow123/beanfun-launcher/internal/bgtask"
 )
 
 // QRStart is the payload returned to the frontend when QR login begins.
@@ -39,10 +41,11 @@ type LoginService struct {
 	client    *BeanfunClient // minted fresh on each StartQRLogin
 	pendingQR *qrLoginInit
 	session   *Session // populated when finalize succeeds
-	// pingCancel stops the background keep-alive ping loop. nil
-	// when no session is active. Must be held under mu when read /
-	// reassigned.
-	pingCancel context.CancelFunc
+	// mgr owns the keep-alive heartbeat goroutine (registered under
+	// keepAliveTaskName). Constructor injection so tests can plug a
+	// fresh manager; main.go shares a single instance across all
+	// services so app shutdown can StopAll() them in one go.
+	mgr *bgtask.Manager
 }
 
 // Cadence of the background ping that keeps the Beanfun portal
@@ -57,18 +60,26 @@ type LoginService struct {
 const (
 	keepAliveIntervalOK   = 60 * time.Second
 	keepAliveIntervalFail = 10 * time.Second
+	// keepAliveTaskName is the bgtask registry key for the keep-alive
+	// heartbeat. Re-registering under the same name supersedes the
+	// previous loop (used when a fresh QR login replaces an active
+	// session); Reset() calls mgr.Stop(keepAliveTaskName) to halt.
+	keepAliveTaskName = "beanfun-keepalive"
 )
 
 // NewLoginService returns a LoginService configured for production TW
 // endpoints. The HTTP client is minted lazily inside StartQRLogin.
-func NewLoginService() *LoginService {
-	return &LoginService{endpoints: DefaultEndpoints()}
+// mgr is required (non-nil) — the keep-alive heartbeat registers
+// against it after a successful login.
+func NewLoginService(mgr *bgtask.Manager) *LoginService {
+	return &LoginService{endpoints: DefaultEndpoints(), mgr: mgr}
 }
 
 // NewLoginServiceWithEndpoints injects caller-provided endpoints. Tests
-// build them from an httptest.Server and pass them in.
-func NewLoginServiceWithEndpoints(endpoints Endpoints) *LoginService {
-	return &LoginService{endpoints: endpoints}
+// build them from an httptest.Server and pass them in. mgr is required
+// (non-nil) — tests typically pass a fresh `bgtask.New()`.
+func NewLoginServiceWithEndpoints(endpoints Endpoints, mgr *bgtask.Manager) *LoginService {
+	return &LoginService{endpoints: endpoints, mgr: mgr}
 }
 
 // StartQRLogin runs the init flow (getSessionKey → initQRLogin) and
@@ -95,15 +106,15 @@ func (s *LoginService) StartQRLogin() (QRStart, error) {
 		return QRStart{}, err
 	}
 
-	s.mu.Lock()
 	// Cancel any keep-alive loop still running from a previous
 	// session — re-issuing StartQRLogin after a successful login
 	// (e.g. user clicked 登出 and is logging back in) would
-	// otherwise leak the old loop.
-	if s.pingCancel != nil {
-		s.pingCancel()
-		s.pingCancel = nil
-	}
+	// otherwise leak the old loop. Done outside the s.mu critical
+	// section so we don't hold a service lock while waiting on
+	// the bgtask registry's internal mutex.
+	s.mgr.Stop(keepAliveTaskName)
+
+	s.mu.Lock()
 	s.client = client
 	s.pendingQR = init
 	s.session = nil
@@ -215,69 +226,54 @@ func (s *LoginService) Snapshot() (*BeanfunClient, *Session) {
 	return s.client, s.session
 }
 
-// Reset stops the keep-alive ping loop and drops the cached client +
+// Reset stops the keep-alive heartbeat and drops the cached client +
 // session. Used when an authenticated request comes back as
 // ErrSessionExpired so the next Snapshot returns nil and the
 // launcher service rejects further calls with ErrLoginRequired.
 func (s *LoginService) Reset() {
+	// Stop outside the s.mu critical section — see StartQRLogin
+	// comment for the same rationale.
+	s.mgr.Stop(keepAliveTaskName)
+
 	s.mu.Lock()
-	if s.pingCancel != nil {
-		s.pingCancel()
-		s.pingCancel = nil
-	}
 	s.client = nil
 	s.session = nil
 	s.pendingQR = nil
 	s.mu.Unlock()
 }
 
-// startKeepAliveLocked spawns the background ping goroutine for the
-// given client. Cancels any previously-running loop first so that
-// re-logins don't leak a goroutine.
+// startKeepAliveLocked registers the keep-alive heartbeat against
+// s.mgr. Re-registering (e.g. user logs out + logs in again under
+// the same LoginService instance) supersedes the previous loop —
+// bgtask cancels the prior goroutine on same-name re-registration.
 //
-// Must be called with s.mu held.
-func (s *LoginService) startKeepAliveLocked(client *BeanfunClient) {
-	if s.pingCancel != nil {
-		s.pingCancel()
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	s.pingCancel = cancel
-	go runKeepAlive(ctx, client)
-}
-
-// runKeepAlive pings the Beanfun portal on an adaptive schedule
-// until ctx is cancelled: keepAliveIntervalOK after each success,
-// keepAliveIntervalFail after each failure. The shorter retry
-// interval gives a transient network blip a chance to clear before
-// the server's idle timer reaps the session, without spamming the
-// endpoint when things are fine.
+// Must be called with s.mu held (matches the call site in
+// CheckQRLogin's pollOutcomeApproved branch, which holds s.mu to
+// store the session atomically with starting the loop).
+//
+// Adaptive cadence: 60 s after each successful ping, 10 s after
+// each failure. The shorter retry gives a transient network blip
+// a chance to clear before the server's ~55 min idle reaper kicks
+// in, without spamming the endpoint when things are fine.
 //
 // Both success and failure log at INFO. Pungin-style debug-only
 // success logging left users (and us) staring at hour-long logs
-// with no evidence the loop was alive; an alpha cycle is worth the
-// ~1 line/min of noise so a glance at launcher.log can confirm
+// with no evidence the loop was alive; an alpha cycle is worth
+// the ~1 line/min of noise so a glance at launcher.log can confirm
 // "keep-alive ticking" without instrumenting.
-func runKeepAlive(ctx context.Context, client *BeanfunClient) {
-	slog.Info("keep-alive: loop started",
+func (s *LoginService) startKeepAliveLocked(client *BeanfunClient) {
+	slog.Info("keep-alive: heartbeat registered",
 		"interval_ok", keepAliveIntervalOK, "interval_fail", keepAliveIntervalFail)
-	interval := keepAliveIntervalOK
-	for {
-		select {
-		case <-ctx.Done():
-			slog.Info("keep-alive: loop stopped")
-			return
-		case <-time.After(interval):
-			pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			err := client.Ping(pingCtx)
-			cancel()
-			if err != nil {
-				slog.Warn("keep-alive: ping failed (retrying sooner)",
-					"err", err, "next_interval", keepAliveIntervalFail)
-				interval = keepAliveIntervalFail
-			} else {
-				slog.Info("keep-alive: ping ok", "next_interval", keepAliveIntervalOK)
-				interval = keepAliveIntervalOK
-			}
+	s.mgr.Heartbeat(keepAliveTaskName, keepAliveIntervalOK, func(ctx context.Context) time.Duration {
+		pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		err := client.Ping(pingCtx)
+		cancel()
+		if err != nil {
+			slog.Warn("keep-alive: ping failed (retrying sooner)",
+				"err", err, "next_interval", keepAliveIntervalFail)
+			return keepAliveIntervalFail
 		}
-	}
+		slog.Info("keep-alive: ping ok", "next_interval", keepAliveIntervalOK)
+		return keepAliveIntervalOK
+	})
 }

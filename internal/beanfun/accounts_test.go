@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/haohow123/beanfun-launcher/internal/bgtask"
 )
 
 func accountsListHTML(rows ...string) string {
@@ -276,7 +278,7 @@ func TestLoginService_GetAccounts_NoSession(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.NewServeMux())
 	t.Cleanup(srv.Close)
-	s := NewLoginServiceWithEndpoints(stubEndpoints(t, srv))
+	s := NewLoginServiceWithEndpoints(stubEndpoints(t, srv), bgtask.New())
 	_, err := s.GetAccounts()
 	var le *LoginError
 	if !errors.As(err, &le) || le.Kind != KindLoginRequired {
@@ -295,7 +297,7 @@ func TestLoginService_GetAccounts_HappyPath(t *testing.T) {
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	s := NewLoginServiceWithEndpoints(stubEndpoints(t, srv))
+	s := NewLoginServiceWithEndpoints(stubEndpoints(t, srv), bgtask.New())
 
 	if _, err := s.StartQRLogin(); err != nil {
 		t.Fatalf("StartQRLogin: %v", err)

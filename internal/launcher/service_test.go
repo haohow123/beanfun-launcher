@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/haohow123/beanfun-launcher/internal/beanfun"
+	"github.com/haohow123/beanfun-launcher/internal/bgtask"
 )
 
 // fakeSpawn records the path and args last passed to spawnFn so tests
@@ -58,8 +59,9 @@ func TestLauncherService_Launch_NoSession(t *testing.T) {
 	withFakeSpawn(t)
 	withEnv(t, gameExeEnvVar, "C:\\Game.exe")
 
-	login := beanfun.NewLoginService()
-	svc := NewLauncherService(login)
+	mgr := bgtask.New()
+	login := beanfun.NewLoginService(mgr)
+	svc := NewLauncherService(login, mgr)
 
 	_, err := svc.Launch(beanfun.Account{SID: "s", SSN: "1", SName: "n"})
 	var le *beanfun.LoginError
@@ -85,8 +87,9 @@ func TestLauncherService_Launch_GameExeMissing_NoSessionStillTakesPrecedence(t *
 	withFakeSpawn(t)
 	withEnv(t, gameExeEnvVar, "")
 
-	login := beanfun.NewLoginService()
-	svc := NewLauncherService(login)
+	mgr := bgtask.New()
+	login := beanfun.NewLoginService(mgr)
+	svc := NewLauncherService(login, mgr)
 
 	_, err := svc.Launch(beanfun.Account{SID: "s", SSN: "1", SName: "n"})
 	var le *beanfun.LoginError

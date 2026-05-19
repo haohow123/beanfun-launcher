@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/haohow123/beanfun-launcher/internal/bgtask"
 )
 
 // fullInitMux stubs the 3 routes needed for a complete StartQRLogin:
@@ -66,7 +68,7 @@ func TestLoginService_StartQRLogin(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(fullInitMux())
 	t.Cleanup(srv.Close)
-	s := NewLoginServiceWithEndpoints(stubEndpoints(t, srv))
+	s := NewLoginServiceWithEndpoints(stubEndpoints(t, srv), bgtask.New())
 
 	got, err := s.StartQRLogin()
 	if err != nil {
@@ -86,7 +88,7 @@ func TestLoginService_CheckQRLogin_NoActiveSession(t *testing.T) {
 	// signal for the frontend to call StartQRLogin again).
 	srv := httptest.NewServer(http.NewServeMux())
 	t.Cleanup(srv.Close)
-	s := NewLoginServiceWithEndpoints(stubEndpoints(t, srv))
+	s := NewLoginServiceWithEndpoints(stubEndpoints(t, srv), bgtask.New())
 
 	got, err := s.CheckQRLogin()
 	if err != nil {
@@ -101,7 +103,7 @@ func TestLoginService_CheckQRLogin_PollPending(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(serviceTestMux("Wait Login", false))
 	t.Cleanup(srv.Close)
-	s := NewLoginServiceWithEndpoints(stubEndpoints(t, srv))
+	s := NewLoginServiceWithEndpoints(stubEndpoints(t, srv), bgtask.New())
 
 	if _, err := s.StartQRLogin(); err != nil {
 		t.Fatalf("StartQRLogin: %v", err)
@@ -119,7 +121,7 @@ func TestLoginService_CheckQRLogin_PollExpiredClearsState(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(serviceTestMux("Token Expired", false))
 	t.Cleanup(srv.Close)
-	s := NewLoginServiceWithEndpoints(stubEndpoints(t, srv))
+	s := NewLoginServiceWithEndpoints(stubEndpoints(t, srv), bgtask.New())
 
 	if _, err := s.StartQRLogin(); err != nil {
 		t.Fatalf("StartQRLogin: %v", err)
@@ -145,7 +147,7 @@ func TestLoginService_CheckQRLogin_PollApprovedRunsFinalize(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(serviceTestMux("Success", true))
 	t.Cleanup(srv.Close)
-	s := NewLoginServiceWithEndpoints(stubEndpoints(t, srv))
+	s := NewLoginServiceWithEndpoints(stubEndpoints(t, srv), bgtask.New())
 
 	if _, err := s.StartQRLogin(); err != nil {
 		t.Fatalf("StartQRLogin: %v", err)
@@ -181,7 +183,7 @@ func TestLoginService_CheckQRLogin_PollServerError(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(serviceTestMux("Mystery Status", false))
 	t.Cleanup(srv.Close)
-	s := NewLoginServiceWithEndpoints(stubEndpoints(t, srv))
+	s := NewLoginServiceWithEndpoints(stubEndpoints(t, srv), bgtask.New())
 
 	if _, err := s.StartQRLogin(); err != nil {
 		t.Fatalf("StartQRLogin: %v", err)
@@ -197,7 +199,7 @@ func TestLoginService_StartQRLogin_ResetsState(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(serviceTestMux("Wait Login", false))
 	t.Cleanup(srv.Close)
-	s := NewLoginServiceWithEndpoints(stubEndpoints(t, srv))
+	s := NewLoginServiceWithEndpoints(stubEndpoints(t, srv), bgtask.New())
 
 	if _, err := s.StartQRLogin(); err != nil {
 		t.Fatalf("first StartQRLogin: %v", err)
