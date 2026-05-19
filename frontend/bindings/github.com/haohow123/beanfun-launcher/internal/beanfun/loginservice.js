@@ -41,7 +41,7 @@ export function GetAccounts() {
 }
 
 /**
- * Reset stops the keep-alive ping loop and drops the cached client +
+ * Reset stops the keep-alive heartbeat and drops the cached client +
  * session. Used when an authenticated request comes back as
  * ErrSessionExpired so the next Snapshot returns nil and the
  * launcher service rejects further calls with ErrLoginRequired.

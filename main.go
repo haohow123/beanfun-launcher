@@ -10,7 +10,9 @@ import (
 	"path/filepath"
 
 	"github.com/haohow123/beanfun-launcher/internal/beanfun"
+	"github.com/haohow123/beanfun-launcher/internal/bgtask"
 	"github.com/haohow123/beanfun-launcher/internal/launcher"
+	"github.com/haohow123/beanfun-launcher/internal/maple"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
@@ -29,8 +31,20 @@ func main() {
 		defer func() { _ = logFile.Close() }()
 	}
 
-	loginSvc := beanfun.NewLoginService()
-	launcherSvc := launcher.NewLauncherService(loginSvc)
+	// Background-task manager — shared across services so app shutdown
+	// hooks one StopAll(). Each service registers its goroutines
+	// (beanfun keep-alive heartbeat, launcher game-exit watcher,
+	// MapleStory status heartbeat) under unique names; mgr supersedes
+	// per-name on re-registration. See internal/bgtask docs.
+	mgr := bgtask.New()
+
+	loginSvc := beanfun.NewLoginService(mgr)
+	launcherSvc := launcher.NewLauncherService(loginSvc, mgr)
+	// MapleService starts its status-probe heartbeat immediately
+	// (firstDelay=0 in NewMapleService) so the Hero indicator
+	// transitions from "checking…" to a real green/red dot within
+	// seconds of app start, not minutes.
+	mapleSvc := maple.NewMapleService(mgr, nil)
 
 	app := application.New(application.Options{
 		Name:        "beanfun-launcher",
@@ -38,6 +52,7 @@ func main() {
 		Services: []application.Service{
 			application.NewService(loginSvc),
 			application.NewService(launcherSvc),
+			application.NewService(mapleSvc),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
@@ -60,6 +75,10 @@ func main() {
 		BackgroundColour: application.NewRGB(27, 38, 54),
 		URL:              "/",
 	})
+
+	// Stop every background goroutine on app shutdown so we don't
+	// leak watchers / heartbeats past process exit.
+	app.OnShutdown(mgr.StopAll)
 
 	if err := app.Run(); err != nil {
 		log.Fatal(err)

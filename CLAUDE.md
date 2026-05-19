@@ -24,7 +24,9 @@ Existing community launchers (e.g., pungin/Beanfun) work, but they require trust
 These are the reason this project exists. Never violate:
 
 1. Never store passwords in plain text. Use OS keyring (macOS Keychain / Windows DPAPI) via a vetted library.
-2. Network requests ONLY to Gamania-owned domains (`bfweb.gamania.com`, `tw.beanfun.com`, etc.). No telemetry, analytics, or "phone home" endpoints.
+2. Network requests ONLY to Gamania-owned endpoints. No telemetry, analytics, or "phone home" endpoints.
+    - HTTP domains: `bfweb.gamania.com`, `tw.beanfun.com`, `tw-event.beanfun.com`, `tw.hicdn.beanfun.com`, `tw.newlogin.beanfun.com`, etc.
+    - Game-server TCP probe: connections to `202.80.104.24-29` on port `8484` are permitted **for status detection only** (`internal/maple/status.go`). These IPs are Gamania-owned MapleStory login servers (same list the TMSBug_v2 Discord bot tracks); the launcher sends TCP SYN, on success closes immediately, no application data transmitted. Update the IP list in `gameServerHosts` if Gamania rotates them.
 3. Clear sensitive data from memory as soon as possible. Tokens used to launch a game are zeroed after launch.
 4. No third-party login providers. Direct to Gamania only.
 5. Prefer Go standard library and small focused packages. Reject dependencies that bundle unnecessary network capability.
