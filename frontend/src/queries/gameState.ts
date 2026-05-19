@@ -28,6 +28,14 @@ export function useGameStateQuery() {
     queryKey: gameStateQueryKey,
     queryFn: () => LauncherService.GetGameState(),
     staleTime: Infinity,
+    // External transitions (game opened/closed outside the launcher)
+    // don't fire game:state-changed — the event only covers our own
+    // SpawnGame + watcher path. A re-probe whenever the launcher
+    // regains window focus catches those missed updates. Overrides
+    // the global queryClient default (refetchOnWindowFocus: false)
+    // since this query is specifically the source of truth for the
+    // smart-button affordance.
+    refetchOnWindowFocus: true,
   });
 }
 
