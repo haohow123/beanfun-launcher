@@ -79,6 +79,40 @@ func TestLauncherService_Launch_NoSession(t *testing.T) {
 // no-session + env-var checks, and the real-Beanfun smoke (`task
 // dev` → click account → game window) for the integration.
 
+func TestLauncherService_SpawnAndInject_NoSession(t *testing.T) {
+	withFakeSpawn(t)
+	withEnv(t, gameExeEnvVar, "C:\\Game.exe")
+
+	mgr := bgtask.New()
+	login := beanfun.NewLoginService(mgr)
+	svc := NewLauncherService(login, mgr)
+
+	_, err := svc.SpawnAndInject(beanfun.Account{SID: "s", SSN: "1", SName: "n"})
+	var le *beanfun.LoginError
+	if !errors.As(err, &le) || le.Kind != beanfun.KindLoginRequired {
+		t.Errorf("got %v, want beanfun.KindLoginRequired", err)
+	}
+}
+
+func TestLauncherService_SpawnAndInject_GameExeMissing_NoSessionStillTakesPrecedence(t *testing.T) {
+	// Documents the check order: no session takes precedence over
+	// missing env var, matching the same invariant Launch enforces.
+	// A user who logs out and clicks 啟動並帶入 shouldn't be told
+	// "set BEANFUN_GAME_EXE first" — they should see "log in first".
+	withFakeSpawn(t)
+	withEnv(t, gameExeEnvVar, "")
+
+	mgr := bgtask.New()
+	login := beanfun.NewLoginService(mgr)
+	svc := NewLauncherService(login, mgr)
+
+	_, err := svc.SpawnAndInject(beanfun.Account{SID: "s", SSN: "1", SName: "n"})
+	var le *beanfun.LoginError
+	if !errors.As(err, &le) || le.Kind != beanfun.KindLoginRequired {
+		t.Errorf("got %v, want beanfun.KindLoginRequired (check order: session before env var)", err)
+	}
+}
+
 func TestLauncherService_Launch_GameExeMissing_NoSessionStillTakesPrecedence(t *testing.T) {
 	// Documents the check order: no session takes precedence over
 	// missing env var. A user who logs out and tries to launch

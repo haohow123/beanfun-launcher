@@ -186,6 +186,192 @@ func isSessionExpired(err error) bool {
 	return errors.As(err, &le) && le.Kind == beanfun.KindSessionExpired
 }
 
+// SpawnAndInjectResult signals the outcome reported back to the
+// frontend for the M10 1-click 啟動並帶入 path.
+//
+//   - AutoFilled=true: spawn + form-ready + inject + login-success
+//     transition all confirmed via Win32 events. The OTP was
+//     consumed by Beanfun's auth backend; no OTP exposed to
+//     frontend.
+//   - AutoFilled=false: any leg failed; OTP populated so the
+//     frontend can put it on the clipboard for manual paste.
+//     FailReason describes which leg.
+//
+// FailReason values: "no-window" | "form-not-ready" |
+// "inject-failed" | "no-transition". Empty when AutoFilled=true.
+type SpawnAndInjectResult struct {
+	AutoFilled bool   `json:"autoFilled"`
+	OTP        string `json:"otp,omitempty"`
+	FailReason string `json:"failReason,omitempty"`
+}
+
+// Tunable timeouts for SpawnAndInject. Vars (not consts) so tests
+// can override to keep runs fast.
+var (
+	spawnAndInjectWindowTimeout    = 30 * time.Second // game window must appear after spawn
+	spawnAndInjectOTPTimeout       = 30 * time.Second // FetchOTP must complete
+	spawnAndInjectFormReadyTimeout = 60 * time.Second // form must render + caret burst
+	spawnAndInjectLoggedInTimeout  = 10 * time.Second // post-inject transition window
+)
+
+// SpawnAndInject is the M10 1-click orchestrator: spawn the game (or
+// reuse a running one), wait for the login form's caret-burst signal,
+// inject credentials, and verify success by watching for the new
+// MapleStoryClassTW window that signals "logged into character
+// select." Each phase has a timeout; on any phase failing, the OTP
+// is returned for clipboard-paste fallback. See
+// docs/zazzy-painting-turing.md (M10 plan) and the eventprobe spike
+// logs (probe1–probe3) for the empirical basis of the timing
+// signals.
+//
+// Reuses the building blocks from M8 (spawnFn + injectFn), M9
+// (pollForWindow + windowPIDFn), and M10a (runLoginWatcher). No new
+// Beanfun network endpoints touched.
+func (s *LauncherService) SpawnAndInject(account beanfun.Account) (SpawnAndInjectResult, error) {
+	s.mu.Lock()
+	client, session := s.login.Snapshot()
+	s.mu.Unlock()
+
+	if client == nil || session == nil {
+		return SpawnAndInjectResult{}, beanfun.ErrLoginRequired()
+	}
+
+	gameExe, err := resolveGameExe()
+	if err != nil {
+		return SpawnAndInjectResult{}, err
+	}
+
+	// 1. Spawn (or reuse existing game window).
+	loginHwnd := findGameWindowFn()
+	if loginHwnd == 0 {
+		spawnCtx, spawnCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := spawnFn(spawnCtx, gameExe, nil); err != nil {
+			spawnCancel()
+			slog.Error("SpawnAndInject: spawnFn failed", "err", err)
+			return SpawnAndInjectResult{}, err
+		}
+		spawnCancel()
+		slog.Info("SpawnAndInject: game spawned", "exe", gameExe)
+
+		windowCtx, windowCancel := context.WithTimeout(context.Background(), spawnAndInjectWindowTimeout)
+		var ok bool
+		loginHwnd, ok = pollForWindow(windowCtx)
+		windowCancel()
+		if !ok {
+			slog.Warn("SpawnAndInject: window never appeared")
+			return SpawnAndInjectResult{FailReason: "no-window"}, nil
+		}
+	} else {
+		slog.Info("SpawnAndInject: game already running, reusing window", "hwnd", loginHwnd)
+	}
+
+	pid, err := windowPIDFn(loginHwnd)
+	if err != nil {
+		slog.Error("SpawnAndInject: windowPIDFn failed", "err", err, "hwnd", loginHwnd)
+		return SpawnAndInjectResult{}, err
+	}
+
+	// 2. Start the login watcher. ctx scopes the watcher's lifetime
+	//    to this method — it'll be cancelled (cleanly via the cleanup
+	//    closure inside runLoginWatcher's goroutine) on return.
+	watchCtx, watchCancel := context.WithCancel(context.Background())
+	defer watchCancel()
+	events := runLoginWatcher(watchCtx, loginHwnd, pid)
+
+	// 3. Kick off FetchOTP in parallel with the form-ready wait —
+	//    OTP fetch (~3s) typically completes well before form-ready
+	//    (~11+s), but parallel is strictly faster than sequential
+	//    even when not.
+	type otpRes struct {
+		otp beanfun.OTPResult
+		err error
+	}
+	otpCh := make(chan otpRes, 1)
+	go func() {
+		otpCtx, cancel := context.WithTimeout(context.Background(), spawnAndInjectOTPTimeout)
+		defer cancel()
+		o, e := client.FetchOTP(otpCtx, session, account)
+		otpCh <- otpRes{otp: o, err: e}
+	}()
+
+	// 4. Wait for the form-ready signal (caret burst) — or timeout.
+	formReadyTimedOut := false
+	select {
+	case ev := <-events:
+		if ev != formReady {
+			slog.Warn("SpawnAndInject: unexpected event before formReady", "event", ev)
+		}
+	case <-time.After(spawnAndInjectFormReadyTimeout):
+		slog.Warn("SpawnAndInject: form-not-ready timeout",
+			"timeout", spawnAndInjectFormReadyTimeout)
+		formReadyTimedOut = true
+	}
+
+	// 5. Always drain the OTP result, regardless of form-ready outcome
+	//    — we need it for the success inject AND for the fallback
+	//    clipboard path. By this point the OTP goroutine has either
+	//    completed (typical) or is about to (worst case: hit its own
+	//    30s timeout).
+	res := <-otpCh
+	if res.err != nil {
+		if isSessionExpired(res.err) {
+			slog.Warn("SpawnAndInject: session expired", "sid", account.SID)
+			s.login.Reset()
+			return SpawnAndInjectResult{}, beanfun.ErrLoginRequired()
+		}
+		slog.Error("SpawnAndInject: FetchOTP failed", "err", res.err)
+		return SpawnAndInjectResult{}, res.err
+	}
+	defer beanfun.Zero(res.otp.Token)
+
+	if formReadyTimedOut {
+		return SpawnAndInjectResult{
+			OTP:        string(res.otp.Token),
+			FailReason: "form-not-ready",
+		}, nil
+	}
+
+	// 6. Inject credentials. injectFn does SetForegroundWindow +
+	//    WM_CHAR sequence + RETURN synchronously; returns when the
+	//    last char is posted.
+	if ierr := injectFn(loginHwnd, []byte(account.SID), res.otp.Token); ierr != nil {
+		slog.Error("SpawnAndInject: inject failed, falling back to manual paste",
+			"err", ierr, "sid", account.SID)
+		return SpawnAndInjectResult{
+			OTP:        string(res.otp.Token),
+			FailReason: "inject-failed",
+		}, nil
+	}
+	slog.Info("SpawnAndInject: credentials injected, awaiting login transition",
+		"sid", account.SID)
+
+	// 7. Wait for the login-success signal (new MapleStoryClassTW
+	//    HWND, fired by the watcher's onLoggedIn callback). probe3
+	//    measured ~6.5s between RETURN and transition. 10s budget
+	//    covers a slow network round-trip + game animation.
+	select {
+	case ev := <-events:
+		if ev != loggedIn {
+			slog.Warn("SpawnAndInject: unexpected event after inject",
+				"event", ev, "sid", account.SID)
+			return SpawnAndInjectResult{
+				OTP:        string(res.otp.Token),
+				FailReason: "no-transition",
+			}, nil
+		}
+		slog.Info("SpawnAndInject: login success confirmed",
+			"sid", account.SID)
+		return SpawnAndInjectResult{AutoFilled: true}, nil
+	case <-time.After(spawnAndInjectLoggedInTimeout):
+		slog.Warn("SpawnAndInject: no-transition timeout — credentials may not have landed",
+			"sid", account.SID)
+		return SpawnAndInjectResult{
+			OTP:        string(res.otp.Token),
+			FailReason: "no-transition",
+		}, nil
+	}
+}
+
 // GetOTP runs the OTP fetch flow and returns the plaintext token for
 // display + clipboard copy on the frontend. The "show credentials so
 // the user can paste into another launcher" path that runs alongside
