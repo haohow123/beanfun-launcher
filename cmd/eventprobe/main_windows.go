@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -31,14 +32,15 @@ func main() {
 	runtime.LockOSThread()
 
 	var (
-		className string
+		classFlag string
 		pidFlag   uint
 	)
-	flag.StringVar(&className, "class", "", "window class name to find (FindWindowW first match)")
+	flag.StringVar(&classFlag, "class", "", "window class name(s) to find — comma-separated for fallback list (e.g. \"MapleStoryClass,MapleStoryClassTW\")")
 	flag.UintVar(&pidFlag, "pid", 0, "target process ID (enumerate windows for the first matching top-level)")
 	flag.Parse()
 
-	hwnd, pid, err := findTargetWindow(className, uint32(pidFlag))
+	classNames := splitCSV(classFlag)
+	hwnd, pid, err := findTargetWindow(classNames, uint32(pidFlag))
 	if err != nil {
 		log.Fatalf("eventprobe: %v", err)
 	}
@@ -76,4 +78,22 @@ func main() {
 	// above) or some fatal GetMessage error. It returns when the
 	// message pump exits.
 	runMessageLoop(nil)
+}
+
+// splitCSV turns "A,B, C" into ["A", "B", "C"]. Empty input → empty
+// slice. Whitespace around each comma is trimmed so the user can be
+// loose with the --class arg.
+func splitCSV(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
