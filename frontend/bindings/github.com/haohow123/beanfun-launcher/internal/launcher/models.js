@@ -64,3 +64,60 @@ export class LaunchResult {
         return new LaunchResult(/** @type {Partial<LaunchResult>} */($$parsedSource));
     }
 }
+
+/**
+ * SpawnAndInjectResult signals the outcome reported back to the
+ * frontend for the M10 1-click 啟動並帶入 path.
+ * 
+ *   - AutoFilled=true: spawn + form-ready + inject + login-success
+ *     transition all confirmed via Win32 events. The OTP was
+ *     consumed by Beanfun's auth backend; no OTP exposed to
+ *     frontend.
+ *   - AutoFilled=false: any leg failed; OTP populated so the
+ *     frontend can put it on the clipboard for manual paste.
+ *     FailReason describes which leg.
+ * 
+ * FailReason values: "no-window" | "form-not-ready" |
+ * "inject-failed" | "no-transition". Empty when AutoFilled=true.
+ */
+export class SpawnAndInjectResult {
+    /**
+     * Creates a new SpawnAndInjectResult instance.
+     * @param {Partial<SpawnAndInjectResult>} [$$source = {}] - The source object to create the SpawnAndInjectResult.
+     */
+    constructor($$source = {}) {
+        if (!("autoFilled" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["autoFilled"] = false;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * @member
+             * @type {string | undefined}
+             */
+            this["otp"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * @member
+             * @type {string | undefined}
+             */
+            this["failReason"] = undefined;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new SpawnAndInjectResult instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {SpawnAndInjectResult}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new SpawnAndInjectResult(/** @type {Partial<SpawnAndInjectResult>} */($$parsedSource));
+    }
+}

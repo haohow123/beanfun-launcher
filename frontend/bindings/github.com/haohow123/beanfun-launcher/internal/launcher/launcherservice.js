@@ -69,6 +69,29 @@ export function Launch(account) {
 }
 
 /**
+ * SpawnAndInject is the M10 1-click orchestrator: spawn the game (or
+ * reuse a running one), wait for the login form's caret-burst signal,
+ * inject credentials, and verify success by watching for the new
+ * MapleStoryClassTW window that signals "logged into character
+ * select." Each phase has a timeout; on any phase failing, the OTP
+ * is returned for clipboard-paste fallback. See
+ * docs/zazzy-painting-turing.md (M10 plan) and the eventprobe spike
+ * logs (probe1–probe3) for the empirical basis of the timing
+ * signals.
+ * 
+ * Reuses the building blocks from M8 (spawnFn + injectFn), M9
+ * (pollForWindow + windowPIDFn), and M10a (runLoginWatcher). No new
+ * Beanfun network endpoints touched.
+ * @param {beanfun$0.Account} account
+ * @returns {$CancellablePromise<$models.SpawnAndInjectResult>}
+ */
+export function SpawnAndInject(account) {
+    return $Call.ByID(940168538, account).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType1($result);
+    }));
+}
+
+/**
  * SpawnGame opens the configured MapleStory.exe but does not wait
  * for the login form. Returns nil when the game has been spawned
  * (or was already running).
@@ -94,3 +117,4 @@ export function SpawnGame() {
 
 // Private type creation functions
 const $$createType0 = $models.LaunchResult.createFrom;
+const $$createType1 = $models.SpawnAndInjectResult.createFrom;
