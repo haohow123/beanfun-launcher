@@ -1,7 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { Events } from "@wailsio/runtime";
 import { useSetAtom } from "jotai";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { type Account } from "@bindings/beanfun";
 import { AppShell } from "@/components/layout/AppShell";
@@ -10,8 +9,13 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useAccountsQuery } from "@/queries/accounts";
 import {
+  gameStateQueryKey,
+  useGameStateQuery,
+} from "@/queries/gameState";
+import {
   useFetchOTPMutation,
-  useSpawnAndInjectMutation,
+  useLaunchGameMutation,
+  useSpawnGameMutation,
 } from "@/queries/launch";
 import { loggedInAtom } from "@/state/auth";
 
@@ -20,22 +24,31 @@ interface FallbackOTP {
   otp: string;
 }
 
-type LaunchStatus = "idle" | "pending" | "error" | "success" | "fallback";
+type PrimaryStatus =
+  | "idle"
+  | "spawning"
+  | "injecting"
+  | "running"
+  | "fallback"
+  | "error";
 
-// statusPillFor maps the per-account launch state to the top-right
-// pill on the card. Returning null hides the pill (idle).
 function statusPillFor(
-  s: LaunchStatus,
+  s: PrimaryStatus,
 ): { label: string; className: string } | null {
   switch (s) {
-    case "pending":
+    case "spawning":
       return {
-        label: "啟動並帶入中…",
+        label: "啟動中…",
         className: "bg-blue-500/15 text-blue-700 dark:text-blue-300",
       };
-    case "success":
+    case "injecting":
       return {
-        label: "✓ 已帶入",
+        label: "帶入中…",
+        className: "bg-blue-500/15 text-blue-700 dark:text-blue-300",
+      };
+    case "running":
+      return {
+        label: "遊戲執行中",
         className:
           "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
       };
@@ -51,44 +64,18 @@ function statusPillFor(
   }
 }
 
-// failReasonHint converts the backend's failReason code into a
-// user-readable line shown above the fallback OTP. Each variant
-// matches one SpawnAndInject failure path; an unknown code falls
-// back to a generic message.
-function failReasonHint(reason: string): string {
-  switch (reason) {
-    case "no-window":
-      return "找不到遊戲視窗,改用下方 OTP 手動貼上。";
-    case "form-not-ready":
-      return "登入畫面遲遲沒就緒,改用下方 OTP 手動貼上。";
-    case "inject-failed":
-      return "鍵盤注入失敗,改用下方 OTP 手動貼上。";
-    case "no-transition":
-      return "未偵測到登入成功,可能 OTP 已輸入但要再按一次 Enter,或改用下方 OTP 手動貼上。";
-    default:
-      return "自動帶入失敗,改用下方 OTP 手動貼上。";
-  }
-}
-
 export function HomePage() {
   const setLoggedIn = useSetAtom(loggedInAtom);
   const qc = useQueryClient();
   const accounts = useAccountsQuery();
-  const spawnAndInject = useSpawnAndInjectMutation();
+  const gameState = useGameStateQuery();
+  const spawnGame = useSpawnGameMutation();
+  const launchGame = useLaunchGameMutation();
   const fetchOTP = useFetchOTPMutation();
   const [copiedSid, setCopiedSid] = useState<string | null>(null);
   const [fallbackOTP, setFallbackOTP] = useState<FallbackOTP | null>(null);
 
-  // Reset the per-account 啟動並帶入 state when the watcher reports
-  // the game process exited (issue #62 — same hook M9's bgtask
-  // watcher emits). User coming back to launcher sees a clean
-  // button instead of stale "✓ 已帶入" from the last session.
-  useEffect(() => {
-    return Events.On("game:exited", () => {
-      spawnAndInject.reset();
-      setFallbackOTP(null);
-    });
-  }, [spawnAndInject]);
+  const isGameRunning = gameState.data?.running ?? false;
 
   function logout() {
     qc.clear();
@@ -99,12 +86,9 @@ export function HomePage() {
     accounts.refetch();
   }
 
-  // The backend detects an expired Beanfun session (server returns
-  // 「尚未登入」) and folds it into ErrLoginRequired after Reset()ing
-  // its local state. Match that on the frontend and force the user
-  // back to QR login automatically — same effect as clicking 登出,
-  // wrapped so we don't have to re-implement it at every mutation
-  // onError site.
+  // The backend folds session expiry into ErrLoginRequired (server
+  // returns 「尚未登入」, backend Reset()s its local state). Match
+  // that on the frontend by triggering the same path as 登出.
   function handleMutationError(err: unknown) {
     if (err instanceof Error && err.message.includes("login required")) {
       logout();
@@ -119,16 +103,9 @@ export function HomePage() {
     );
   }
 
-  // Why ClipboardItem + Promise<Blob> instead of plain
-  // `await fetchOTP.mutateAsync(...)` then `writeText(...)`:
-  // navigator.clipboard.writeText requires the document's "transient
-  // user activation" — set by a click event handler — to be still
-  // valid when the call is made. WebView2 / WKWebView treat the
-  // activation as consumed once you `await`, so a writeText after a
-  // 1-2s OTP fetch gets silently rejected. clipboard.write with a
-  // ClipboardItem whose blob is a pending Promise tells the browser
-  // "hold activation; resolve later" — which keeps the activation
-  // budget for the actual write.
+  // ClipboardItem + Promise<Blob> preserves transient user activation
+  // across the async OTP fetch — WebView2 invalidates activation on
+  // await, so plain `writeText` after fetch gets silently rejected.
   function copyCredentials(acc: Account) {
     const blobPromise = fetchOTP
       .mutateAsync(acc)
@@ -143,16 +120,24 @@ export function HomePage() {
       .catch((e) => console.error("clipboard write failed:", e));
   }
 
-  function launchWithInject(acc: Account) {
+  function spawn(acc: Account) {
     setFallbackOTP(null);
-    spawnAndInject.mutate(acc, {
+    spawnGame.mutate(acc, {
+      onError: handleMutationError,
+    });
+  }
+
+  function launch(acc: Account) {
+    setFallbackOTP(null);
+    launchGame.mutate(acc, {
       onSuccess: (result) => {
-        // autoFilled=false is the fallback path: backend already
-        // declined to submit credentials (form not ready, etc.)
-        // and surfaced the OTP for clipboard-paste. otp is empty
-        // on the happy path so we never expose it when the auto
-        // flow succeeded.
-        if (!result.autoFilled && result.otp) {
+        if (result.noWindow) {
+          // Race: state event said running but window vanished
+          // between cache update and mutation fire. Re-query state.
+          qc.invalidateQueries({ queryKey: gameStateQueryKey });
+          return;
+        }
+        if (result.autoFilled === false && result.otp) {
           setFallbackOTP({ sid: acc.sid, otp: result.otp });
         }
       },
@@ -167,17 +152,33 @@ export function HomePage() {
       .catch((e) => console.error("clipboard write failed:", e));
   }
 
-  function launchStatusFor(acc: Account): LaunchStatus {
-    if (spawnAndInject.variables?.sid !== acc.sid) return "idle";
-    if (spawnAndInject.isPending) return "pending";
-    if (spawnAndInject.isError) return "error";
-    if (spawnAndInject.isSuccess) {
-      return spawnAndInject.data?.autoFilled ? "success" : "fallback";
+  function primaryStatusFor(acc: Account): PrimaryStatus {
+    if (spawnGame.variables?.sid === acc.sid) {
+      if (spawnGame.isPending) return "spawning";
+      if (spawnGame.isError) return "error";
     }
+    if (launchGame.variables?.sid === acc.sid) {
+      if (launchGame.isPending) return "injecting";
+      if (launchGame.isError) return "error";
+      if (
+        launchGame.isSuccess &&
+        launchGame.data?.autoFilled === false &&
+        launchGame.data?.otp
+      ) {
+        return "fallback";
+      }
+    }
+    // Pill shows "遊戲執行中" globally when state says running, so the
+    // user can confirm at a glance that something is launched. Each
+    // account's own primary mutation state still wins (above) when
+    // they're actively spawning / injecting.
+    if (isGameRunning) return "running";
     return "idle";
   }
 
-  function copyStatusFor(acc: Account): "idle" | "pending" | "error" | "copied" {
+  function copyStatusFor(
+    acc: Account,
+  ): "idle" | "pending" | "error" | "copied" {
     if (copiedSid === acc.sid) return "copied";
     if (fetchOTP.variables?.sid !== acc.sid) return "idle";
     if (fetchOTP.isPending) return "pending";
@@ -186,14 +187,26 @@ export function HomePage() {
   }
 
   function renderAccountCard(acc: Account) {
-    const launchStatus = launchStatusFor(acc);
+    const primary = primaryStatusFor(acc);
     const copyStatus = copyStatusFor(acc);
-    const anyPending =
-      launchStatus === "pending" || copyStatus === "pending";
     const fallback = fallbackOTP?.sid === acc.sid ? fallbackOTP : null;
-    const pill = statusPillFor(launchStatus);
-    const failReason =
-      launchStatus === "fallback" ? spawnAndInject.data?.failReason : undefined;
+    const pill = statusPillFor(primary);
+    const isThisAccountPending =
+      primary === "spawning" || primary === "injecting" || copyStatus === "pending";
+
+    const primaryLabel = isGameRunning ? "帶入帳密" : "啟動遊戲";
+    const primaryAction = isGameRunning ? () => launch(acc) : () => spawn(acc);
+    // Disable when this account has work in flight; OR when state hasn't
+    // loaded yet (initial GetGameState pending). Otherwise users can
+    // double-click into a mismatched mutation while state is unknown.
+    const primaryDisabled = isThisAccountPending || gameState.isPending;
+
+    const errorText =
+      primary === "error"
+        ? spawnGame.variables?.sid === acc.sid
+          ? spawnGame.error?.message
+          : launchGame.error?.message
+        : undefined;
 
     return (
       <li
@@ -221,14 +234,9 @@ export function HomePage() {
           )}
         </div>
 
-        {failReason && (
-          <p className="mt-2 text-xs text-muted-foreground">
-            {failReasonHint(failReason)}
-          </p>
-        )}
-        {launchStatus === "error" && spawnAndInject.error && (
+        {errorText && (
           <p className="mt-2 break-words text-xs text-destructive">
-            {String(spawnAndInject.error)}
+            {errorText}
           </p>
         )}
 
@@ -251,7 +259,7 @@ export function HomePage() {
           <Button
             variant="outline"
             size="sm"
-            disabled={anyPending}
+            disabled={isThisAccountPending}
             onClick={() => copyCredentials(acc)}
           >
             {copyStatus === "pending"
@@ -264,10 +272,10 @@ export function HomePage() {
           </Button>
           <Button
             size="sm"
-            disabled={anyPending}
-            onClick={() => launchWithInject(acc)}
+            disabled={primaryDisabled}
+            onClick={primaryAction}
           >
-            啟動並帶入
+            {primaryLabel}
           </Button>
         </div>
       </li>
@@ -322,10 +330,6 @@ export function HomePage() {
         }
       />
 
-      {/* Body — accounts list only. The pre-M10 global [啟動遊戲]
-          button was dropped per Q1=A in the plan (per-account card
-          owns the entire launch trigger now); the M8 [帶入帳密] +
-          M8 [複製帳密] pair becomes [複製帳密] + [啟動並帶入]. */}
       <section className="flex flex-1 flex-col gap-3 px-4 pb-4">
         <p className="text-xs font-medium text-muted-foreground">分帳</p>
         {renderAccounts()}
