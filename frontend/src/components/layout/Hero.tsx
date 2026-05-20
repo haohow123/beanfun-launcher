@@ -27,7 +27,7 @@ const BANNER_FALLBACK_GRADIENT =
  */
 // statusVisual maps the cached MapleService.ServerStatus() outcome
 // to a (dot colour, label text) pair. Three states only — green
-// "登入口開啟", red "登入口關閉中", grey "檢查中…" (covers initial
+// "伺服器開啟", red "伺服器關閉中", grey "檢查中…" (covers initial
 // load + the "all probes failed AND canary failed" preserve-last
 // branch, both of which mean "we don't have a confident reading").
 type StatusVisual = { dotClass: string; label: string };
@@ -39,8 +39,8 @@ function statusVisualFor(
 ): StatusVisual {
   if (isPending) return { dotClass: "bg-slate-300", label: "檢查中…" };
   if (isError) return { dotClass: "bg-amber-300", label: "狀態未知" };
-  if (online) return { dotClass: "bg-emerald-300", label: "登入口開啟" };
-  return { dotClass: "bg-rose-400", label: "登入口關閉中" };
+  if (online) return { dotClass: "bg-emerald-300", label: "伺服器開啟" };
+  return { dotClass: "bg-rose-400", label: "伺服器關閉中" };
 }
 
 export function Hero({ action }: { action?: ReactNode }) {
