@@ -407,7 +407,14 @@ func (s *LauncherService) Launch(account beanfun.Account) (LaunchResult, error) 
 
 	hwnd := findGameWindowFn()
 	if hwnd == 0 {
-		slog.Info("Launch: no game window found", "sid", account.SID)
+		// FE state was stale — game must have closed after the FE last
+		// saw Running=true. Push correct state so the cache flips
+		// without the FE having to invalidateQueries. Symmetric with
+		// SpawnGame's errGameAlreadyRunning corrective emit.
+		slog.Info("Launch: no game window found, emitting corrective state",
+			"sid", account.SID)
+		s.setLastUsedSID("")
+		eventEmitFn(gameStateChangedEvent, GameState{Running: false})
 		return LaunchResult{NoWindow: true}, nil
 	}
 
@@ -442,6 +449,52 @@ func (s *LauncherService) Launch(account beanfun.Account) (LaunchResult, error) 
 	s.setLastUsedSID(account.SID)
 	eventEmitFn(gameStateChangedEvent, GameState{Running: true, Hwnd: hwnd, LastUsedSID: account.SID})
 
+	return LaunchResult{AutoFilled: true}, nil
+}
+
+// LaunchAccount is the single per-account "play this account now"
+// façade. The frontend expresses pure intent — back here we resolve
+// whether to spawn (no window present) or inject (window present)
+// via a just-in-time findGameWindowFn check. This decouples the FE
+// button affordance from gameState entirely: no smart-button label
+// swap, no isGameRunning gates, no FE-side stale-state races.
+//
+// One-level fallback covers the small window where the state flips
+// between our check and the sub-call's own check:
+//
+//   - Found a window → Launch → if Launch reports NoWindow (window
+//     vanished mid-call), fall back to SpawnGame.
+//   - No window found → SpawnGame → if SpawnGame returns
+//     errGameAlreadyRunning (window appeared mid-call), fall back
+//     to Launch. SpawnGame's corrective emit already pushed
+//     Running=true before returning, so the FE cache is current.
+//
+// Returns LaunchResult so the inject-mid-failure case (window present
+// but WM_CHAR failed) still surfaces the OTP for manual paste.
+// Spawn-path success returns AutoFilled=true semantically — argv-based
+// login is "auto filled" from the user's perspective.
+func (s *LauncherService) LaunchAccount(account beanfun.Account) (LaunchResult, error) {
+	if hwnd := findGameWindowFn(); hwnd != 0 {
+		result, err := s.Launch(account)
+		if err == nil && result.NoWindow {
+			slog.Info("LaunchAccount: window vanished mid-call, falling back to SpawnGame",
+				"sid", account.SID)
+			if spawnErr := s.SpawnGame(account); spawnErr != nil {
+				return LaunchResult{}, spawnErr
+			}
+			return LaunchResult{AutoFilled: true}, nil
+		}
+		return result, err
+	}
+	err := s.SpawnGame(account)
+	if errors.Is(err, errGameAlreadyRunning) {
+		slog.Info("LaunchAccount: window appeared mid-call, falling back to Launch",
+			"sid", account.SID)
+		return s.Launch(account)
+	}
+	if err != nil {
+		return LaunchResult{}, err
+	}
 	return LaunchResult{AutoFilled: true}, nil
 }
 

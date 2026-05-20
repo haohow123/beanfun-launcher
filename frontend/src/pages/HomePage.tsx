@@ -8,15 +8,11 @@ import { Hero } from "@/components/layout/Hero";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useAccountsQuery } from "@/queries/accounts";
-import {
-  gameStateQueryKey,
-  useGameStateQuery,
-} from "@/queries/gameState";
+import { useGameStateQuery } from "@/queries/gameState";
 import {
   useFetchOTPMutation,
-  useLaunchGameMutation,
+  useLaunchAccountMutation,
   useSpawnGameCleanMutation,
-  useSpawnGameMutation,
 } from "@/queries/launch";
 import { loggedInAtom } from "@/state/auth";
 
@@ -27,8 +23,7 @@ interface FallbackOTP {
 
 type PrimaryStatus =
   | "idle"
-  | "spawning"
-  | "injecting"
+  | "launching"
   | "running"
   | "fallback"
   | "error";
@@ -37,14 +32,9 @@ function statusPillFor(
   s: PrimaryStatus,
 ): { label: string; className: string } | null {
   switch (s) {
-    case "spawning":
+    case "launching":
       return {
-        label: "啟動中…",
-        className: "bg-blue-500/15 text-blue-700 dark:text-blue-300",
-      };
-    case "injecting":
-      return {
-        label: "帶入中…",
+        label: "進入中…",
         className: "bg-blue-500/15 text-blue-700 dark:text-blue-300",
       };
     case "running":
@@ -70,9 +60,8 @@ export function HomePage() {
   const qc = useQueryClient();
   const accounts = useAccountsQuery();
   const gameState = useGameStateQuery();
-  const spawnGame = useSpawnGameMutation();
+  const launchAccount = useLaunchAccountMutation();
   const spawnGameClean = useSpawnGameCleanMutation();
-  const launchGame = useLaunchGameMutation();
   const fetchOTP = useFetchOTPMutation();
   const [copiedSid, setCopiedSid] = useState<string | null>(null);
   const [fallbackOTP, setFallbackOTP] = useState<FallbackOTP | null>(null);
@@ -96,6 +85,19 @@ export function HomePage() {
     if (err instanceof Error && err.message.includes("login required")) {
       logout();
     }
+  }
+
+  // LaunchAccount swallows the spawn↔inject race internally via its
+  // one-level fallback (service.go:LaunchAccount), so errGameAlreadyRunning
+  // should never reach here. The substring check below is a safety net
+  // in case the backend ever surfaces it — render the Chinese hint
+  // rather than the raw English error.
+  function friendlyMutationError(err: unknown): string | undefined {
+    if (!(err instanceof Error)) return undefined;
+    if (err.message.includes("already running")) {
+      return "遊戲已開啟，請稍候再試";
+    }
+    return err.message;
   }
 
   function markCopied(sid: string) {
@@ -123,23 +125,14 @@ export function HomePage() {
       .catch((e) => console.error("clipboard write failed:", e));
   }
 
-  function spawn(acc: Account) {
+  // playAccount is the single per-account action — intent only.
+  // Backend's LaunchAccount picks spawn-vs-inject based on the
+  // current game-window state and handles the small race window
+  // internally; the FE never decides which mutation to fire.
+  function playAccount(acc: Account) {
     setFallbackOTP(null);
-    spawnGame.mutate(acc, {
-      onError: handleMutationError,
-    });
-  }
-
-  function launch(acc: Account) {
-    setFallbackOTP(null);
-    launchGame.mutate(acc, {
+    launchAccount.mutate(acc, {
       onSuccess: (result) => {
-        if (result.noWindow) {
-          // Race: state event said running but window vanished
-          // between cache update and mutation fire. Re-query state.
-          qc.invalidateQueries({ queryKey: gameStateQueryKey });
-          return;
-        }
         if (result.autoFilled === false && result.otp) {
           setFallbackOTP({ sid: acc.sid, otp: result.otp });
         }
@@ -156,17 +149,13 @@ export function HomePage() {
   }
 
   function primaryStatusFor(acc: Account): PrimaryStatus {
-    if (spawnGame.variables?.sid === acc.sid) {
-      if (spawnGame.isPending) return "spawning";
-      if (spawnGame.isError) return "error";
-    }
-    if (launchGame.variables?.sid === acc.sid) {
-      if (launchGame.isPending) return "injecting";
-      if (launchGame.isError) return "error";
+    if (launchAccount.variables?.sid === acc.sid) {
+      if (launchAccount.isPending) return "launching";
+      if (launchAccount.isError) return "error";
       if (
-        launchGame.isSuccess &&
-        launchGame.data?.autoFilled === false &&
-        launchGame.data?.otp
+        launchAccount.isSuccess &&
+        launchAccount.data?.autoFilled === false &&
+        launchAccount.data?.otp
       ) {
         return "fallback";
       }
@@ -175,9 +164,9 @@ export function HomePage() {
     // currently live in the game session — backend tracks this as
     // lastUsedSid (updated by SpawnGame + Launch, cleared by watcher
     // exit). Clean-spawned sessions have lastUsedSid="" until the
-    // user injects via 帶入帳密, so no card shows the pill in that
-    // window. Each account's own primary mutation state still wins
-    // (above) when they're actively spawning / injecting.
+    // user injects via 進入遊戲, so no card shows the pill in that
+    // window. The active mutation state above wins when this account
+    // is actively launching.
     if (isGameRunning && lastUsedSid === acc.sid) return "running";
     return "idle";
   }
@@ -198,21 +187,16 @@ export function HomePage() {
     const fallback = fallbackOTP?.sid === acc.sid ? fallbackOTP : null;
     const pill = statusPillFor(primary);
     const isThisAccountPending =
-      primary === "spawning" || primary === "injecting" || copyStatus === "pending";
+      primary === "launching" || copyStatus === "pending";
 
-    const primaryLabel = isGameRunning ? "帶入帳密" : "啟動遊戲";
-    const primaryAction = isGameRunning ? () => launch(acc) : () => spawn(acc);
-    // Disable when this account has work in flight; OR when state hasn't
-    // loaded yet (initial GetGameState pending). Otherwise users can
-    // double-click into a mismatched mutation while state is unknown.
-    const primaryDisabled = isThisAccountPending || gameState.isPending;
+    // Single intent button — backend resolves spawn-vs-inject from
+    // its just-in-time view of the game window. No isGameRunning gate
+    // here on purpose: even with stale FE state the action is correct,
+    // because LaunchAccount + corrective emit handle the race.
+    const playDisabled = isThisAccountPending || gameState.isPending;
 
     const errorText =
-      primary === "error"
-        ? spawnGame.variables?.sid === acc.sid
-          ? spawnGame.error?.message
-          : launchGame.error?.message
-        : undefined;
+      primary === "error" ? friendlyMutationError(launchAccount.error) : undefined;
 
     return (
       <li
@@ -278,10 +262,10 @@ export function HomePage() {
           </Button>
           <Button
             size="sm"
-            disabled={primaryDisabled}
-            onClick={primaryAction}
+            disabled={playDisabled}
+            onClick={() => playAccount(acc)}
           >
-            {primaryLabel}
+            進入遊戲
           </Button>
         </div>
       </li>
@@ -343,26 +327,23 @@ export function HomePage() {
         }
       />
 
-      {/* Clean-spawn row — only visible when the game isn't already
-          running. Lets multi-account users open the login form once
-          and switch accounts mid-play via 帶入帳密, since argv-spawned
-          OTPs are single-use and the game refuses to return to the
-          login screen after consuming them. */}
-      {!isGameRunning && (
-        <div className="flex justify-center px-4 py-2">
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={spawnGameClean.isPending || gameState.isPending}
-            onClick={cleanSpawn}
-          >
-            {spawnGameClean.isPending ? "啟動中…" : "啟動(可切換帳號)"}
-          </Button>
-        </div>
-      )}
+      {/* Clean-spawn lives inside the main section as a direct flex
+          child so the default Tailwind `align-items: stretch` gives
+          it full width without an explicit w-full class — restores
+          the banner-led app-shell design from a73803e (HomePage Pass 4).
+          No isGameRunning gate: backend's errGameAlreadyRunning +
+          corrective emit handle the case where a game is already up,
+          so the button stays operable without leaving the user with
+          stale-UI dead time after a game closes. */}
+      <section className="flex flex-1 flex-col gap-3 px-4 pb-4 pt-2">
+        <Button
+          disabled={spawnGameClean.isPending || gameState.isPending}
+          onClick={cleanSpawn}
+        >
+          {spawnGameClean.isPending ? "啟動中…" : "啟動(可切換帳號)"}
+        </Button>
 
-      <section className="flex flex-1 flex-col gap-3 px-4 pb-4">
-        <p className="text-xs font-medium text-muted-foreground">分帳</p>
+        <p className="mt-1 text-xs font-medium text-muted-foreground">分帳</p>
         {renderAccounts()}
       </section>
     </AppShell>

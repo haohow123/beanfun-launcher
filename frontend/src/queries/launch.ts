@@ -3,10 +3,32 @@ import { useMutation } from "@tanstack/react-query";
 import { type Account } from "@bindings/beanfun";
 import { LauncherService } from "@bindings/launcher";
 
+export const launchAccountMutationKey = ["launch-account"] as const;
 export const spawnGameMutationKey = ["spawn-game"] as const;
 export const spawnGameCleanMutationKey = ["spawn-game-clean"] as const;
 export const launchMutationKey = ["launch"] as const;
 export const fetchOTPMutationKey = ["fetch-otp"] as const;
+
+/**
+ * useLaunchAccountMutation calls LauncherService.LaunchAccount — the
+ * single per-account "play this account now" façade. Backend decides
+ * spawn-vs-inject based on its just-in-time view of the game window;
+ * FE expresses pure intent without consulting gameState.
+ *
+ * Returns LaunchResult:
+ *   - { autoFilled: true } — credentials in (via spawn argv OR inject WM_CHAR).
+ *   - { autoFilled: false, otp } — inject mid-failure, manual paste required.
+ *
+ * The legacy useSpawnGameMutation / useLaunchGameMutation hooks below
+ * are kept for diagnostic / direct-call use but HomePage drives all
+ * per-account launching through this single hook.
+ */
+export function useLaunchAccountMutation() {
+  return useMutation({
+    mutationKey: launchAccountMutationKey,
+    mutationFn: (account: Account) => LauncherService.LaunchAccount(account),
+  });
+}
 
 /**
  * useSpawnGameMutation fires LauncherService.SpawnGame(account) — the
