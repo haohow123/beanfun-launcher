@@ -26,10 +26,24 @@ export function LoginPage() {
     }
   }, [statusQuery.data, setLoggedIn]);
 
-  // Refresh = re-fire the mint + drop any in-flight poll state so
-  // the next /CheckLoginStatus call sees the fresh pendingQR.
+  // Refresh = optimistic status reset + mint refetch.
+  //
+  // The earlier `qc.removeQueries(qrStatusQueryKey)` approach had a
+  // race: removing the cache triggered the still-mounted observer to
+  // refetch CheckQRLogin immediately, but the backend's pendingQR
+  // was still the old (expired) session because StartQRLogin hadn't
+  // completed yet. The poll returned Expired → qrStatus.data = Expired
+  // → refetchInterval(Expired) = false → auto-poll stops → UI stays
+  // stuck on "已過期" even after the new QR rendered. User had to
+  // click 重新產生 a second time to escape.
+  //
+  // setQueryData(Pending) instead: clears the stale Expired UI without
+  // firing an out-of-order poll. refetchInterval re-evaluates to
+  // POLL_INTERVAL_MS (Pending is non-terminal), so polling resumes
+  // 2 s after this call — by which time StartQRLogin (~800 ms) has
+  // already installed the new session backend-side.
   function regenerate() {
-    qc.removeQueries({ queryKey: qrStatusQueryKey });
+    qc.setQueryData(qrStatusQueryKey, QRStatus.QRStatusPending);
     qrMint.refetch();
   }
 
