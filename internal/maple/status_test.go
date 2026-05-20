@@ -167,6 +167,84 @@ func TestCheckStatus_StateChangeUpdatesCheckedSince(t *testing.T) {
 	}
 }
 
+func TestCheckStatus_OnServerOnline_FiresOnOfflineToOnline(t *testing.T) {
+	// First probe: offline (baseline → no callback). Second probe:
+	// online (offline → online transition → callback fires exactly
+	// once). Mirrors TestCheckStatus_StateChangeUpdatesCheckedSince's
+	// fail-flag trick to flip dial behavior between passes.
+	var fail int32 = 1
+	withFakeNet(t, &fakeNet{
+		dial: func(context.Context, string) error {
+			if atomic.LoadInt32(&fail) == 1 {
+				return errors.New("offline")
+			}
+			return nil
+		},
+		canary: func(context.Context, *http.Client) error { return nil },
+	})
+
+	var calls int32
+	c := NewChecker(nil)
+	c.OnServerOnline = func() { atomic.AddInt32(&calls, 1) }
+
+	c.CheckStatus(context.Background()) // baseline: offline
+	if got := atomic.LoadInt32(&calls); got != 0 {
+		t.Fatalf("calls after baseline = %d, want 0 (initial probe is not a transition)", got)
+	}
+
+	atomic.StoreInt32(&fail, 0)
+	c.CheckStatus(context.Background()) // transition: offline → online
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Errorf("calls after transition = %d, want 1", got)
+	}
+}
+
+func TestCheckStatus_OnServerOnline_NotFiredOnInitialProbe(t *testing.T) {
+	// Initial probe that lands on online still establishes baseline,
+	// not a transition. Notification users would otherwise get spammed
+	// on every launcher start.
+	withFakeNet(t, &fakeNet{
+		dial:   func(context.Context, string) error { return nil },
+		canary: func(context.Context, *http.Client) error { return nil },
+	})
+
+	var called bool
+	c := NewChecker(nil)
+	c.OnServerOnline = func() { called = true }
+
+	c.CheckStatus(context.Background())
+	if called {
+		t.Errorf("OnServerOnline fired on initial probe; want only on state change")
+	}
+}
+
+func TestCheckStatus_OnServerOnline_NotFiredOnOnlineToOffline(t *testing.T) {
+	// online → offline is a real transition but in the wrong direction
+	// for this hook. Caller asked specifically about "server came up".
+	var fail int32 = 0
+	withFakeNet(t, &fakeNet{
+		dial: func(context.Context, string) error {
+			if atomic.LoadInt32(&fail) == 1 {
+				return errors.New("offline")
+			}
+			return nil
+		},
+		canary: func(context.Context, *http.Client) error { return nil },
+	})
+
+	var called bool
+	c := NewChecker(nil)
+	c.OnServerOnline = func() { called = true }
+
+	c.CheckStatus(context.Background()) // baseline: online
+	atomic.StoreInt32(&fail, 1)
+	c.CheckStatus(context.Background()) // transition: online → offline
+
+	if called {
+		t.Errorf("OnServerOnline fired on online → offline; want only on offline → online")
+	}
+}
+
 func TestCheckStatus_NoStateChange_KeepsCheckedSince(t *testing.T) {
 	withFakeNet(t, &fakeNet{
 		dial:   func(context.Context, string) error { return nil },

@@ -111,6 +111,17 @@ type Checker struct {
 	mu          sync.RWMutex
 	status      Status
 	everChecked bool
+
+	// OnServerOnline, if non-nil, is invoked exactly on offline → online
+	// transitions detected by CheckStatus. NOT fired on the initial
+	// probe (which establishes the baseline) and NOT fired on
+	// online → offline (this hook narrows to the open-direction so
+	// callers wiring up notifications don't have to reimplement the
+	// filter). Called outside the lock so a slow callback can't stall
+	// concurrent Status() readers. Install once after NewChecker —
+	// the field is read by every CheckStatus pass and is assumed
+	// immutable from the first heartbeat tick onward.
+	OnServerOnline func()
 }
 
 // NewChecker returns a Checker that uses httpClient for the
@@ -179,6 +190,7 @@ func (c *Checker) CheckStatus(ctx context.Context) Status {
 	c.mu.Lock()
 	prev := c.status
 	c.status.LastChecked = now
+	var serverCameOnline bool
 	if !c.everChecked {
 		slog.Info("maple.status: initial probe", "online", online)
 		c.status.Online = online
@@ -188,9 +200,18 @@ func (c *Checker) CheckStatus(ctx context.Context) Status {
 			"online", online, "prev_online", prev.Online)
 		c.status.Online = online
 		c.status.CheckedSince = now
+		serverCameOnline = !prev.Online && online
 	}
 	c.everChecked = true
 	c.mu.Unlock()
+
+	// Callback fires outside the lock so a slow notification syscall
+	// can't stall concurrent Status() readers. Filter happens here
+	// (not at the caller) — see Checker.OnServerOnline doc.
+	if serverCameOnline && c.OnServerOnline != nil {
+		c.OnServerOnline()
+	}
+
 	return c.Status()
 }
 
