@@ -106,6 +106,37 @@ export function Launch(account) {
 }
 
 /**
+ * LaunchAccount is the single per-account "play this account now"
+ * façade. The frontend expresses pure intent — back here we resolve
+ * whether to spawn (no window present) or inject (window present)
+ * via a just-in-time findGameWindowFn check. This decouples the FE
+ * button affordance from gameState entirely: no smart-button label
+ * swap, no isGameRunning gates, no FE-side stale-state races.
+ * 
+ * One-level fallback covers the small window where the state flips
+ * between our check and the sub-call's own check:
+ * 
+ *   - Found a window → Launch → if Launch reports NoWindow (window
+ *     vanished mid-call), fall back to SpawnGame.
+ *   - No window found → SpawnGame → if SpawnGame returns
+ *     errGameAlreadyRunning (window appeared mid-call), fall back
+ *     to Launch. SpawnGame's corrective emit already pushed
+ *     Running=true before returning, so the FE cache is current.
+ * 
+ * Returns LaunchResult so the inject-mid-failure case (window present
+ * but WM_CHAR failed) still surfaces the OTP for manual paste.
+ * Spawn-path success returns AutoFilled=true semantically — argv-based
+ * login is "auto filled" from the user's perspective.
+ * @param {beanfun$0.Account} account
+ * @returns {$CancellablePromise<$models.LaunchResult>}
+ */
+export function LaunchAccount(account) {
+    return $Call.ByID(1629860675, account).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType1($result);
+    }));
+}
+
+/**
  * SpawnGame fetches an OTP for the given account and spawns
  * MapleStory.exe with the canonical 5-arg positional argv that
  * triggers Gamania's auto-login path. Game.exe takes the OTP from

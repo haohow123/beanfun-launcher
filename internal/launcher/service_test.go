@@ -123,6 +123,25 @@ func TestLauncherService_SpawnGame_GameExeMissing_NoSessionStillTakesPrecedence(
 	}
 }
 
+func TestLauncherService_LaunchAccount_NoSession(t *testing.T) {
+	// LaunchAccount is the SpawnGame+Launch façade. On non-Windows
+	// findGameWindowFn returns 0, so we route into SpawnGame's path —
+	// session check must fire before any other validation, same as
+	// the underlying SpawnGame/Launch tests above.
+	withFakeSpawn(t)
+	withEnv(t, gameExeEnvVar, "C:\\Game.exe")
+
+	mgr := bgtask.New()
+	login := beanfun.NewLoginService(mgr)
+	svc := NewLauncherService(login, mgr)
+
+	_, err := svc.LaunchAccount(beanfun.Account{SID: "s", SSN: "1", SName: "n"})
+	var le *beanfun.LoginError
+	if !errors.As(err, &le) || le.Kind != beanfun.KindLoginRequired {
+		t.Errorf("got %v, want beanfun.KindLoginRequired", err)
+	}
+}
+
 func TestLauncherService_GetGameState_NoWindow(t *testing.T) {
 	// findGameWindowFn returns 0 on macOS / Linux (the test platform)
 	// because inject_other.go binds it to a stub. GetGameState should
