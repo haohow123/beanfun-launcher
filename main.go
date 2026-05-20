@@ -14,6 +14,7 @@ import (
 	"github.com/haohow123/beanfun-launcher/internal/launcher"
 	"github.com/haohow123/beanfun-launcher/internal/maple"
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/services/notifications"
 )
 
 //go:embed all:frontend/dist
@@ -40,11 +41,29 @@ func main() {
 
 	loginSvc := beanfun.NewLoginService(mgr)
 	launcherSvc := launcher.NewLauncherService(loginSvc, mgr)
+
+	// notifSvc backs the offline→online server toast (see
+	// maple.Checker.OnServerOnline). Wails calls ServiceStartup
+	// on it during app.Run, which on Windows registers the
+	// AppUserModelID + COM activator needed for toast delivery.
+	// On macOS / Linux dev the SendNotification call below
+	// degrades to slog.Warn — no special-casing needed here.
+	notifSvc := notifications.New()
+	notifyServerOnline := func() {
+		if err := notifSvc.SendNotification(notifications.NotificationOptions{
+			ID:    "maple-server-online",
+			Title: "新楓之谷 MapleStory",
+			Body:  "伺服器已開啟",
+		}); err != nil {
+			slog.Warn("notify: SendNotification failed", "err", err)
+		}
+	}
+
 	// MapleService starts its status-probe heartbeat immediately
 	// (firstDelay=0 in NewMapleService) so the Hero indicator
 	// transitions from "checking…" to a real green/red dot within
 	// seconds of app start, not minutes.
-	mapleSvc := maple.NewMapleService(mgr, nil)
+	mapleSvc := maple.NewMapleService(mgr, nil, notifyServerOnline)
 
 	app := application.New(application.Options{
 		Name:        "beanfun-launcher",
@@ -53,6 +72,7 @@ func main() {
 			application.NewService(loginSvc),
 			application.NewService(launcherSvc),
 			application.NewService(mapleSvc),
+			application.NewService(notifSvc),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),

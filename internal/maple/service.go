@@ -41,8 +41,19 @@ type MapleService struct {
 // tw.beanfun.com; pass nil to fall back to http.DefaultClient.
 // We don't need cookie continuity with the Beanfun login client
 // — the canary is just "can we reach Gamania's web tier".
-func NewMapleService(mgr *bgtask.Manager, httpClient *http.Client) *MapleService {
+//
+// onServerOnline, if non-nil, is invoked when the heartbeat
+// detects an offline → online state transition (not on the
+// initial probe; see Checker.OnServerOnline). Installed BEFORE
+// the heartbeat is registered so the first probe's eventual
+// transition-fire can never see a nil hook.
+func NewMapleService(
+	mgr *bgtask.Manager,
+	httpClient *http.Client,
+	onServerOnline func(),
+) *MapleService {
 	s := &MapleService{checker: NewChecker(httpClient)}
+	s.checker.OnServerOnline = onServerOnline
 	mgr.Heartbeat(statusHeartbeatName, 0, func(ctx context.Context) time.Duration {
 		s.checker.CheckStatus(ctx)
 		return statusInterval
