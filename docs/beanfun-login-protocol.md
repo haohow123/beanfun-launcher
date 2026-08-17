@@ -363,14 +363,25 @@ A condensed list of things that look weird but are deliberate.
 | Fresh client per `StartQRLogin` | Service layer | Stale cookies in a re-used jar caused observably different redirects |
 | `AuthKey=OK` literal | Step 7 | QR-only approval sentinel |
 | `ServiceAccountSN=0` literal | Step 7 | Required by server even though it's not an account-specific value |
+| Pinned `CV` / `Hash` of a DLL we don't ship | Step 9.3 | The v2 OTP endpoint gates on a claim that the caller is Gamania's own launcher; the values are properties of a GGM release, not of the session |
+| Hand-rolled JSON body | Step 9.3 | Keeps the launch ticket in `[]byte` so it can be zeroed; marshalling from a struct would copy it into an immutable string |
+| Decoder validates its own output | Step 9.2 | The blob's step ordering has no first-party source; a wrong reading must fail at the decode, not at the server |
 
-## Step 9 — Post-login: launch OTP (6-step flow)
+## Step 9 — Post-login: launch OTP (2 calls + a local decode)
 
 Game launch needs a single-use OTP that the game.exe accepts on its
-command line. Beanfun's portal issues the OTP through a 6-step
-choreography that primes server-side state across multiple endpoints
-before the actual ticket can be read out. All calls share the same
-cookie jar that `bfWebToken` lives in.
+command line. Gamania replaced this endpoint on 2026-08-17 (see
+[History](#history--the-retired-6-step-otp-flow) below); the current
+flow is two HTTP calls plus a local decode:
+
+```
+Step 9.1  game_start_step2.aspx   GET   tw.beanfun.com   ← scrape m_objData
+Step 9.2  decode the handoff blob (local)                ← yields LaunchTicket
+Step 9.3  get_webstart_otp_v2.ashx  POST tw.beanfun.com  ← JSON in, JSON out
+Step 9.4  DES-ECB decrypt (local)
+```
+
+Both HTTP calls share the cookie jar that `bfWebToken` lives in.
 
 ### Step 9.1 — `game_start_step2.aspx`
 
@@ -382,114 +393,135 @@ GET https://tw.beanfun.com/beanfun_block/game_zone/game_start_step2.aspx
   &dt={UTC YYYYMMDDHHMMSS}
 ```
 
-The response is HTML with three inline-JS literals we scrape:
+Two things are read from the HTML:
 
-- `GetResultByLongPolling&key=KEYVAL"` — the long-polling key,
-  reused as `SN` on step 9.5 and as `key` on step 9.4.
-- `MyAccountData.ServiceAccountCreateTime + "K=V";` (TW only) —
-  per-account form field reposted verbatim on step 9.3. Both halves
-  arrive URL-encoded; we percent-decode them before forwarding.
-- `ServiceAccountCreateTime: "..."` — the account creation
-  timestamp, forwarded on step 9.3 and step 9.5.
+- The `尚未登入` session-expiry notice → `KindSessionExpired`, checked
+  before anything else.
+- `var m_objData = {"region":…,"sn":…,"data":…}` — the literal the page
+  hands to Gamania's native launcher. Parsed as JSON, not scraped field
+  by field. Missing or unparseable → `KindOTPInit`.
 
-Missing any of these → `KindOTPInit` (server is in an unexpected
-state; user should retry).
+Observed field shapes (capture, 2026-08-18): `region` is the literal
+`TW;Production`; `sn` is a 36-char GUID and is byte-identical to the
+long-polling key the retired flow scraped separately; `data` was 553
+characters.
 
-### Step 9.2 — `get_cookies.ashx`
+**No response-body preview may be attached to errors from this page.**
+`data` decodes to a live `LaunchTicket` using only the substitution
+tables in `internal/beanfun/launch_data.go` and a DES key embedded in
+the blob itself — a leaked blob is a leaked credential. Errors here
+report `len(body)` only, and a regression test plants a marker in a
+fake body and asserts it never reaches the error string.
+
+### Step 9.2 — decode the handoff blob (local)
+
+`data` is an obfuscated, DES-encrypted `key=value` bundle. The decode,
+in order:
+
+1. First character is a hex digit — the *selector*. Both captures so far
+   used a different value (8, then 0).
+2. Substitution table = `launchDataTables[selector % 4]`. Each table is
+   a permutation of the 16 hex digits; a unit test asserts that
+   invariant so a typo cannot silently break decoding.
+3. Normalise **the whole remainder** by replacing each character with
+   its index in the table, emitted as a hex digit.
+4. The 8 characters at offset `selector + 1` **of the normalised text**
+   are the DES key, taken as ASCII. Because they come out of the
+   normalised text, the key is always 8 hex characters.
+5. The rest of the normalised text is the ciphertext hex.
+6. DES-ECB, no padding, NUL-trimmed.
+7. Plaintext is `k=v` pairs joined by `&`, with a trailing `;`-prefixed
+   tail that is discarded. Fields observed: `LaunchTicket`,
+   `ServiceCode`, `ServiceRegion`, `ServiceAccount`, `BeanfunUrl`,
+   `WebStartPatch`.
+8. **Validate**: `LaunchTicket` must be exactly 64 hex characters, else
+   `KindLaunchDataDecode`.
+
+Step 8 is load-bearing. The ordering in steps 3–4 was not documented
+anywhere first-party — the alternative reading (lift the key out of the
+*raw* blob, then normalise) satisfies the same length arithmetic and was
+tried first. Validating the output is what turned a wrong guess into an
+immediate, named failure instead of a rejected request. Arithmetic check
+for a 553-char blob: `553 - 1 - 8 = 544` hex characters = 272 bytes = 34
+whole DES blocks.
+
+The decoded ticket is a live credential: it is held as `[]byte`, copied
+rather than aliased out of the plaintext buffer, and the buffer, the DES
+key, and the request body are all zeroed after use.
+
+### Step 9.3 — `get_webstart_otp_v2.ashx`
 
 ```
-GET https://tw.newlogin.beanfun.com/generic_handlers/get_cookies.ashx
+POST https://tw.beanfun.com/beanfun_block/generic_handlers/get_webstart_otp_v2.ashx
+Content-Type: application/json
+
+{"SN":"<36-char GUID>","LaunchTicket":"<64 hex>","CV":"1.5.0.2","Hash":"<64 hex>","arch":"x64"}
 ```
 
-Body has one inline JS literal: `var m_strSecretCode = 'CODE';`.
-Scrape it; forward to step 9.5. Note this is the only call in the
-whole flow that hits `tw.newlogin.beanfun.com` rather than
-`tw.beanfun.com` — the `NewloginBase` endpoint exists for this single
-purpose.
+- `SN` comes from `m_objData.sn`.
+- `CV` and `Hash` are a **client-integrity claim**: the assembly version
+  and SHA-256 of Gamania's `GGMWebStart.dll`, pinned in
+  `internal/beanfun/client_integrity.go`. They go stale whenever
+  Gamania ships a new helper, and the symptom is every OTP fetch being
+  rejected at once.
+- `arch` mirrors the helper's `Environment.Is64BitProcess` — the
+  calling process's bitness, not the OS's.
+- The body is assembled by hand rather than marshalled from a struct so
+  the ticket never becomes an unzeroable Go string.
 
-### Step 9.3 — `record_service_start.ashx`
+Response:
 
-```
-POST https://tw.beanfun.com/beanfun_block/generic_handlers/record_service_start.ashx
-Content-Type: application/x-www-form-urlencoded
-
-service_code, service_region, service_account_id=<SID>, sotp=<SSN>,
-service_account_display_name=<SName>, service_account_create_time=<createTime>,
-<unkDataKey>=<unkDataValue>
-```
-
-Response body discarded. The call primes server-side state for step
-9.5's OTP issuance — skipping it fails step 9.5 with a generic
-rejection.
-
-### Step 9.4 — `get_result.ashx` long-poll
-
-```
-GET https://tw.beanfun.com/generic_handlers/get_result.ashx
-  ?meth=GetResultByLongPolling
-  &key=<long-polling key from step 9.1>
-  &_=<ISO timestamp cache buster>
+```json
+{ "result": 1, "data": "<40 chars>", "message": null }
 ```
 
-Response body discarded. Like step 9.3, this is a side-effect call
-that drives server-side OTP generation; skipping it makes step 9.5
-return an empty / rejecting envelope.
+`result != 1` → `KindOTPServerRejected` carrying the server's own
+`message`. Two rejections seen in practice: `Query String Error` (sent
+to the retired endpoint) and `Invalid_Start_Ticket` (ticket stale, or
+posted without the session that minted it).
 
-### Step 9.5 — `get_webstart_otp.ashx`
+### Step 9.4 — DES-ECB decrypt (local)
 
-```
-GET https://tw.beanfun.com/beanfun_block/generic_handlers/get_webstart_otp.ashx
-  ?SN=<long-polling key>
-  &WebToken=<bfWebToken>
-  &SecretCode=<from step 9.2>
-  &ppppp=1F552AEAFF976018F942B13690C990F60ED01510DDF89165F1658CCE7BC21DBA
-  &ServiceCode=<ServiceCode>
-  &ServiceRegion=<ServiceRegion>
-  &ServiceAccount=<SID>
-  &CreateTime=<createTime with space %20-encoded>
-  &d=<UnixMilli cache buster>
-```
+`data` is `{8-char-key}{hex-cipher}` — the same construction the retired
+endpoint wrapped in a `<status>;` prefix, minus the prefix, because the
+status now arrives as the JSON `result`.
 
-Two pieces of WPF-specific encoding the standard form-urlencoder
-gets wrong:
+- Key: first 8 ASCII bytes, used directly as a DES key (DES is 56-bit;
+  the eighth bit of each key byte is parity that the Go API ignores).
+  Zeroed after use.
+- Cipher: remainder, hex-decoded, length a multiple of 8 bytes.
+- Decrypt each block with `crypto/des.Block.Decrypt` (ECB; no IV).
+- NUL-trim both ends. Observed: a 40-character `data` yields a 10-char
+  OTP, matching the length the retired flow produced.
 
-1. **`CreateTime`** contains a literal space (`2024-01-15 12:34:56`)
-   that WPF encodes as `%20`, not `+`. We replace the space manually
-   before assembling the URL string.
-2. **`ppppp`** is a 64-char uppercase hex literal the server
-   validates as a protocol constant. It must appear verbatim — no
-   encoding, no case folding. We don't know its provenance; the
-   value comes from pungin's WPF analysis and works.
+We keep the decrypted token as `[]byte` (not `string`) so the launcher
+can `Zero` it after the game.exe spawn consumes the command-line copy.
+Per [[security-principles-beanfun]] this matters even though the OTP is
+single-use server-side.
 
-`SN` is the **long-polling key from step 9.1**, not the SSN. The
-naming is confusing but matches the wire format.
+### History — the retired 6-step OTP flow
 
-Response body: `1;{8-char-key}{hex-cipher}` literal (or
-`0;{reason}` / similar on rejection — anything where the first
-segment isn't `1` triggers `KindOTPServerRejected`).
+Until 2026-08-17 the OTP came from a GET to
+`generic_handlers/get_webstart_otp.ashx` with nine query-string
+parameters, preceded by three priming calls — `get_cookies.ashx` (for a
+`SecretCode`), `record_service_start.ashx`, and a `get_result.ashx`
+long-poll — and by scraping three inline-JS literals out of
+`game_start_step2.aspx` (the long-polling key, a TW-only `unk_data`
+pair, and `ServiceAccountCreateTime`).
 
-### Step 9.6 — DES-ECB decrypt (local)
+One of those nine parameters was `ppppp`, a hardcoded 64-char uppercase
+hex constant of unknown provenance.
 
-The envelope is `<status>;<payload>` (split on the first `;`; ignore
-later segments). If `<status> != "1"` → `KindOTPServerRejected` with
-`<payload>` as the message.
+From 2026-08-17 that endpoint answers `0;` + eight spaces +
+`Query String Error` to a well-formed request. The three priming calls
+and all four scrapers were removed along with it: none of their outputs
+appear in the v2 contract, and dropping them took the OTP fetch from
+four requests against `tw.beanfun.com` down to one, which also reduces
+exposure to the portal's IP frequency lock (see issue #83). A test
+asserts the whole fetch issues exactly two HTTP requests, so a revived
+step fails immediately.
 
-For status=1, the payload is `{8-char-key}{hex-cipher}`:
-
-- Key: first 8 ASCII bytes of payload, used directly as a DES key
-  (DES is 56-bit; the eighth bit of each key byte is parity that the
-  Go API ignores).
-- Cipher: remainder of payload, hex-decoded. Length must be a
-  multiple of 8 bytes (DES block size).
-- Decrypt each block with `crypto/des.Block.Decrypt` (ECB; no IV
-  needed).
-- NUL-trim both ends of the assembled plaintext. The OTP is an 8-char
-  ASCII string padded to a single block.
-
-We keep the decrypted token as `[]byte` (not `string`) so the
-launcher can `Zero` it after the game.exe spawn consumes the
-command-line copy. Per [[security-principles-beanfun]] this matters
-even though the OTP is single-use server-side.
+Diagnosis trail for this change is in `docs/plans/84-otp-webstart-v2/`.
 
 ## Command-line spawn
 
@@ -506,7 +538,7 @@ MapleStory.exe <host> <port> BeanFun <SID> <OTP>
 | 2 | `8484` | TCP port — game.exe connects directly |
 | 3 | `BeanFun` | Channel marker; replaces the older `/hb` flag |
 | 4 | `<SID>` | Service-account ID (NOT the SSN — see `Account.SID`) |
-| 5 | `<OTP>` | The 10-char decrypted token from step 9.5 |
+| 5 | `<OTP>` | The decrypted token from step 9.4 |
 
 On a fresh spawn the game contacts `<host>:<port>`, validates the OTP
 server-side, and proceeds **straight to character select** — no login
@@ -597,13 +629,19 @@ consult the corresponding files:
 | GetAccounts orchestration | `src/commands/account.rs` (lines 243–272 for the Tauri command, 608–660 for the auth.aspx refresh, 667–685 for the list fetch) |
 | Account-row regex | `src/core/parser/account.rs:69-91` |
 | `screatetime` per-row fetch (we defer) | `src/commands/account.rs:695-721` |
-| OTP 6-step orchestration | `src/services/beanfun/otp.rs:122-145` |
-| OTP per-step impls | `src/services/beanfun/otp.rs:171-323` |
-| OTP scrapers (long-polling key, unk_data, secret code) | `src/services/beanfun/otp.rs:393-478` |
+| OTP 6-step orchestration (retired flow) | `src/services/beanfun/otp.rs:122-145` |
+| OTP per-step impls (retired flow) | `src/services/beanfun/otp.rs:171-323` |
+| OTP scrapers, long-polling key / unk_data / secret code (retired flow) | `src/services/beanfun/otp.rs:393-478` |
 | WCDES decrypt (DES-ECB-NoPadding) | `src/core/wcdes/mod.rs:76-88` |
-| `ppppp` 64-hex literal | `src/services/beanfun/otp.rs:489` |
+| `ppppp` 64-hex literal (retired flow) | `src/services/beanfun/otp.rs:489` |
 | Game launcher + command-line template | `src/services/game/launcher.rs:286-375` |
 | Test golden fixtures | `tests/{session_key,qr_init,qr_poll,qr_finalize,account,otp}.rs` |
 
 Our test suite mirrors the cases in those files where they apply to
 our scope (TW only; QR-only).
+
+The v2 OTP flow in Step 9 is our own implementation — the upstream
+launcher's v2 code was deliberately not ported. Its published protocol
+notes were used as a starting point for the endpoint name and JSON
+shape; the decoder ordering, the validation, and the credential
+lifecycle were established here by capture and test.

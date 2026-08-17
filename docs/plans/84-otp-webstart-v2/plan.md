@@ -221,7 +221,10 @@ page whose literal is not valid JSON (`ok == false`).
 - [x] `go test ./internal/beanfun/ -run 'LaunchData|LaunchHandoff' -v` shows the new cases running
 
 #### Manual
-- [ ] `FetchOTP` still fails exactly as before this phase — no network path changed yet
+- [x] `FetchOTP` still fails exactly as before this phase — no network path changed yet.
+      Established mechanically instead of by running the app: `git diff main...HEAD --
+      internal/beanfun/otp.go` was empty at this phase's commit, so behaviour was
+      unchanged by construction. Superseded by phase 2, which made the flow work.
 - [x] `security-reviewer` agent over `launch_data.go`, `parser.go`, `errors.go`, `wcdes.go`
 - [x] `verifier` agent against this phase's checkpoint in `structure.md`
 
@@ -456,6 +459,13 @@ callers left once steps 2-3 are gone, and `extractCreateTimeFallback` was only u
 
 ## Phase 4: Lock the credential-leak fix in place
 
+**Landed early, inside phases 2 and 3.** The security review of phase 2 found
+that three `withBody(bodyStr)` call sites in `otpStep1` still attached up to 500
+bytes of the handoff-bearing page to error messages — so the fix could not wait
+for a later phase that a revert might remove. `withBody` is now absent from
+`otp.go` entirely and the regression test lives in
+`TestBeanfunClient_FetchOTP_Step1HandoffFailures`.
+
 Phases 1-3 remove every `withBody` call on the OTP path by construction. This phase adds the
 regression test that keeps it that way, and removes anything the greps above missed.
 
@@ -480,16 +490,16 @@ literal `body=`. Repeat for a body that has `m_objData` with an undecodable `dat
 ### Verification
 
 #### Automated
-- [ ] `gofmt -l .` prints nothing
-- [ ] `golangci-lint run` passes
-- [ ] `go test ./internal/beanfun/` passes
-- [ ] `grep -n "withBody" internal/beanfun/otp.go` returns nothing
-- [ ] the new leak test fails when `withBody(bodyStr)` is temporarily reinstated — confirm the
+- [x] `gofmt -l .` prints nothing
+- [x] `golangci-lint run` passes
+- [x] `go test ./internal/beanfun/` passes
+- [x] `grep -n "withBody" internal/beanfun/otp.go` returns nothing
+- [x] the new leak test fails when `withBody(bodyStr)` is temporarily reinstated — confirm the
       check can actually fail, then revert the experiment
 
 #### Manual
-- [ ] `security-reviewer` agent over the diff
-- [ ] `verifier` agent against this phase's checkpoint
+- [x] `security-reviewer` agent over the diff
+- [x] `verifier` agent against this phase's checkpoint
 
 ---
 
@@ -514,11 +524,11 @@ literal `body=`. Repeat for a body that has `m_objData` with an undecodable `dat
 ### Verification
 
 #### Automated
-- [ ] `grep -n "get_webstart_otp.ashx" docs/beanfun-login-protocol.md` — every hit is inside the
+- [x] `grep -n "get_webstart_otp.ashx" docs/beanfun-login-protocol.md` — every hit is inside the
       historical note
-- [ ] `grep -n "ppppp" docs/beanfun-login-protocol.md` — same
-- [ ] the documented step count matches `FetchOTP`'s implementation
+- [x] `grep -n "ppppp" docs/beanfun-login-protocol.md` — same
+- [x] the documented step count matches `FetchOTP`'s implementation
 
 #### Manual
-- [ ] `verifier` agent read-back: every section the plan says to write exists and is non-empty,
+- [x] `verifier` agent read-back: every section the plan says to write exists and is non-empty,
       and every endpoint path named in the doc exists in the code
