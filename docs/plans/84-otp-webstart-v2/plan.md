@@ -449,7 +449,11 @@ callers left once steps 2-3 are gone, and `extractCreateTimeFallback` was only u
       right regexes went.
 
 #### Manual
-- [ ] `task dev`, QR login, 複製帳密 — still `FetchOTP: token acquired`. **PENDING — repo owner AFK; blocks merge.**
+- [x] `task dev`, QR login, 複製帳密 — still `FetchOTP: token acquired`.
+      Verified 2026-08-18 02:33:23 on `cddc599`: step 1 (`handoff_data_len=553`) → v2 POST
+      (`status=200 data_len=40`) → `token acquired len=10`, with no step 2/3/4 lines in the
+      log at all. The three priming calls were genuinely unnecessary. Round trip took 61ms
+      versus 165ms for the six-step flow measured at 01:47.
       **If this now fails, steps 3-4 were load-bearing** (design.md Open Risks): restore them,
       stop, and report rather than debugging forward.
 - [x] `security-reviewer` agent over `otp.go`, `parser.go`
