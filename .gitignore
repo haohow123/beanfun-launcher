@@ -14,6 +14,10 @@ build/windows/nsis/MicrosoftEdgeWebview2Setup.exe
 .claude/sessions/
 .claude/state/
 
+# Planning artifacts stay out of the repo — they are process notes, not
+# product, and captures taken while debugging can carry account details.
+docs/plans/
+
 # macOS / editor
 .DS_Store
 .vscode/
