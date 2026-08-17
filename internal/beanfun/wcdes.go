@@ -7,45 +7,21 @@ import (
 	"fmt"
 )
 
-// decryptOTP unpacks the `1;{key8}{cipherHex}` envelope returned by
-// `generic_handlers/get_webstart_otp.ashx` and decrypts the
-// ciphertext with DES/ECB/NoPadding (the Beanfun WCDES wire format).
+// decryptOTPPayload unpacks the `{key8}{cipherHex}` payload the v2 OTP
+// reply carries in its data field. The retired endpoint wrapped the
+// same construction in a `<status>;` prefix; that status now arrives as
+// the reply's JSON result field instead.
 //
-// Returns the plaintext OTP as a `[]byte` slice the caller owns —
-// kept as bytes (not string) so the launcher can `Zero` it after the
-// game process accepts it. NUL bytes at both ends are trimmed to
-// match the WPF reference behaviour.
-func decryptOTP(envelope string) ([]byte, error) {
-	if envelope == "" {
-		return nil, ErrOTPServerRejected("empty envelope")
-	}
-	// Server format: `<status>;<payload>` (multi-`;` payloads exist;
-	// we only look at the second segment to mirror WPF's
-	// response.Split(';')[1]).
-	semicolonIdx := -1
-	for i := 0; i < len(envelope); i++ {
-		if envelope[i] == ';' {
-			semicolonIdx = i
-			break
-		}
-	}
-	if semicolonIdx < 0 {
-		return nil, ErrOTPServerRejected("missing ';' in envelope")
-	}
-	status := envelope[:semicolonIdx]
-	payload := envelope[semicolonIdx+1:]
-	// Strip a trailing tail segment if the server appended more `;` —
-	// only the first two segments are meaningful.
-	if extra := indexByte(payload, ';'); extra >= 0 {
-		payload = payload[:extra]
-	}
-	if status != "1" {
-		return nil, ErrOTPServerRejected(payload)
-	}
+// Returns the plaintext OTP as a []byte the caller owns — kept as bytes
+// (not string) so the launcher can Zero it after the game process
+// accepts it. NUL padding is trimmed.
+func decryptOTPPayload(payload string) ([]byte, error) {
 	if len(payload) < 8 {
 		return nil, ErrOTPDecrypt(fmt.Sprintf("payload < 8 bytes (got %d)", len(payload)))
 	}
-	return desECBDecryptHex([]byte(payload[:8]), payload[8:])
+	key := []byte(payload[:8])
+	defer Zero(key)
+	return desECBDecryptHex(key, payload[8:])
 }
 
 // desECBDecryptHex decrypts hex-encoded ciphertext with an 8-byte
@@ -67,15 +43,4 @@ func desECBDecryptHex(key []byte, cipherHex string) ([]byte, error) {
 		block.Decrypt(plain[i:i+des.BlockSize], cipherBytes[i:i+des.BlockSize])
 	}
 	return bytes.Trim(plain, "\x00"), nil
-}
-
-// indexByte returns the index of the first occurrence of b in s, or
-// -1. (Avoids importing strings just for IndexByte.)
-func indexByte(s string, b byte) int {
-	for i := 0; i < len(s); i++ {
-		if s[i] == b {
-			return i
-		}
-	}
-	return -1
 }

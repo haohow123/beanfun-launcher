@@ -372,18 +372,18 @@ Delete `decryptOTP` and the now-unused `indexByte` helper (`wcdes.go:68-79`).
 ### Verification
 
 #### Automated
-- [ ] `gofmt -l .` prints nothing
-- [ ] `golangci-lint run` passes
-- [ ] `go build ./...` succeeds
-- [ ] `go test ./internal/beanfun/` passes
-- [ ] `grep -rn "pppppLiteral\|get_webstart_otp.ashx" internal/` returns nothing
+- [x] `gofmt -l .` prints nothing
+- [x] `golangci-lint run` passes
+- [x] `go build ./...` succeeds
+- [x] `go test ./internal/beanfun/` passes
+- [x] `grep -rn "pppppLiteral\|get_webstart_otp.ashx" internal/` returns nothing
 
 #### Manual
-- [ ] `task dev`, QR login, click 複製帳密 — `launcher-dev.log` shows
+- [x] `task dev`, QR login, click 複製帳密 — `launcher-dev.log` shows
       `FetchOTP: token acquired` and the OTP reaches the clipboard
-- [ ] the log contains no `LaunchTicket`, no `data` blob, and no OTP value
-- [ ] `security-reviewer` agent over `otp.go`, `client_integrity.go`, `wcdes.go`
-- [ ] `verifier` agent against this phase's checkpoint
+- [x] the log contains no `LaunchTicket`, no `data` blob, and no OTP value
+- [x] `security-reviewer` agent over `otp.go`, `client_integrity.go`, `wcdes.go`
+- [x] `verifier` agent against this phase's checkpoint
 
 ---
 

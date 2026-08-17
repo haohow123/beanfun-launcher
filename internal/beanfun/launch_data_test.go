@@ -18,6 +18,12 @@ func buildLaunchBlob(t *testing.T, selector int, key, plaintext string) string {
 	if len(key) != 8 {
 		t.Fatalf("key must be 8 chars, got %d", len(key))
 	}
+	// Only hex digits survive the normalisation the key is lifted from.
+	for i := 0; i < len(key); i++ {
+		if strings.IndexByte(hexDigits, key[i]) < 0 {
+			t.Fatalf("key must be hex digits, got %q", key)
+		}
+	}
 	if selector < 0 || selector > 15 {
 		t.Fatalf("selector must fit one hex digit, got %d", selector)
 	}
@@ -34,21 +40,23 @@ func buildLaunchBlob(t *testing.T, selector int, key, plaintext string) string {
 		block.Encrypt(cipher[i:i+des.BlockSize], padded[i:i+des.BlockSize])
 	}
 	cipherHex := hex.EncodeToString(cipher)
+	if selector+1 > len(cipherHex) {
+		t.Fatalf("selector %d exceeds cipher hex length %d", selector, len(cipherHex))
+	}
+	// The decoder normalises the whole blob before lifting the key out,
+	// so the key sits inside the normalised text.
+	norm := cipherHex[:selector+1] + key + cipherHex[selector+1:]
 
 	table := launchDataTables[selector%4]
 	var enc strings.Builder
-	for i := 0; i < len(cipherHex); i++ {
-		idx := strings.IndexByte(hexDigits, cipherHex[i])
+	for i := 0; i < len(norm); i++ {
+		idx := strings.IndexByte(hexDigits, norm[i])
 		if idx < 0 {
-			t.Fatalf("hex.EncodeToString produced %q at %d", cipherHex[i], i)
+			t.Fatalf("normalised text has non-hex character %q at %d", norm[i], i)
 		}
 		enc.WriteByte(table[idx])
 	}
-	encoded := enc.String()
-	if selector > len(encoded) {
-		t.Fatalf("selector %d exceeds encoded length %d", selector, len(encoded))
-	}
-	return hexDigits[selector:selector+1] + encoded[:selector] + key + encoded[selector:]
+	return hexDigits[selector:selector+1] + enc.String()
 }
 
 // Synthetic values only. Both follow an obvious repeating pattern so a
@@ -74,12 +82,12 @@ func TestDecodeLaunchData_RoundTrip(t *testing.T) {
 		selector int
 		key      string
 	}{
-		{name: "selector 0 selects table 0", selector: 0, key: "K3yA0000"},
-		{name: "selector 1 selects table 1", selector: 1, key: "K3yB1111"},
-		{name: "selector 2 selects table 2", selector: 2, key: "K3yC2222"},
-		{name: "selector 3 selects table 3", selector: 3, key: "K3yD3333"},
-		{name: "selector 8 wraps to table 0", selector: 8, key: "K3yE8888"},
-		{name: "selector 13 wraps to table 1", selector: 13, key: "K3yF1313"},
+		{name: "selector 0 selects table 0", selector: 0, key: "a1b2c3d4"},
+		{name: "selector 1 selects table 1", selector: 1, key: "b2c3d4e5"},
+		{name: "selector 2 selects table 2", selector: 2, key: "c3d4e5f6"},
+		{name: "selector 3 selects table 3", selector: 3, key: "d4e5f607"},
+		{name: "selector 8 wraps to table 0", selector: 8, key: "e5f60718"},
+		{name: "selector 13 wraps to table 1", selector: 13, key: "f6071829"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -137,8 +145,8 @@ func TestLaunchDataTables(t *testing.T) {
 }
 
 func TestDecodeLaunchData_Rejects(t *testing.T) {
-	valid := buildLaunchBlob(t, 8, "K3yE8888", testLaunchPlaintext())
-	shortTicket := buildLaunchBlob(t, 8, "K3yE8888",
+	valid := buildLaunchBlob(t, 8, "e5f60718", testLaunchPlaintext())
+	shortTicket := buildLaunchBlob(t, 8, "e5f60718",
 		"LaunchTicket="+testTicket[:63]+"&ServiceCode=610074")
 
 	tests := []struct {

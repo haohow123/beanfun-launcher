@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/des"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,14 +14,32 @@ import (
 	"testing"
 )
 
+// leakMarker is planted in fake page bodies; it must never appear in an
+// error message.
+const leakMarker = "SENSITIVE-BLOB-MARKER"
+
+// Synthetic launch ticket for the step-1 page fixture — 64 hex
+// characters in an obvious repeating pattern.
+const fixtureLaunchTicket = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+// fixtureLaunchBlob builds the m_objData `data` value the step-1 page
+// fixture carries, wrapping fixtureLaunchTicket.
+func fixtureLaunchBlob(t *testing.T, serviceAccount string) string {
+	t.Helper()
+	return buildLaunchBlob(t, 8, "0a1b2c3d",
+		"LaunchTicket="+fixtureLaunchTicket+
+			"&ServiceCode=610074&ServiceRegion=T9&ServiceAccount="+serviceAccount)
+}
+
 // happyStep1Body returns the inline-JS-bearing HTML that step 1
 // scrapes the long-polling key, unk_data, and createTime from.
-func happyStep1Body(key, unkK, unkV, createTime string) string {
+func happyStep1Body(key, unkK, unkV, createTime, blob string) string {
 	return fmt.Sprintf(`<html><body><script>
 var stuff = "GetResultByLongPolling&key=%s";
 var foo = MyAccountData.ServiceAccountCreateTime + "%s=%s";
 var bar = ServiceAccountCreateTime: "%s";
-</script></body></html>`, key, unkK, unkV, createTime)
+var m_objData = {"region": "TW;Production", "sn": "%s", "data": "%s"};
+</script></body></html>`, key, unkK, unkV, createTime, key, blob)
 }
 
 func happyStep2Body(secret string) string {
@@ -49,7 +68,7 @@ func encryptForFixture(t *testing.T, plaintext, key string) string {
 	return strings.ToUpper(hex.EncodeToString(cipher))
 }
 
-func TestDecryptOTP(t *testing.T) {
+func TestDecryptOTPPayload(t *testing.T) {
 	t.Parallel()
 	const key = "ABCD1234"
 	const plain = "XYZ12345"
@@ -57,50 +76,40 @@ func TestDecryptOTP(t *testing.T) {
 
 	cases := []struct {
 		name     string
-		envelope string
+		payload  string
 		want     string
 		wantKind LoginErrorKind
 	}{
 		{
-			name:     "happy path",
-			envelope: "1;" + key + cipher,
-			want:     plain,
+			name:    "happy path",
+			payload: key + cipher,
+			want:    plain,
 		},
 		{
-			name:     "empty envelope",
-			envelope: "",
-			wantKind: KindOTPServerRejected,
-		},
-		{
-			name:     "missing semicolon",
-			envelope: "1ABC",
-			wantKind: KindOTPServerRejected,
-		},
-		{
-			name:     "status not 1",
-			envelope: "0;something went wrong",
-			wantKind: KindOTPServerRejected,
+			name:     "empty payload",
+			payload:  "",
+			wantKind: KindOTPDecrypt,
 		},
 		{
 			name:     "payload too short",
-			envelope: "1;abc",
+			payload:  "abc",
 			wantKind: KindOTPDecrypt,
 		},
 		{
 			name:     "non-hex cipher",
-			envelope: "1;ABCD1234ZZZZ",
+			payload:  "ABCD1234ZZZZ",
 			wantKind: KindOTPDecrypt,
 		},
 		{
 			name:     "cipher not block aligned",
-			envelope: "1;ABCD1234DEADBEEF12", // hex => 5 bytes after 8-byte key
+			payload:  "ABCD1234DEADBEEF12", // hex => 5 bytes after 8-byte key
 			wantKind: KindOTPDecrypt,
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := decryptOTP(tc.envelope)
+			got, err := decryptOTPPayload(tc.payload)
 			if tc.wantKind != 0 {
 				var le *LoginError
 				if !errors.As(err, &le) || le.Kind != tc.wantKind {
@@ -109,7 +118,7 @@ func TestDecryptOTP(t *testing.T) {
 				return
 			}
 			if err != nil {
-				t.Fatalf("decryptOTP: %v", err)
+				t.Fatalf("decryptOTPPayload: %v", err)
 			}
 			if string(got) != tc.want {
 				t.Errorf("plaintext = %q, want %q", got, tc.want)
@@ -123,15 +132,17 @@ func TestDecryptOTP(t *testing.T) {
 type otpMuxRecorder struct {
 	step1Hits, step2Hits, step3Hits, step4Hits, step5Hits int
 	step3Body                                             string
-	step5RawQuery                                         string
+	v2Body                                                []byte
+	v2ContentType                                         string
 }
 
 func happyOTPMux(t *testing.T, rec *otpMuxRecorder, otpKey, otpPlain string) *http.ServeMux {
 	t.Helper()
+	blob := fixtureLaunchBlob(t, "T9abc123")
 	mux := http.NewServeMux()
 	mux.HandleFunc("/beanfun_block/game_zone/game_start_step2.aspx", func(w http.ResponseWriter, _ *http.Request) {
 		rec.step1Hits++
-		writeHTML(w, happyStep1Body("LONGKEY123", "u_k", "u_v", "2024-01-15 12:34:56"))
+		writeHTML(w, happyStep1Body("LONGKEY123", "u_k", "u_v", "2024-01-15 12:34:56", blob))
 	})
 	mux.HandleFunc("/generic_handlers/get_cookies.ashx", func(w http.ResponseWriter, _ *http.Request) {
 		rec.step2Hits++
@@ -147,11 +158,13 @@ func happyOTPMux(t *testing.T, rec *otpMuxRecorder, otpKey, otpPlain string) *ht
 		rec.step4Hits++
 		w.WriteHeader(http.StatusOK)
 	})
-	mux.HandleFunc("/beanfun_block/generic_handlers/get_webstart_otp.ashx", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/beanfun_block/generic_handlers/get_webstart_otp_v2.ashx", func(w http.ResponseWriter, r *http.Request) {
 		rec.step5Hits++
-		rec.step5RawQuery = r.URL.RawQuery
+		rec.v2Body, _ = io.ReadAll(r.Body)
+		rec.v2ContentType = r.Header.Get("Content-Type")
 		cipher := encryptForFixture(t, otpPlain, otpKey)
-		_, _ = fmt.Fprintf(w, "1;%s%s", otpKey, cipher)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"result":1,"data":"%s%s","message":null}`, otpKey, cipher)
 	})
 	return mux
 }
@@ -193,27 +206,46 @@ func TestBeanfunClient_FetchOTP_HappyPath(t *testing.T) {
 	if !strings.Contains(rec.step3Body, "service_account_id=T9abc123") {
 		t.Errorf("step3 body missing service_account_id: %q", rec.step3Body)
 	}
-	// Step 5 query must carry the literal ppppp value, the SN=key,
-	// and the %20-encoded CreateTime.
-	if !strings.Contains(rec.step5RawQuery, "ppppp="+pppppLiteral) {
-		t.Errorf("step5 missing ppppp literal: %q", rec.step5RawQuery)
+	if rec.v2ContentType != "application/json" {
+		t.Errorf("v2 Content-Type = %q, want application/json", rec.v2ContentType)
 	}
-	if !strings.Contains(rec.step5RawQuery, "SN=LONGKEY123") {
-		t.Errorf("step5 missing SN: %q", rec.step5RawQuery)
+	var sent map[string]any
+	if err := json.Unmarshal(rec.v2Body, &sent); err != nil {
+		t.Fatalf("v2 body is not JSON: %v", err)
 	}
-	if !strings.Contains(rec.step5RawQuery, "CreateTime=2024-01-15%2012:34:56") {
-		t.Errorf("step5 CreateTime not %%20-encoded: %q", rec.step5RawQuery)
+	// Exactly the five contract fields — a sixth would mean we are
+	// sending something the endpoint did not ask for.
+	if len(sent) != 5 {
+		t.Errorf("v2 body has %d keys, want 5: %v", len(sent), sent)
 	}
-	if !strings.Contains(rec.step5RawQuery, "WebToken=WEBTKN") {
-		t.Errorf("step5 missing WebToken: %q", rec.step5RawQuery)
+	// Literal expected values, so a changed constant fails here rather
+	// than agreeing with itself.
+	for _, f := range []struct{ key, want string }{
+		{"SN", "LONGKEY123"},
+		{"LaunchTicket", fixtureLaunchTicket},
+		{"CV", "1.5.0.2"},
+		{"Hash", "dfd568a69d87abcd8f4a93d1a4481ebb57712d1d28ab0b6fc018fcf140101e06"},
+	} {
+		if got, _ := sent[f.key].(string); got != f.want {
+			t.Errorf("v2 body %s = %q, want %q", f.key, got, f.want)
+		}
+	}
+	if arch, _ := sent["arch"].(string); arch != "x64" && arch != "x86" {
+		t.Errorf("v2 body arch = %q, want x64 or x86", arch)
 	}
 }
 
 func TestBeanfunClient_FetchOTP_Step1MissingLongPollingKey(t *testing.T) {
 	t.Parallel()
 	mux := http.NewServeMux()
+	// The body carries a handoff blob plus a marker. Neither may reach
+	// the error message: the blob decodes to a live LaunchTicket using
+	// only this package's tables and a key embedded in the blob.
+	leakBody := "<html>" + leakMarker + "<script>var m_objData = " +
+		`{"region": "TW;Production", "sn": "SN1", "data": "` +
+		fixtureLaunchBlob(t, "T9abc123") + `"};</script></html>`
 	mux.HandleFunc("/beanfun_block/game_zone/game_start_step2.aspx", func(w http.ResponseWriter, _ *http.Request) {
-		writeHTML(w, "<html>no key here</html>")
+		writeHTML(w, leakBody)
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -228,11 +260,17 @@ func TestBeanfunClient_FetchOTP_Step1MissingLongPollingKey(t *testing.T) {
 	if !errors.As(err, &le) || le.Kind != KindOTPInit {
 		t.Errorf("got %v, want KindOTPInit", err)
 	}
-	// Body preview must accompany the error so real-Beanfun logs
-	// capture what the server actually returned — that's how we'll
-	// finally identify the post-disconnect case.
-	if le != nil && !strings.Contains(le.Msg, "no key here") {
-		t.Errorf("error message missing body preview: %q", le.Msg)
+	if le == nil {
+		return
+	}
+	if strings.Contains(le.Msg, leakMarker) {
+		t.Errorf("error message echoes the page body: %q", le.Msg)
+	}
+	if strings.Contains(le.Msg, "body=") {
+		t.Errorf("error message carries a body preview: %q", le.Msg)
+	}
+	if strings.Contains(le.Msg, fixtureLaunchTicket) {
+		t.Errorf("error message leaks the launch ticket: %q", le.Msg)
 	}
 }
 
@@ -266,11 +304,12 @@ func TestBeanfunClient_FetchOTP_Step1SessionExpired(t *testing.T) {
 	}
 }
 
-func TestBeanfunClient_FetchOTP_Step5ServerRejects(t *testing.T) {
+func TestBeanfunClient_FetchOTP_V2ServerRejects(t *testing.T) {
 	t.Parallel()
+	blob := fixtureLaunchBlob(t, "s")
 	mux := http.NewServeMux()
 	mux.HandleFunc("/beanfun_block/game_zone/game_start_step2.aspx", func(w http.ResponseWriter, _ *http.Request) {
-		writeHTML(w, happyStep1Body("KEY", "u_k", "u_v", "2024-01-15 12:34:56"))
+		writeHTML(w, happyStep1Body("KEY", "u_k", "u_v", "2024-01-15 12:34:56", blob))
 	})
 	mux.HandleFunc("/generic_handlers/get_cookies.ashx", func(w http.ResponseWriter, _ *http.Request) {
 		writeHTML(w, happyStep2Body("SECRET"))
@@ -281,8 +320,9 @@ func TestBeanfunClient_FetchOTP_Step5ServerRejects(t *testing.T) {
 	mux.HandleFunc("/generic_handlers/get_result.ashx", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	mux.HandleFunc("/beanfun_block/generic_handlers/get_webstart_otp.ashx", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, "0;denied by server")
+	mux.HandleFunc("/beanfun_block/generic_handlers/get_webstart_otp_v2.ashx", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"result":0,"data":null,"message":"denied by server"}`)
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)

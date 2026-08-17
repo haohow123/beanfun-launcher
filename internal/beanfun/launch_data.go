@@ -41,18 +41,21 @@ func decodeLaunchData(data string) (launchInfo, error) {
 	if err != nil {
 		return launchInfo{}, ErrLaunchDataDecode("leading selector is not a hex digit")
 	}
-	keyStart := int(selector) + 1
-	if keyStart+keyLen > len(data) {
-		return launchInfo{}, ErrLaunchDataDecode(fmt.Sprintf(
-			"selector %d puts the key past the end of %d chars", selector, len(data)))
-	}
-	key := []byte(data[keyStart : keyStart+keyLen])
-	defer Zero(key)
-	cipherHex, err := normalizeLaunchHex(data[1:keyStart]+data[keyStart+keyLen:], launchDataTables[selector%4])
+	// The whole blob after the selector is normalised first; the DES key
+	// is then lifted out of the normalised text, which is why the key is
+	// always eight hex characters.
+	norm, err := normalizeLaunchHex(data[1:], launchDataTables[selector%4])
 	if err != nil {
 		return launchInfo{}, err
 	}
-	plain, err := desECBDecryptHex(key, cipherHex)
+	keyStart := int(selector) + 1
+	if keyStart+keyLen > len(norm) {
+		return launchInfo{}, ErrLaunchDataDecode(fmt.Sprintf(
+			"selector %d puts the key past the end of %d chars", selector, len(norm)))
+	}
+	key := []byte(norm[keyStart : keyStart+keyLen])
+	defer Zero(key)
+	plain, err := desECBDecryptHex(key, norm[:keyStart]+norm[keyStart+keyLen:])
 	if err != nil {
 		return launchInfo{}, err
 	}
