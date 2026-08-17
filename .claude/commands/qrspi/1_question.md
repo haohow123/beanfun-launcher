@@ -69,4 +69,5 @@ If given an issue reference, read it first: `gh issue view <number> --comments`.
 - The researcher who reads these questions should have no idea what feature is being built
 - Each question should target a different area or concern
 - If the task is too simple for 3 questions, tell the user — QRSPI is for complex tasks
-- These artifacts live under `docs/` and get committed on the feature branch. Until the first commit they are untracked — do not rely on them surviving a `git clean` from another session.
+- `docs/plans/` is gitignored: these artifacts stay out of version control permanently. They are process notes rather than product, and a capture taken while debugging can carry account details. Never `git add -f` them, and never paste their contents into a PR description or issue without checking what the debugging captured.
+- Because they are never tracked, nothing protects them from a `git clean` or a worktree removal. Keep a copy outside the repo for anything you would mind losing.

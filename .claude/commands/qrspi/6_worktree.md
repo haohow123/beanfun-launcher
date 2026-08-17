@@ -38,17 +38,22 @@ The artifact directory is `$ARGUMENTS`.
    ```
    This repo has no submodules, so no extra init step is needed.
 
-4. **Copy QRSPI artifacts** to the worktree. They are untracked until the first commit, and untracked files from the main tree do not appear in worktrees:
+4. **Copy QRSPI artifacts** to the worktree. `docs/plans/` is gitignored, so these files never appear in a worktree on their own and no commit will ever carry them across:
    ```
    mkdir -p ~/wt/<repo-name>/<short-name>/docs/plans
    cp -r $ARGUMENTS ~/wt/<repo-name>/<short-name>/$ARGUMENTS
    ```
 
-5. **Install frontend deps in the worktree.** `frontend/node_modules` is gitignored, so a fresh worktree has none and `task dev` will fail without this:
+5. **Install frontend deps and build the frontend once.** Both `frontend/node_modules` and
+   `frontend/dist` are gitignored, so a fresh worktree has neither:
    ```
-   cd ~/wt/<repo-name>/<short-name>/frontend && npm ci
+   cd ~/wt/<repo-name>/<short-name>/frontend && npm ci && npm run build
    ```
-   Skip only if the phases in `plan.md` are Go-only and never run the app.
+   `npm ci` is what `task dev` needs. `npm run build` is what **`go build ./...`** needs —
+   `main.go` embeds `all:frontend/dist`, so without it the build fails with
+   `pattern all:frontend/dist: no matching files found` before any code is touched. That
+   message means a missing prerequisite, not a regression. `go test ./internal/...` is
+   unaffected either way, since it never builds the root package.
 
 6. **Report the worktree path** and remind the user that git commands inside it must use `git -C <worktree-path>` (or be run from that directory) — the shell working directory does not persist between tool calls.
 
@@ -64,7 +69,7 @@ The artifact directory is `$ARGUMENTS`.
 - Always confirm before creating the worktree.
 - Worktrees do not share untracked files with the main tree. Always copy the artifact directory after creating the worktree.
 - Never create the branch on `main` and never commit to `main`.
-- When the work is finished, copy back anything in the worktree that is newer than the main tree before `git worktree remove` — removal deletes untracked files with it.
+- **`git worktree remove` deletes the artifacts with it.** `docs/plans/` is gitignored, so the worktree's copy is the only one that saw the implementation phases — copy it back to the main tree, or somewhere outside the repo, *before* removing the worktree. No commit will do this for you.
 - Do not start implementation. That's a separate phase with a separate context window.
 
 ## When to Go Back
