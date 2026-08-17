@@ -25,6 +25,9 @@ const (
 	KindOTPServerRejected
 	KindOTPDecrypt
 	KindSessionExpired
+	// Append new kinds here only; inserting renumbers the values the
+	// frontend receives.
+	KindLaunchDataDecode
 )
 
 // LoginError is the typed error returned by every Beanfun login step.
@@ -92,22 +95,21 @@ func ErrLoginRequired() *LoginError {
 	return &LoginError{Kind: KindLoginRequired, Msg: "login required: no active session"}
 }
 
-// ErrOTPInit covers step 1 / 2 of the OTP flow — scrape misses for
-// the long-polling key, secret code, create-time, or TW unk_data.
+// ErrOTPInit covers the OTP flow's page fetch — a missing or
+// unparseable m_objData handoff literal.
 func ErrOTPInit(msg string) *LoginError {
 	return &LoginError{Kind: KindOTPInit, Msg: "OTP init: " + msg}
 }
 
-// ErrOTPServerRejected is returned when step 5's envelope arrives
-// with a status segment other than "1". The payload portion of the
-// envelope is included verbatim for diagnostics (it's usually the
-// server's own error string).
+// ErrOTPServerRejected is returned when get_webstart_otp_v2.ashx
+// answers with a result other than 1, or omits a required field. The
+// server's own message is included verbatim for diagnostics.
 func ErrOTPServerRejected(rawPayload string) *LoginError {
 	return &LoginError{Kind: KindOTPServerRejected, Msg: "OTP server rejected: " + truncate(rawPayload, 200)}
 }
 
-// ErrOTPDecrypt covers all step-6 decryption failures: short
-// envelope, bad hex, non-block-aligned ciphertext, DES init failure.
+// ErrOTPDecrypt covers all DES-ECB decryption failures: short payload,
+// bad hex, non-block-aligned ciphertext, DES init failure.
 func ErrOTPDecrypt(msg string) *LoginError {
 	return &LoginError{Kind: KindOTPDecrypt, Msg: "OTP decrypt: " + msg}
 }
@@ -118,6 +120,13 @@ func ErrOTPDecrypt(msg string) *LoginError {
 // local state and route the user back to QR login.
 func ErrSessionExpired() *LoginError {
 	return &LoginError{Kind: KindSessionExpired, Msg: "beanfun session expired (尚未登入)"}
+}
+
+// ErrLaunchDataDecode is returned when the launch handoff blob cannot
+// be decoded. The reason must describe structure only — the blob
+// carries a live LaunchTicket.
+func ErrLaunchDataDecode(reason string) *LoginError {
+	return &LoginError{Kind: KindLaunchDataDecode, Msg: "launch data decode failed: " + reason}
 }
 
 // truncate returns up to n bytes of s with a "…" marker if it was

@@ -83,3 +83,59 @@ func TestNormalizeDeeplink(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractLaunchHandoff(t *testing.T) {
+	t.Parallel()
+	const page = `<script>
+	var m_objData = {
+		"region": "TW;Production",
+		"sn": "b1e2d3c4-0000-1111-2222-33445566aabb",
+		"data": "8abcdefghij"
+	};
+	function LaunchGame() { parent.GGM.SmartLaunch(m_objData); }
+	</script>`
+
+	tests := []struct {
+		name   string
+		body   string
+		ok     bool
+		region string
+		sn     string
+		data   string
+	}{
+		{
+			name:   "full literal",
+			body:   page,
+			ok:     true,
+			region: "TW;Production",
+			sn:     "b1e2d3c4-0000-1111-2222-33445566aabb",
+			data:   "8abcdefghij",
+		},
+		{name: "absent", body: `<script>var other = 1;</script>`},
+		{name: "not valid JSON", body: `var m_objData = {"region": "TW", oops};`},
+		{name: "missing sn", body: `var m_objData = {"region": "TW", "data": "8abc"};`},
+		{name: "missing data", body: `var m_objData = {"region": "TW", "sn": "abc"};`},
+		{name: "empty data", body: `var m_objData = {"region": "TW", "sn": "abc", "data": ""};`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, ok := extractLaunchHandoff(tt.body)
+			if ok != tt.ok {
+				t.Fatalf("ok = %v, want %v", ok, tt.ok)
+			}
+			if !tt.ok {
+				return
+			}
+			if got.Region != tt.region {
+				t.Errorf("Region = %q, want %q", got.Region, tt.region)
+			}
+			if got.SN != tt.sn {
+				t.Errorf("SN = %q, want %q", got.SN, tt.sn)
+			}
+			if got.Data != tt.data {
+				t.Errorf("Data = %q, want %q", got.Data, tt.data)
+			}
+		})
+	}
+}

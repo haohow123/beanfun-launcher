@@ -23,8 +23,10 @@ const (
 // Endpoints holds the base URLs the Beanfun login flow touches. Tests
 // swap these for an httptest.Server via NewBeanfunClientWithEndpoints.
 type Endpoints struct {
-	LoginBase    *url.URL // https://login.beanfun.com/
-	PortalBase   *url.URL // https://tw.beanfun.com/
+	LoginBase  *url.URL // https://login.beanfun.com/
+	PortalBase *url.URL // https://tw.beanfun.com/
+	// NewloginBase is reached only by following the portal's Step-0
+	// redirect, never dialled directly — no code builds URLs from it.
 	NewloginBase *url.URL // https://tw.newlogin.beanfun.com/
 }
 
@@ -144,17 +146,6 @@ func (c *BeanfunClient) portalURL(path string) (*url.URL, error) {
 	u, err := c.endpoints.PortalBase.Parse(path)
 	if err != nil {
 		return nil, ErrHTTP(fmt.Errorf("portalURL.Parse(%q): %w", path, err))
-	}
-	return u, nil
-}
-
-// newloginURL joins path onto NewloginBase. Used by the OTP flow's
-// step 2 (TW's get_cookies.ashx lives on the newlogin host, not the
-// regular login host).
-func (c *BeanfunClient) newloginURL(path string) (*url.URL, error) {
-	u, err := c.endpoints.NewloginBase.Parse(path)
-	if err != nil {
-		return nil, ErrHTTP(fmt.Errorf("newloginURL.Parse(%q): %w", path, err))
 	}
 	return u, nil
 }

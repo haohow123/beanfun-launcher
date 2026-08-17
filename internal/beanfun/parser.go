@@ -1,6 +1,7 @@
 package beanfun
 
 import (
+	"encoding/json"
 	"net/url"
 	"regexp"
 	"sort"
@@ -28,32 +29,10 @@ var (
 	verificationTokenRE = sync.OnceValue(func() *regexp.Regexp {
 		return regexp.MustCompile(`__RequestVerificationToken[^>]+value="([^"]+)"`)
 	})
-
-	// Step-1 OTP scrapers — all match inline JS literals embedded in
-	// game_start_step2.aspx's HTML body. Per Beanfun the patterns are:
-	//
-	//   GetResultByLongPolling&key=KEYVAL"
-	//   MyAccountData.ServiceAccountCreateTime + "KEY=VALUE";
-	//   ServiceAccountCreateTime: "2024-01-15 12:34:56";
-	//
-	// And step-2's get_cookies.ashx body has:
-	//
-	//   var m_strSecretCode = 'CODE';
-	//
-	// `.` is the byte wildcard (Go's regexp doesn't match newlines by
-	// default), so each capture stops at the closing terminator on the
-	// same line — exactly what the JS-literal form provides.
-	longPollingKeyRE = sync.OnceValue(func() *regexp.Regexp {
-		return regexp.MustCompile(`GetResultByLongPolling&key=(.*)"`)
-	})
-	unkDataRE = sync.OnceValue(func() *regexp.Regexp {
-		return regexp.MustCompile(`MyAccountData.ServiceAccountCreateTime \+ "(.*)=(.*)";`)
-	})
-	createTimeFallbackRE = sync.OnceValue(func() *regexp.Regexp {
-		return regexp.MustCompile(`ServiceAccountCreateTime: "([^"]+)"`)
-	})
-	secretCodeRE = sync.OnceValue(func() *regexp.Regexp {
-		return regexp.MustCompile(`var m_strSecretCode = '(.*)';`)
+	// The launch handoff literal is a JSON object; `[^}]*` keeps the
+	// match from running past it into the rest of the script.
+	launchHandoffRE = sync.OnceValue(func() *regexp.Regexp {
+		return regexp.MustCompile(`var\s+m_objData\s*=\s*(\{[^}]*\})`)
 	})
 )
 
@@ -77,6 +56,33 @@ func extractVerificationToken(htmlBody string) string {
 		return ""
 	}
 	return m[1]
+}
+
+// launchHandoff is the m_objData literal game_start_step2.aspx hands
+// to Gamania's native launcher. Data carries an encrypted
+// LaunchTicket, so it must never be logged.
+type launchHandoff struct {
+	Region string `json:"region"`
+	SN     string `json:"sn"`
+	Data   string `json:"data"`
+}
+
+// extractLaunchHandoff pulls the m_objData literal out of
+// game_start_step2.aspx. Returns false when it is absent, unparseable,
+// or missing either value the OTP request needs.
+func extractLaunchHandoff(htmlBody string) (launchHandoff, bool) {
+	m := launchHandoffRE().FindStringSubmatch(htmlBody)
+	if len(m) < 2 {
+		return launchHandoff{}, false
+	}
+	var h launchHandoff
+	if err := json.Unmarshal([]byte(m[1]), &h); err != nil {
+		return launchHandoff{}, false
+	}
+	if h.SN == "" || h.Data == "" {
+		return launchHandoff{}, false
+	}
+	return h, true
 }
 
 // extractHiddenInputs streams the body's tokens and collects every
@@ -185,60 +191,6 @@ func extractAccounts(body string) []Account {
 		return out[i].SSN < out[j].SSN
 	})
 	return out
-}
-
-// extractLongPollingKey scrapes the inline JS
-// `GetResultByLongPolling&key=VALUE"` literal from
-// game_start_step2.aspx's response body. Returns "" if absent —
-// callers treat that as a fatal OTP-init failure.
-func extractLongPollingKey(htmlBody string) string {
-	m := longPollingKeyRE().FindStringSubmatch(htmlBody)
-	if len(m) < 2 {
-		return ""
-	}
-	return m[1]
-}
-
-// extractUnkData scrapes the TW-only inline JS literal
-// `MyAccountData.ServiceAccountCreateTime + "K=V";`, percent-decoding
-// both halves. Returns ("", "", false) if absent — callers treat as
-// a fatal TW init failure (HK never emits this literal, which is fine
-// because we're TW-only anyway).
-func extractUnkData(htmlBody string) (key, value string, ok bool) {
-	m := unkDataRE().FindStringSubmatch(htmlBody)
-	if len(m) < 3 {
-		return "", "", false
-	}
-	k, err := url.QueryUnescape(m[1])
-	if err != nil {
-		return "", "", false
-	}
-	v, err := url.QueryUnescape(m[2])
-	if err != nil {
-		return "", "", false
-	}
-	return k, v, true
-}
-
-// extractCreateTimeFallback scrapes the `ServiceAccountCreateTime:
-// "..."` literal — used as a fallback when the caller doesn't
-// already hold an account's createTime. Returns "" if absent.
-func extractCreateTimeFallback(htmlBody string) string {
-	m := createTimeFallbackRE().FindStringSubmatch(htmlBody)
-	if len(m) < 2 {
-		return ""
-	}
-	return m[1]
-}
-
-// extractSecretCode scrapes the `var m_strSecretCode = 'VALUE';`
-// literal from get_cookies.ashx's response body. Returns "" if absent.
-func extractSecretCode(htmlBody string) string {
-	m := secretCodeRE().FindStringSubmatch(htmlBody)
-	if len(m) < 2 {
-		return ""
-	}
-	return m[1]
 }
 
 // normalizeDeeplink unwraps the play.games.gamania.com deeplink
