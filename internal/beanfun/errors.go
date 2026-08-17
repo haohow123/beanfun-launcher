@@ -25,6 +25,9 @@ const (
 	KindOTPServerRejected
 	KindOTPDecrypt
 	KindSessionExpired
+	// Append new kinds here only; inserting renumbers the values the
+	// frontend receives.
+	KindLaunchDataDecode
 )
 
 // LoginError is the typed error returned by every Beanfun login step.
@@ -118,6 +121,13 @@ func ErrOTPDecrypt(msg string) *LoginError {
 // local state and route the user back to QR login.
 func ErrSessionExpired() *LoginError {
 	return &LoginError{Kind: KindSessionExpired, Msg: "beanfun session expired (尚未登入)"}
+}
+
+// ErrLaunchDataDecode is returned when the launch handoff blob cannot
+// be decoded. The reason must describe structure only — the blob
+// carries a live LaunchTicket.
+func ErrLaunchDataDecode(reason string) *LoginError {
+	return &LoginError{Kind: KindLaunchDataDecode, Msg: "launch data decode failed: " + reason}
 }
 
 // truncate returns up to n bytes of s with a "…" marker if it was

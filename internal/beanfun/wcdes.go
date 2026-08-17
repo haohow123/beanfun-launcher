@@ -45,8 +45,12 @@ func decryptOTP(envelope string) ([]byte, error) {
 	if len(payload) < 8 {
 		return nil, ErrOTPDecrypt(fmt.Sprintf("payload < 8 bytes (got %d)", len(payload)))
 	}
-	key := []byte(payload[:8])
-	cipherHex := payload[8:]
+	return desECBDecryptHex([]byte(payload[:8]), payload[8:])
+}
+
+// desECBDecryptHex decrypts hex-encoded ciphertext with an 8-byte
+// ASCII key using DES-ECB and no padding.
+func desECBDecryptHex(key []byte, cipherHex string) ([]byte, error) {
 	cipherBytes, err := hex.DecodeString(cipherHex)
 	if err != nil {
 		return nil, ErrOTPDecrypt("hex decode: " + err.Error())

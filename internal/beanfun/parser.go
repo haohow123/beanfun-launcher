@@ -1,6 +1,7 @@
 package beanfun
 
 import (
+	"encoding/json"
 	"net/url"
 	"regexp"
 	"sort"
@@ -27,6 +28,11 @@ var (
 	// for one node.
 	verificationTokenRE = sync.OnceValue(func() *regexp.Regexp {
 		return regexp.MustCompile(`__RequestVerificationToken[^>]+value="([^"]+)"`)
+	})
+	// The launch handoff literal is a JSON object; `[^}]*` keeps the
+	// match from running past it into the rest of the script.
+	launchHandoffRE = sync.OnceValue(func() *regexp.Regexp {
+		return regexp.MustCompile(`var\s+m_objData\s*=\s*(\{[^}]*\})`)
 	})
 
 	// Step-1 OTP scrapers — all match inline JS literals embedded in
@@ -77,6 +83,33 @@ func extractVerificationToken(htmlBody string) string {
 		return ""
 	}
 	return m[1]
+}
+
+// launchHandoff is the m_objData literal game_start_step2.aspx hands
+// to Gamania's native launcher. Data carries an encrypted
+// LaunchTicket, so it must never be logged.
+type launchHandoff struct {
+	Region string `json:"region"`
+	SN     string `json:"sn"`
+	Data   string `json:"data"`
+}
+
+// extractLaunchHandoff pulls the m_objData literal out of
+// game_start_step2.aspx. Returns false when it is absent, unparseable,
+// or missing either value the OTP request needs.
+func extractLaunchHandoff(htmlBody string) (launchHandoff, bool) {
+	m := launchHandoffRE().FindStringSubmatch(htmlBody)
+	if len(m) < 2 {
+		return launchHandoff{}, false
+	}
+	var h launchHandoff
+	if err := json.Unmarshal([]byte(m[1]), &h); err != nil {
+		return launchHandoff{}, false
+	}
+	if h.SN == "" || h.Data == "" {
+		return launchHandoff{}, false
+	}
+	return h, true
 }
 
 // extractHiddenInputs streams the body's tokens and collects every
