@@ -435,22 +435,22 @@ callers left once steps 2-3 are gone, and `extractCreateTimeFallback` was only u
 ### Verification
 
 #### Automated
-- [ ] `gofmt -l .` prints nothing
-- [ ] `golangci-lint run` passes
-- [ ] `go build ./...` succeeds
-- [ ] `go test ./internal/beanfun/` passes
-- [ ] `grep -rn "otpStep2\|otpStep3\|otpStep4\|extractSecretCode\|extractUnkData\|extractCreateTimeFallback\|extractLongPollingKey" internal/` returns nothing
-- [ ] `grep -c 'MustCompile' internal/beanfun/parser.go` is **exactly 3** — `sessionKeyRE`,
+- [x] `gofmt -l .` prints nothing
+- [x] `golangci-lint run` passes
+- [x] `go build ./...` succeeds
+- [x] `go test ./internal/beanfun/` passes
+- [x] `grep -rn "otpStep2\|otpStep3\|otpStep4\|extractSecretCode\|extractUnkData\|extractCreateTimeFallback\|extractLongPollingKey" internal/` returns nothing
+- [x] `grep -c 'MustCompile' internal/beanfun/parser.go` is **exactly 3** — `sessionKeyRE`,
       `verificationTokenRE`, `launchHandoffRE`. It is 6 today, phase 1 adds one (7), and this
       phase deletes four. An absolute number, because a relative one passes whether or not the
       right regexes went.
 
 #### Manual
-- [ ] `task dev`, QR login, 複製帳密 — still `FetchOTP: token acquired`.
+- [ ] `task dev`, QR login, 複製帳密 — still `FetchOTP: token acquired`. **PENDING — repo owner AFK; blocks merge.**
       **If this now fails, steps 3-4 were load-bearing** (design.md Open Risks): restore them,
       stop, and report rather than debugging forward.
-- [ ] `security-reviewer` agent over `otp.go`, `parser.go`
-- [ ] `verifier` agent against this phase's checkpoint
+- [x] `security-reviewer` agent over `otp.go`, `parser.go`
+- [x] `verifier` agent against this phase's checkpoint
 
 ---
 

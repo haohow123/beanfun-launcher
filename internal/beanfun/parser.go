@@ -34,33 +34,6 @@ var (
 	launchHandoffRE = sync.OnceValue(func() *regexp.Regexp {
 		return regexp.MustCompile(`var\s+m_objData\s*=\s*(\{[^}]*\})`)
 	})
-
-	// Step-1 OTP scrapers — all match inline JS literals embedded in
-	// game_start_step2.aspx's HTML body. Per Beanfun the patterns are:
-	//
-	//   GetResultByLongPolling&key=KEYVAL"
-	//   MyAccountData.ServiceAccountCreateTime + "KEY=VALUE";
-	//   ServiceAccountCreateTime: "2024-01-15 12:34:56";
-	//
-	// And step-2's get_cookies.ashx body has:
-	//
-	//   var m_strSecretCode = 'CODE';
-	//
-	// `.` is the byte wildcard (Go's regexp doesn't match newlines by
-	// default), so each capture stops at the closing terminator on the
-	// same line — exactly what the JS-literal form provides.
-	longPollingKeyRE = sync.OnceValue(func() *regexp.Regexp {
-		return regexp.MustCompile(`GetResultByLongPolling&key=(.*)"`)
-	})
-	unkDataRE = sync.OnceValue(func() *regexp.Regexp {
-		return regexp.MustCompile(`MyAccountData.ServiceAccountCreateTime \+ "(.*)=(.*)";`)
-	})
-	createTimeFallbackRE = sync.OnceValue(func() *regexp.Regexp {
-		return regexp.MustCompile(`ServiceAccountCreateTime: "([^"]+)"`)
-	})
-	secretCodeRE = sync.OnceValue(func() *regexp.Regexp {
-		return regexp.MustCompile(`var m_strSecretCode = '(.*)';`)
-	})
 )
 
 // sessionKeyFromURL extracts the pSKey/skey value from a URL string.
@@ -218,60 +191,6 @@ func extractAccounts(body string) []Account {
 		return out[i].SSN < out[j].SSN
 	})
 	return out
-}
-
-// extractLongPollingKey scrapes the inline JS
-// `GetResultByLongPolling&key=VALUE"` literal from
-// game_start_step2.aspx's response body. Returns "" if absent —
-// callers treat that as a fatal OTP-init failure.
-func extractLongPollingKey(htmlBody string) string {
-	m := longPollingKeyRE().FindStringSubmatch(htmlBody)
-	if len(m) < 2 {
-		return ""
-	}
-	return m[1]
-}
-
-// extractUnkData scrapes the TW-only inline JS literal
-// `MyAccountData.ServiceAccountCreateTime + "K=V";`, percent-decoding
-// both halves. Returns ("", "", false) if absent — callers treat as
-// a fatal TW init failure (HK never emits this literal, which is fine
-// because we're TW-only anyway).
-func extractUnkData(htmlBody string) (key, value string, ok bool) {
-	m := unkDataRE().FindStringSubmatch(htmlBody)
-	if len(m) < 3 {
-		return "", "", false
-	}
-	k, err := url.QueryUnescape(m[1])
-	if err != nil {
-		return "", "", false
-	}
-	v, err := url.QueryUnescape(m[2])
-	if err != nil {
-		return "", "", false
-	}
-	return k, v, true
-}
-
-// extractCreateTimeFallback scrapes the `ServiceAccountCreateTime:
-// "..."` literal — used as a fallback when the caller doesn't
-// already hold an account's createTime. Returns "" if absent.
-func extractCreateTimeFallback(htmlBody string) string {
-	m := createTimeFallbackRE().FindStringSubmatch(htmlBody)
-	if len(m) < 2 {
-		return ""
-	}
-	return m[1]
-}
-
-// extractSecretCode scrapes the `var m_strSecretCode = 'VALUE';`
-// literal from get_cookies.ashx's response body. Returns "" if absent.
-func extractSecretCode(htmlBody string) string {
-	m := secretCodeRE().FindStringSubmatch(htmlBody)
-	if len(m) < 2 {
-		return ""
-	}
-	return m[1]
 }
 
 // normalizeDeeplink unwraps the play.games.gamania.com deeplink

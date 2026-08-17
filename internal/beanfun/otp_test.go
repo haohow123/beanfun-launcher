@@ -42,10 +42,6 @@ var m_objData = {"region": "TW;Production", "sn": "%s", "data": "%s"};
 </script></body></html>`, key, unkK, unkV, createTime, key, blob)
 }
 
-func happyStep2Body(secret string) string {
-	return fmt.Sprintf(`<html><body><script>var m_strSecretCode = '%s';</script></body></html>`, secret)
-}
-
 // encryptForFixture takes a plaintext OTP and a key, ECB-encrypts the
 // padded plaintext to produce a step-5 cipher hex string. Used by the
 // happy-path test to build a fixture without hardcoding magic bytes.
@@ -127,16 +123,19 @@ func TestDecryptOTPPayload(t *testing.T) {
 	}
 }
 
-// otpMux stubs all 6 routes for a happy-path OTP fetch. Per-route
-// hits are recorded so callers can assert ordering / request shape.
+// otpMuxRecorder records the two routes a happy-path OTP fetch touches,
+// plus a total request count so a revived priming step is caught.
 type otpMuxRecorder struct {
-	step1Hits, step2Hits, step3Hits, step4Hits, step5Hits int
-	step3Body                                             string
-	v2Body                                                []byte
-	v2ContentType                                         string
+	step1Hits, v2Hits int
+	// totalRequests counts every request the mux sees, including paths
+	// the flow should no longer touch — a revived step would show up
+	// here even without its own handler.
+	totalRequests int
+	v2Body        []byte
+	v2ContentType string
 }
 
-func happyOTPMux(t *testing.T, rec *otpMuxRecorder, otpKey, otpPlain string) *http.ServeMux {
+func happyOTPMux(t *testing.T, rec *otpMuxRecorder, otpKey, otpPlain string) http.Handler {
 	t.Helper()
 	blob := fixtureLaunchBlob(t, "T9abc123")
 	mux := http.NewServeMux()
@@ -144,29 +143,18 @@ func happyOTPMux(t *testing.T, rec *otpMuxRecorder, otpKey, otpPlain string) *ht
 		rec.step1Hits++
 		writeHTML(w, happyStep1Body("LONGKEY123", "u_k", "u_v", "2024-01-15 12:34:56", blob))
 	})
-	mux.HandleFunc("/generic_handlers/get_cookies.ashx", func(w http.ResponseWriter, _ *http.Request) {
-		rec.step2Hits++
-		writeHTML(w, happyStep2Body("SECRET_XYZ"))
-	})
-	mux.HandleFunc("/beanfun_block/generic_handlers/record_service_start.ashx", func(w http.ResponseWriter, r *http.Request) {
-		rec.step3Hits++
-		bs, _ := io.ReadAll(r.Body)
-		rec.step3Body = string(bs)
-		w.WriteHeader(http.StatusOK)
-	})
-	mux.HandleFunc("/generic_handlers/get_result.ashx", func(w http.ResponseWriter, _ *http.Request) {
-		rec.step4Hits++
-		w.WriteHeader(http.StatusOK)
-	})
 	mux.HandleFunc("/beanfun_block/generic_handlers/get_webstart_otp_v2.ashx", func(w http.ResponseWriter, r *http.Request) {
-		rec.step5Hits++
+		rec.v2Hits++
 		rec.v2Body, _ = io.ReadAll(r.Body)
 		rec.v2ContentType = r.Header.Get("Content-Type")
 		cipher := encryptForFixture(t, otpPlain, otpKey)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprintf(w, `{"result":1,"data":"%s%s","message":null}`, otpKey, cipher)
 	})
-	return mux
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rec.totalRequests++
+		mux.ServeHTTP(w, r)
+	})
 }
 
 func TestBeanfunClient_FetchOTP_HappyPath(t *testing.T) {
@@ -194,17 +182,13 @@ func TestBeanfunClient_FetchOTP_HappyPath(t *testing.T) {
 	if string(got.Token) != "OTP56789" {
 		t.Errorf("Token = %q, want OTP56789", got.Token)
 	}
-	if rec.step1Hits != 1 || rec.step2Hits != 1 || rec.step3Hits != 1 ||
-		rec.step4Hits != 1 || rec.step5Hits != 1 {
-		t.Errorf("step hits = (1,2,3,4,5) = (%d,%d,%d,%d,%d), want all 1",
-			rec.step1Hits, rec.step2Hits, rec.step3Hits, rec.step4Hits, rec.step5Hits)
+	if rec.step1Hits != 1 || rec.v2Hits != 1 {
+		t.Errorf("hits = (step1 %d, v2 %d), want (1, 1)", rec.step1Hits, rec.v2Hits)
 	}
-	// Step 3 form should include the unk_data key
-	if !strings.Contains(rec.step3Body, "u_k=u_v") {
-		t.Errorf("step3 body missing unk_data: %q", rec.step3Body)
-	}
-	if !strings.Contains(rec.step3Body, "service_account_id=T9abc123") {
-		t.Errorf("step3 body missing service_account_id: %q", rec.step3Body)
+	// Exactly two requests: the page fetch and the v2 POST. A revived
+	// priming step, a retry, or a new call would push this above 2.
+	if rec.totalRequests != 2 {
+		t.Errorf("total requests = %d, want exactly 2", rec.totalRequests)
 	}
 	if rec.v2ContentType != "application/json" {
 		t.Errorf("v2 Content-Type = %q, want application/json", rec.v2ContentType)
@@ -235,42 +219,56 @@ func TestBeanfunClient_FetchOTP_HappyPath(t *testing.T) {
 	}
 }
 
-func TestBeanfunClient_FetchOTP_Step1MissingLongPollingKey(t *testing.T) {
+func TestBeanfunClient_FetchOTP_Step1HandoffFailures(t *testing.T) {
 	t.Parallel()
-	mux := http.NewServeMux()
-	// The body carries a handoff blob plus a marker. Neither may reach
-	// the error message: the blob decodes to a live LaunchTicket using
-	// only this package's tables and a key embedded in the blob.
-	leakBody := "<html>" + leakMarker + "<script>var m_objData = " +
-		`{"region": "TW;Production", "sn": "SN1", "data": "` +
-		fixtureLaunchBlob(t, "T9abc123") + `"};</script></html>`
-	mux.HandleFunc("/beanfun_block/game_zone/game_start_step2.aspx", func(w http.ResponseWriter, _ *http.Request) {
-		writeHTML(w, leakBody)
-	})
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-	c, err := NewBeanfunClientWithEndpoints(stubEndpoints(t, srv))
-	if err != nil {
-		t.Fatal(err)
+	// Both bodies plant leakMarker. The page carries m_objData, whose
+	// blob decodes to a live LaunchTicket using only this package's
+	// tables and a key embedded in the blob — so no part of the body may
+	// reach an error message.
+	tests := []struct {
+		name     string
+		body     string
+		wantKind LoginErrorKind
+	}{
+		{
+			name:     "handoff absent",
+			body:     "<html>" + leakMarker + " no m_objData here</html>",
+			wantKind: KindOTPInit,
+		},
+		{
+			name: "handoff undecodable",
+			body: "<html>" + leakMarker + `<script>var m_objData = ` +
+				`{"region": "TW;Production", "sn": "SN1", "data": "0zzzzyyyyxxxx"};</script></html>`,
+			wantKind: KindLaunchDataDecode,
+		},
 	}
-	_, err = c.FetchOTP(context.Background(),
-		&Session{ServiceCode: "x", ServiceRegion: "y", WebToken: "z"},
-		Account{SID: "s", SSN: "1", SName: "n"})
-	var le *LoginError
-	if !errors.As(err, &le) || le.Kind != KindOTPInit {
-		t.Errorf("got %v, want KindOTPInit", err)
-	}
-	if le == nil {
-		return
-	}
-	if strings.Contains(le.Msg, leakMarker) {
-		t.Errorf("error message echoes the page body: %q", le.Msg)
-	}
-	if strings.Contains(le.Msg, "body=") {
-		t.Errorf("error message carries a body preview: %q", le.Msg)
-	}
-	if strings.Contains(le.Msg, fixtureLaunchTicket) {
-		t.Errorf("error message leaks the launch ticket: %q", le.Msg)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			mux := http.NewServeMux()
+			mux.HandleFunc("/beanfun_block/game_zone/game_start_step2.aspx", func(w http.ResponseWriter, _ *http.Request) {
+				writeHTML(w, tc.body)
+			})
+			srv := httptest.NewServer(mux)
+			t.Cleanup(srv.Close)
+			c, err := NewBeanfunClientWithEndpoints(stubEndpoints(t, srv))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = c.FetchOTP(context.Background(),
+				&Session{ServiceCode: "x", ServiceRegion: "y", WebToken: "z"},
+				Account{SID: "s", SSN: "1", SName: "n"})
+			var le *LoginError
+			if !errors.As(err, &le) || le.Kind != tc.wantKind {
+				t.Fatalf("got %v, want Kind=%d", err, tc.wantKind)
+			}
+			if strings.Contains(le.Msg, leakMarker) {
+				t.Errorf("error message echoes the page body: %q", le.Msg)
+			}
+			if strings.Contains(le.Msg, "body=") {
+				t.Errorf("error message carries a body preview: %q", le.Msg)
+			}
+		})
 	}
 }
 
@@ -310,15 +308,6 @@ func TestBeanfunClient_FetchOTP_V2ServerRejects(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/beanfun_block/game_zone/game_start_step2.aspx", func(w http.ResponseWriter, _ *http.Request) {
 		writeHTML(w, happyStep1Body("KEY", "u_k", "u_v", "2024-01-15 12:34:56", blob))
-	})
-	mux.HandleFunc("/generic_handlers/get_cookies.ashx", func(w http.ResponseWriter, _ *http.Request) {
-		writeHTML(w, happyStep2Body("SECRET"))
-	})
-	mux.HandleFunc("/beanfun_block/generic_handlers/record_service_start.ashx", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-	mux.HandleFunc("/generic_handlers/get_result.ashx", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
 	})
 	mux.HandleFunc("/beanfun_block/generic_handlers/get_webstart_otp_v2.ashx", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

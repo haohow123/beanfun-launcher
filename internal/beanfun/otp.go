@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
-	"strings"
 	"time"
 )
 
@@ -19,14 +17,10 @@ type OTPResult struct {
 	Token []byte
 }
 
-// otpStep1 captures the values step 1 extracts from
-// game_start_step2.aspx that downstream steps need.
+// otpStep1 carries the handoff literal scraped from
+// game_start_step2.aspx.
 type otpStep1 struct {
-	longPollingKey string
-	unkDataKey     string // TW only — extra form field for step 3
-	unkDataValue   string
-	createTime     string // YYYY-MM-DD HH:MM:SS; passed through to step 3
-	handoff        launchHandoff
+	handoff launchHandoff
 }
 
 // FetchOTP fetches game_start_step2.aspx, decodes the LaunchTicket out
@@ -41,15 +35,6 @@ func (c *BeanfunClient) FetchOTP(ctx context.Context, sess *Session, acc Account
 
 	step1, err := c.otpStep1(ctx, sess, acc)
 	if err != nil {
-		return OTPResult{}, err
-	}
-	if _, err := c.otpStep2(ctx); err != nil {
-		return OTPResult{}, err
-	}
-	if err := c.otpStep3(ctx, sess, acc, step1); err != nil {
-		return OTPResult{}, err
-	}
-	if err := c.otpStep4(ctx, step1.longPollingKey); err != nil {
 		return OTPResult{}, err
 	}
 	info, err := decodeLaunchData(step1.handoff.Data)
@@ -69,8 +54,7 @@ func (c *BeanfunClient) FetchOTP(ctx context.Context, sess *Session, acc Account
 	return OTPResult{Token: token}, nil
 }
 
-// otpStep1: GET game_start_step2.aspx; scrape the long-polling key,
-// the TW unk_data pair, and the createTime fallback.
+// otpStep1: GET game_start_step2.aspx; scrape the m_objData handoff.
 func (c *BeanfunClient) otpStep1(ctx context.Context, sess *Session, acc Account) (otpStep1, error) {
 	u, err := c.portalURL("beanfun_block/game_zone/game_start_step2.aspx")
 	if err != nil {
@@ -103,140 +87,17 @@ func (c *BeanfunClient) otpStep1(ctx context.Context, sess *Session, acc Account
 	if isSessionExpiredBody(bodyStr) {
 		return otpStep1{}, ErrSessionExpired()
 	}
-	// No withBody anywhere in this function: the page carries m_objData,
-	// whose blob decodes to a live LaunchTicket with nothing but the
-	// tables in this package and the key embedded in the blob itself.
-	key := extractLongPollingKey(bodyStr)
-	if key == "" {
-		return otpStep1{}, ErrOTPInit(fmt.Sprintf(
-			"missing GetResultByLongPolling key in game_start_step2.aspx (body %d bytes)", len(bodyStr)))
-	}
-	uk, uv, ok := extractUnkData(bodyStr)
-	if !ok {
-		return otpStep1{}, ErrOTPInit(fmt.Sprintf(
-			"missing MyAccountData unk_data literal (body %d bytes)", len(bodyStr)))
-	}
-	createTime := extractCreateTimeFallback(bodyStr)
-	if createTime == "" {
-		return otpStep1{}, ErrOTPInit(fmt.Sprintf(
-			"missing ServiceAccountCreateTime (body %d bytes)", len(bodyStr)))
-	}
+	// No withBody: the page carries m_objData, whose blob decodes to a
+	// live LaunchTicket with nothing but the tables in this package and
+	// the key embedded in the blob itself.
 	handoff, ok := extractLaunchHandoff(bodyStr)
 	if !ok {
 		return otpStep1{}, ErrOTPInit(fmt.Sprintf(
 			"m_objData not found in game_start_step2.aspx (body %d bytes)", len(bodyStr)))
 	}
 	slog.Info("FetchOTP step 1: game_start_step2.aspx",
-		"long_polling_key_len", len(key),
-		"create_time", createTime,
 		"handoff_data_len", len(handoff.Data))
-	return otpStep1{
-		longPollingKey: key,
-		unkDataKey:     uk,
-		unkDataValue:   uv,
-		createTime:     createTime,
-		handoff:        handoff,
-	}, nil
-}
-
-// otpStep2: GET get_cookies.ashx on the newlogin host; scrape
-// m_strSecretCode.
-func (c *BeanfunClient) otpStep2(ctx context.Context) (string, error) {
-	u, err := c.newloginURL("generic_handlers/get_cookies.ashx")
-	if err != nil {
-		return "", err
-	}
-	req, err := c.newRequest(ctx, "GET", u)
-	if err != nil {
-		return "", err
-	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return "", ErrHTTP(err)
-	}
-	body, err := c.boundedRead(resp)
-	if err != nil {
-		return "", err
-	}
-	if resp.StatusCode >= 400 {
-		return "", ErrHTTP(fmt.Errorf("get_cookies.ashx returned HTTP %d", resp.StatusCode))
-	}
-	bodyStr := string(body)
-	code := extractSecretCode(bodyStr)
-	if code == "" {
-		return "", ErrOTPInit("missing m_strSecretCode in get_cookies.ashx" + withBody(bodyStr))
-	}
-	slog.Info("FetchOTP step 2: get_cookies.ashx", "secret_code_len", len(code))
-	return code, nil
-}
-
-// otpStep3: POST record_service_start.ashx with the per-account form
-// payload. Response body is discarded; the call exists to prime
-// server-side state for step 5.
-func (c *BeanfunClient) otpStep3(ctx context.Context, sess *Session, acc Account, s1 otpStep1) error {
-	u, err := c.portalURL("beanfun_block/generic_handlers/record_service_start.ashx")
-	if err != nil {
-		return err
-	}
-	form := url.Values{}
-	form.Set("service_code", sess.ServiceCode)
-	form.Set("service_region", sess.ServiceRegion)
-	form.Set("service_account_id", acc.SID)
-	form.Set("sotp", acc.SSN)
-	form.Set("service_account_display_name", acc.SName)
-	form.Set("service_account_create_time", s1.createTime)
-	form.Set(s1.unkDataKey, s1.unkDataValue)
-	body := form.Encode()
-
-	req, err := http.NewRequestWithContext(ctx, "POST", u.String(), strings.NewReader(body))
-	if err != nil {
-		return ErrHTTP(fmt.Errorf("NewRequestWithContext: %w", err))
-	}
-	req.Header.Set("User-Agent", c.userAgent)
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return ErrHTTP(err)
-	}
-	if _, err := c.boundedRead(resp); err != nil {
-		return err
-	}
-	if resp.StatusCode >= 400 {
-		return ErrHTTP(fmt.Errorf("record_service_start.ashx returned HTTP %d", resp.StatusCode))
-	}
-	slog.Info("FetchOTP step 3: record_service_start.ashx", "status", resp.StatusCode)
-	return nil
-}
-
-// otpStep4: GET get_result.ashx long-poll trigger. Body discarded.
-func (c *BeanfunClient) otpStep4(ctx context.Context, longPollingKey string) error {
-	u, err := c.portalURL("generic_handlers/get_result.ashx")
-	if err != nil {
-		return err
-	}
-	q := u.Query()
-	q.Set("meth", "GetResultByLongPolling")
-	q.Set("key", longPollingKey)
-	q.Set("_", time.Now().UTC().Format(time.RFC3339))
-	u.RawQuery = q.Encode()
-
-	req, err := c.newRequest(ctx, "GET", u)
-	if err != nil {
-		return err
-	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return ErrHTTP(err)
-	}
-	if _, err := c.boundedRead(resp); err != nil {
-		return err
-	}
-	if resp.StatusCode >= 400 {
-		return ErrHTTP(fmt.Errorf("get_result.ashx returned HTTP %d", resp.StatusCode))
-	}
-	slog.Info("FetchOTP step 4: get_result.ashx long-poll", "status", resp.StatusCode)
-	return nil
+	return otpStep1{handoff: handoff}, nil
 }
 
 // buildOTPV2Body renders the body get_webstart_otp_v2.ashx expects:
