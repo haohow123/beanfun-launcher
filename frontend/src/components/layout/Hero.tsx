@@ -10,9 +10,12 @@ import { useMapleStatusQuery } from "@/queries/mapleStatus";
 //
 // Update by replacing the URL when MapleStory cycles its hero
 // banner. Keep the gradient in step (warm palette ≈ MapleStory's
-// brand).
+// brand), and re-check backgroundPosition below: the current art is
+// left-weighted (characters + logo on the left, empty backdrop on the
+// right), so it is anchored left to crop only the dead space. A
+// centre-weighted banner needs that anchor changed back.
 const BANNER_URL =
-  "https://tw.hicdn.beanfun.com/beanfun/WebImage/20260410030136.jpg";
+  "https://tw.hicdn.beanfun.com/beanfun/WebImage/20260707111628.jpg";
 const BANNER_FALLBACK_GRADIENT =
   "linear-gradient(to bottom right, #fb923c, #f59e0b, #ef4444)";
 
@@ -53,11 +56,11 @@ export function Hero({ action }: { action?: ReactNode }) {
 
   return (
     <section
-      className="relative min-h-[200px] overflow-hidden px-4 pt-5 pb-14"
+      className="relative min-h-[150px] overflow-hidden px-4 pt-5 pb-14"
       style={{
         backgroundImage: `url('${BANNER_URL}'), ${BANNER_FALLBACK_GRADIENT}`,
         backgroundSize: "cover, cover",
-        backgroundPosition: "center, center",
+        backgroundPosition: "left center, center",
       }}
     >
       {/* Top dark scrim — locks text legibility against bright banner
