@@ -20,10 +20,11 @@ const isMacOS =
  * in index.css). On Windows the header is skipped entirely — the
  * native title bar takes care of drag + window controls.
  *
- * `mainClassName` overrides the centred default — LoginPage keeps
- * the centred QR card; HomePage passes `flex-col` so its banner /
- * hero layout can stretch top-to-bottom without first being shoved
- * to the middle.
+ * `mainClassName` overrides the centred default. Both pages pass
+ * `flex-col` so the hero sits flush at the top. LoginPage then centres
+ * its own body section (fixed-height QR card, so the slack is worth
+ * splitting); HomePage stacks from the top because its account list
+ * grows downward.
  */
 export function AppShell({
   children,

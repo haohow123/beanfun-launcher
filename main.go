@@ -85,7 +85,7 @@ func main() {
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:         "Beanfun Launcher",
 		Width:         480,
-		Height:        680,
+		Height:        640,
 		DisableResize: true,
 		Mac: application.MacWindow{
 			InvisibleTitleBarHeight: 50,
