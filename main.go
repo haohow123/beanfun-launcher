@@ -118,9 +118,12 @@ func main() {
 //	macOS:   ~/Library/Caches/beanfun-launcher/launcher-<version>.log
 //	Linux:   ~/.cache/beanfun-launcher/launcher-<version>.log
 //
-// Tokens (SKey, WebToken, OTP) are already redacted at their
-// log-emission sites — see beanfun.Session.String() and the OTP
-// flow's `len(token)`-only logging. No new secrets exposed.
+// Credentials are redacted where they are emitted: beanfun.Session.String(),
+// query-stripped URLs and scrubbed error strings in the login flow,
+// describeBody in place of page previews, MaskSID for account identifiers,
+// and len-only logging of OTP tokens. Two gaps remain: QR-init parse failures
+// still carry a 500-byte body preview in through their "err" attribute, and
+// this file has no size bound, so it grows for the life of a release tag.
 func setupLogging() *os.File {
 	cache, err := os.UserCacheDir()
 	if err != nil {
