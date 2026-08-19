@@ -68,7 +68,7 @@ func (c *BeanfunClient) finalizeQRLogin(ctx context.Context, init *qrLoginInit) 
 	form := extractHiddenInputs(string(body2))
 	if len(form) == 0 {
 		slog.Warn("finalizeQRLogin: SendLogin returned no form data",
-			"body_preview", truncate(string(body2), 500))
+			"body", describeBody(string(body2)))
 		return nil, ErrSendLoginNoFormData()
 	}
 	slog.Info("finalizeQRLogin step 5: scraped form", "field_count", len(form))

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 )
 
 // getSessionKey performs the portal handshake: GET the portal
@@ -23,9 +24,9 @@ func (c *BeanfunClient) getSessionKey(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", ErrHTTP(err)
 	}
-	// Keep the body around — if the session-key regex misses we want
-	// to log a preview so the operator can tell "Beanfun changed the
-	// redirect target" apart from "we hit a 200 page directly".
+	// Keep the body around — on a regex miss we log its shape so the
+	// operator can tell "Beanfun changed the redirect target" apart
+	// from "we hit a 200 notice page directly".
 	body, err := c.boundedRead(resp)
 	if err != nil {
 		return "", err
@@ -35,16 +36,27 @@ func (c *BeanfunClient) getSessionKey(ctx context.Context) (string, error) {
 	}
 
 	finalURL := resp.Request.URL.String()
-	slog.Info("getSessionKey: portal redirect resolved",
-		"final_url", finalURL,
-		"status", resp.StatusCode,
-		"body_bytes", len(body))
 	key, ok := sessionKeyFromURL(finalURL)
 	if !ok {
 		slog.Warn("getSessionKey: regex did not match final URL",
-			"final_url", finalURL,
-			"body_preview", truncate(string(body), 500))
+			"final_url", redactedURL(finalURL),
+			"status", resp.StatusCode,
+			"body", describeBody(string(body)))
 		return "", ErrMissingSessionKey()
 	}
+	slog.Info("getSessionKey: portal redirect resolved",
+		"final_url", redactedURL(finalURL),
+		"status", resp.StatusCode,
+		"body_bytes", len(body),
+		"skey_len", len(key))
 	return key, nil
+}
+
+// redactedURL drops the query string, which is where the portal carries the session key.
+func redactedURL(raw string) string {
+	base, _, found := strings.Cut(raw, "?")
+	if !found {
+		return base
+	}
+	return base + "?<redacted>"
 }

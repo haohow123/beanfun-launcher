@@ -1,8 +1,12 @@
 package beanfun
 
 import (
+	"errors"
 	"fmt"
+	"net/url"
+	"regexp"
 	"strings"
+	"sync"
 )
 
 // LoginErrorKind enumerates the classes of failure surfaced by the
@@ -40,15 +44,37 @@ type LoginError struct {
 
 func (e *LoginError) Error() string {
 	if e.Cause != nil {
-		return fmt.Sprintf("beanfun: %s: %v", e.Msg, e.Cause)
+		return scrubCredentialParams(fmt.Sprintf("beanfun: %s: %v", e.Msg, e.Cause))
 	}
-	return fmt.Sprintf("beanfun: %s", e.Msg)
+	return scrubCredentialParams(fmt.Sprintf("beanfun: %s", e.Msg))
 }
 
 func (e *LoginError) Unwrap() error { return e.Cause }
 
 func ErrHTTP(cause error) *LoginError {
-	return &LoginError{Kind: KindHTTP, Msg: "http transport error", Cause: cause}
+	return &LoginError{Kind: KindHTTP, Msg: "http transport error", Cause: redactURLError(cause)}
+}
+
+// redactURLError strips the query string from a transport error, because Go stores the full request URL — session key included — in url.Error and renders it in the message.
+func redactURLError(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		ue.URL = redactedURL(ue.URL)
+	}
+	return err
+}
+
+// credentialParamRE matches a credential-bearing query parameter and its
+// value. Deliberately wider and more case-tolerant than sessionKeyRE in
+// parser.go: an extractor that misses finds no key, but a scrubber that
+// misses ships one to the log file.
+var credentialParamRE = sync.OnceValue(func() *regexp.Regexp {
+	return regexp.MustCompile(`(?i)((?:[sp][sp]?key|web_?token)=)[^&"\s]+`)
+})
+
+// scrubCredentialParams is the render-time backstop for redactURLError, which cannot reach a message fmt.Errorf already snapshotted.
+func scrubCredentialParams(msg string) string {
+	return credentialParamRE().ReplaceAllString(msg, "${1}<redacted>")
 }
 
 func ErrJSON(cause error) *LoginError {
@@ -174,5 +200,30 @@ func withBodyBytes(body []byte) string {
 // divMsg content rather than the title because the title is
 // suspiciously misspelled and could change.
 func isSessionExpiredBody(body string) bool {
-	return strings.Contains(body, "尚未登入")
+	return strings.Contains(body, sessionExpiredMarker)
+}
+
+const sessionExpiredMarker = "尚未登入"
+
+// bodyMarkers name the response shapes we have actually seen, so a log
+// line can identify a page without reproducing any of its text.
+var bodyMarkers = []struct {
+	needle string
+	name   string
+}{
+	{sessionExpiredMarker, "session-expired"},
+	{"BlockIPMessage", "ip-blocked"},
+}
+
+func describeBody(body string) string {
+	var names []string
+	for _, m := range bodyMarkers {
+		if strings.Contains(body, m.needle) {
+			names = append(names, m.name)
+		}
+	}
+	if len(names) == 0 {
+		return fmt.Sprintf("len=%d markers=none", len(body))
+	}
+	return fmt.Sprintf("len=%d markers=%s", len(body), strings.Join(names, ","))
 }

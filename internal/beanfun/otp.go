@@ -50,7 +50,7 @@ func (c *BeanfunClient) FetchOTP(ctx context.Context, sess *Session, acc Account
 	if err != nil {
 		return OTPResult{}, err
 	}
-	slog.Info("FetchOTP: token acquired", "len", len(token), "sid", acc.SID)
+	slog.Info("FetchOTP: token acquired", "len", len(token), "sid", MaskSID(acc.SID))
 	return OTPResult{Token: token}, nil
 }
 
