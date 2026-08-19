@@ -32,6 +32,7 @@ const (
 	// Append new kinds here only; inserting renumbers the values the
 	// frontend receives.
 	KindLaunchDataDecode
+	KindIPBlocked
 )
 
 // LoginError is the typed error returned by every Beanfun login step.
@@ -153,6 +154,13 @@ func ErrSessionExpired() *LoginError {
 // carries a live LaunchTicket.
 func ErrLaunchDataDecode(reason string) *LoginError {
 	return &LoginError{Kind: KindLaunchDataDecode, Msg: "launch data decode failed: " + reason}
+}
+
+// ErrIPBlocked is returned when tw.beanfun.com answers with its
+// IP-frequency-lock notice; the frontend matches on "ip temporarily
+// blocked" to render the Chinese message (frontend/src/lib/errors.ts).
+func ErrIPBlocked() *LoginError {
+	return &LoginError{Kind: KindIPBlocked, Msg: "ip temporarily blocked by beanfun; retry in a few minutes"}
 }
 
 // truncate returns up to n bytes of s with a "…" marker if it was

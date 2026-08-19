@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/haohow123/beanfun-launcher/internal/beanfun"
@@ -167,3 +168,14 @@ func TestLauncherService_GetGameState_NoWindow(t *testing.T) {
 // cover it: beanfun/otp_test.go for FetchOTP, this file for
 // no-session + env-var checks, and the real-Beanfun smoke (`task
 // dev` → click account → game window) for the integration.
+
+// TestFrontendErrorNeedles pins the substring frontend/src/lib/errors.ts
+// matches on for this package's errors; the beanfun package has a test of
+// the same name for its own.
+func TestFrontendErrorNeedles(t *testing.T) {
+	t.Parallel()
+	const needle = "already running"
+	if got := errGameAlreadyRunning.Error(); !strings.Contains(got, needle) {
+		t.Errorf("%q does not contain %q — frontend/src/lib/errors.ts will stop matching", got, needle)
+	}
+}

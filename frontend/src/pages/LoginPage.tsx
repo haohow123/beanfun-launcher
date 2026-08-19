@@ -6,6 +6,7 @@ import { QRStatus } from "@bindings/beanfun";
 import { AppShell } from "@/components/layout/AppShell";
 import { Hero } from "@/components/layout/Hero";
 import { Button } from "@/components/ui/button";
+import { friendlyError } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 import {
   qrStatusQueryKey,
@@ -99,14 +100,14 @@ export function LoginPage() {
     if (statusQuery.isError) {
       return (
         <p className="break-words text-sm text-destructive">
-          登入失敗:{String(statusQuery.error)}
+          登入失敗:{friendlyError(statusQuery.error)}
         </p>
       );
     }
     if (qrMint.isError) {
       return (
         <p className="break-words text-sm text-destructive">
-          產生失敗:{String(qrMint.error)}
+          產生失敗:{friendlyError(qrMint.error)}
         </p>
       );
     }

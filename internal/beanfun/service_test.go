@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/haohow123/beanfun-launcher/internal/bgtask"
 )
@@ -217,5 +219,132 @@ func TestLoginService_StartQRLogin_ResetsState(t *testing.T) {
 	s.mu.Unlock()
 	if sess != nil {
 		t.Errorf("session should be cleared after restart, got %v", sess)
+	}
+}
+
+// withShortCooldown shrinks the mint cooldown so tests finish in
+// milliseconds; the technique mirrors offlineConfirmDelay in
+// internal/maple. Callers must not be parallel — qrMintCooldown is
+// package state.
+func withShortCooldown(t *testing.T, d time.Duration) {
+	t.Helper()
+	orig := qrMintCooldown
+	qrMintCooldown = d
+	t.Cleanup(func() { qrMintCooldown = orig })
+}
+
+func TestMintCooldown(t *testing.T) {
+	withShortCooldown(t, 50*time.Millisecond)
+	srv := httptest.NewServer(http.NewServeMux())
+	t.Cleanup(srv.Close)
+	s := NewLoginServiceWithEndpoints(stubEndpoints(t, srv), bgtask.New())
+
+	if got := s.mintCooldownRemaining(); got != 0 {
+		t.Fatalf("fresh service: remaining = %v, want 0", got)
+	}
+
+	s.armCooldownIfBlocked(ErrIPBlocked())
+	if got := s.mintCooldownRemaining(); got <= 0 {
+		t.Fatalf("after arming: remaining = %v, want > 0", got)
+	}
+	time.Sleep(60 * time.Millisecond)
+	if got := s.mintCooldownRemaining(); got != 0 {
+		t.Errorf("after the window: remaining = %v, want 0", got)
+	}
+}
+
+// TestArmCooldownIgnoresOtherErrors is the guard against locking the
+// button on every ordinary failure.
+func TestArmCooldownIgnoresOtherErrors(t *testing.T) {
+	withShortCooldown(t, time.Minute)
+	srv := httptest.NewServer(http.NewServeMux())
+	t.Cleanup(srv.Close)
+	s := NewLoginServiceWithEndpoints(stubEndpoints(t, srv), bgtask.New())
+
+	for _, err := range []error{
+		ErrMissingSessionKey(),
+		ErrLoginRequired(),
+		ErrSessionExpired(),
+		errors.New("some transport blip"),
+		nil,
+	} {
+		s.armCooldownIfBlocked(err)
+		if got := s.mintCooldownRemaining(); got != 0 {
+			t.Fatalf("%v armed the cooldown (remaining %v), want untouched", err, got)
+		}
+	}
+}
+
+func TestStartQRLoginInCooldownMakesNoRequest(t *testing.T) {
+	withShortCooldown(t, time.Minute)
+
+	var requests atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusOK)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	s := NewLoginServiceWithEndpoints(stubEndpoints(t, srv), bgtask.New())
+
+	s.armCooldownIfBlocked(ErrIPBlocked())
+
+	_, err := s.StartQRLogin()
+	// Errorf, not Fatalf: the request-count assertion below is the one
+	// this test exists for, and a Fatalf here would skip it.
+	var le *LoginError
+	if !errors.As(err, &le) || le.Kind != KindIPBlocked {
+		t.Errorf("got %v, want KindIPBlocked", err)
+	}
+	// The point of this test: refusing locally is worthless if the
+	// request still went out.
+	if got := requests.Load(); got != 0 {
+		t.Errorf("StartQRLogin issued %d request(s) while in cooldown, want 0", got)
+	}
+}
+
+// TestCheckQRLoginInCooldownMakesNoRequest covers the poll path, which is
+// the likelier way to trip the lock than the button: the frontend polls
+// every 2s and refetchInterval does not stop on error, so an unguarded
+// poll re-arms the cooldown forever and the block never clears.
+func TestCheckQRLoginInCooldownMakesNoRequest(t *testing.T) {
+	withShortCooldown(t, time.Minute)
+
+	var pollRequests atomic.Int32
+	mux := fullInitMux()
+	mux.HandleFunc("/QRLogin/CheckLoginStatus", func(w http.ResponseWriter, r *http.Request) {
+		pollRequests.Add(1)
+		http.Redirect(w, r, "/TW/BlockIPMessage.htm", http.StatusFound)
+	})
+	mux.HandleFunc("/TW/BlockIPMessage.htm", func(w http.ResponseWriter, r *http.Request) {
+		writeHTML(w, "<html>locked</html>")
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	s := NewLoginServiceWithEndpoints(stubEndpoints(t, srv), bgtask.New())
+
+	if _, err := s.StartQRLogin(); err != nil {
+		t.Fatalf("StartQRLogin: %v", err)
+	}
+
+	// First poll discovers the block and arms the cooldown.
+	if _, err := s.CheckQRLogin(); err == nil {
+		t.Fatal("first poll: expected the block error")
+	}
+	if armed := s.mintCooldownRemaining(); armed <= 0 {
+		t.Fatalf("cooldown not armed after the first blocked poll (got %v)", armed)
+	}
+
+	for i := 0; i < 3; i++ {
+		_, err := s.CheckQRLogin()
+		var le *LoginError
+		if !errors.As(err, &le) || le.Kind != KindIPBlocked {
+			t.Errorf("poll %d: got %v, want KindIPBlocked", i+2, err)
+		}
+	}
+
+	if got := pollRequests.Load(); got != 1 {
+		t.Errorf("poll endpoint hit %d times, want 1 — later polls must be refused locally", got)
 	}
 }

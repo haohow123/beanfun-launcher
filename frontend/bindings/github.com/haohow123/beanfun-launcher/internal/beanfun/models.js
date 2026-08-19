@@ -19,6 +19,7 @@ export class Account {
     constructor($$source = {}) {
         if (!("sid" in $$source)) {
             /**
+             * SID identifies a real game account, so log it through MaskSID.
              * @member
              * @type {string}
              */

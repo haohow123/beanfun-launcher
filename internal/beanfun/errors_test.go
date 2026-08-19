@@ -153,3 +153,27 @@ func TestErrHTTP_RedactsWebTokenInWrappedURL(t *testing.T) {
 		t.Errorf("missing redaction marker: %q", got)
 	}
 }
+
+// TestFrontendErrorNeedles pins the substrings the frontend matches on
+// against errors this package owns. The contract is untyped and crosses
+// two languages, so this is the only side of it that can fail a test.
+// errGameAlreadyRunning lives in internal/launcher and is covered by the
+// test of the same name there.
+func TestFrontendErrorNeedles(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		needle string
+		where  string
+		err    error
+	}{
+		{"ip temporarily blocked", "frontend/src/lib/errors.ts", ErrIPBlocked()},
+		{"login required", "frontend/src/pages/HomePage.tsx", ErrLoginRequired()},
+	}
+	for _, tt := range tests {
+		t.Run(tt.needle, func(t *testing.T) {
+			if got := tt.err.Error(); !strings.Contains(got, tt.needle) {
+				t.Errorf("%q does not contain %q — %s will stop matching", got, tt.needle, tt.where)
+			}
+		})
+	}
+}
