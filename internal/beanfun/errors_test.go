@@ -85,18 +85,20 @@ func TestRedactedURL(t *testing.T) {
 	}
 }
 
-func TestScrubSessionKeys(t *testing.T) {
+func TestScrubCredentialParams(t *testing.T) {
 	t.Parallel()
 	tests := []struct{ name, in, want string }{
 		{"pSKey in quoted URL", `Get "https://h/p?a=1&pSKey=SECRETVALUE": refused`, `Get "https://h/p?a=1&pSKey=<redacted>": refused`},
 		{"lowercase skey", "https://h/p?skey=SECRETVALUE&b=2", "https://h/p?skey=<redacted>&b=2"},
 		{"no key untouched", "beanfun: http transport error: refused", "beanfun: http transport error: refused"},
 		{"stops at ampersand", "?pSKey=SECRET&service=999999_T0", "?pSKey=<redacted>&service=999999_T0"},
+		{"web_token", "?channel=game_zone&web_token=SECRETVALUE", "?channel=game_zone&web_token=<redacted>"},
+		{"case tolerant", "?SKEY=SECRETVALUE", "?SKEY=<redacted>"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := scrubSessionKeys(tt.in); got != tt.want {
-				t.Errorf("scrubSessionKeys(%q) = %q, want %q", tt.in, got, tt.want)
+			if got := scrubCredentialParams(tt.in); got != tt.want {
+				t.Errorf("scrubCredentialParams(%q) = %q, want %q", tt.in, got, tt.want)
 			}
 		})
 	}
@@ -131,5 +133,23 @@ func TestDescribeBody_NoPageText(t *testing.T) {
 	}
 	if !strings.Contains(got, "len=") {
 		t.Errorf("length missing: %q", got)
+	}
+}
+
+// TestErrHTTP_RedactsWebTokenInWrappedURL covers the path redactURLError
+// cannot reach: fmt.Errorf snapshots its message at construction, so only the
+// render-time scrubber can strip a credential from an already-wrapped error.
+func TestErrHTTP_RedactsWebTokenInWrappedURL(t *testing.T) {
+	t.Parallel()
+	const tok = "WEBTOKENSECRET123"
+	raw := "https://tw.beanfun.com/beanfun_block/auth.aspx?channel=game_zone&web_token=" + tok
+	inner := &url.Error{Op: "parse", URL: raw, Err: errors.New("invalid control character")}
+
+	got := ErrHTTP(fmt.Errorf("NewRequestWithContext: %w", inner)).Error()
+	if strings.Contains(got, tok) {
+		t.Errorf("web token survived redaction: %q", got)
+	}
+	if !strings.Contains(got, "<redacted>") {
+		t.Errorf("missing redaction marker: %q", got)
 	}
 }

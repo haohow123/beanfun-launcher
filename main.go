@@ -121,9 +121,10 @@ func main() {
 // Credentials are redacted where they are emitted: beanfun.Session.String(),
 // query-stripped URLs and scrubbed error strings in the login flow,
 // describeBody in place of page previews, MaskSID for account identifiers,
-// and len-only logging of OTP tokens. Two gaps remain: QR-init parse failures
-// still carry a 500-byte body preview in through their "err" attribute, and
-// this file has no size bound, so it grows for the life of a release tag.
+// and len-only logging of OTP tokens. Not covered: raw server text still
+// reaches the log inside error messages — withBodyBytes on QR-init parse
+// failures, ErrServerMessage, ErrOTPServerRejected — and this file has no
+// size bound, so it grows for the life of a release tag.
 func setupLogging() *os.File {
 	cache, err := os.UserCacheDir()
 	if err != nil {

@@ -44,9 +44,9 @@ type LoginError struct {
 
 func (e *LoginError) Error() string {
 	if e.Cause != nil {
-		return scrubSessionKeys(fmt.Sprintf("beanfun: %s: %v", e.Msg, e.Cause))
+		return scrubCredentialParams(fmt.Sprintf("beanfun: %s: %v", e.Msg, e.Cause))
 	}
-	return scrubSessionKeys(fmt.Sprintf("beanfun: %s", e.Msg))
+	return scrubCredentialParams(fmt.Sprintf("beanfun: %s", e.Msg))
 }
 
 func (e *LoginError) Unwrap() error { return e.Cause }
@@ -64,15 +64,17 @@ func redactURLError(err error) error {
 	return err
 }
 
-// sessionKeyParamRE matches a session-key query parameter and its value; the
-// character class mirrors sessionKeyRE in parser.go.
-var sessionKeyParamRE = sync.OnceValue(func() *regexp.Regexp {
-	return regexp.MustCompile(`([sp][Ss]?[Kk]ey=)[^&"\s]+`)
+// credentialParamRE matches a credential-bearing query parameter and its
+// value. Deliberately wider and more case-tolerant than sessionKeyRE in
+// parser.go: an extractor that misses finds no key, but a scrubber that
+// misses ships one to the log file.
+var credentialParamRE = sync.OnceValue(func() *regexp.Regexp {
+	return regexp.MustCompile(`(?i)((?:[sp][sp]?key|web_?token)=)[^&"\s]+`)
 })
 
-// scrubSessionKeys is the render-time backstop for redactURLError, which cannot reach a message fmt.Errorf already snapshotted.
-func scrubSessionKeys(msg string) string {
-	return sessionKeyParamRE().ReplaceAllString(msg, "${1}<redacted>")
+// scrubCredentialParams is the render-time backstop for redactURLError, which cannot reach a message fmt.Errorf already snapshotted.
+func scrubCredentialParams(msg string) string {
+	return credentialParamRE().ReplaceAllString(msg, "${1}<redacted>")
 }
 
 func ErrJSON(cause error) *LoginError {
