@@ -1,8 +1,10 @@
 package beanfun
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -94,4 +96,14 @@ func pollResponseBody(msg string) string {
 		"ResultData":    map[string]any{},
 	})
 	return string(b)
+}
+
+// captureLogs redirects the default logger into the returned buffer for this test; not safe from a parallel test because slog.SetDefault is global.
+func captureLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	buf := &bytes.Buffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return buf
 }

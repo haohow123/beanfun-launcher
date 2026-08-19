@@ -1,8 +1,12 @@
 package beanfun
 
 import (
+	"errors"
 	"fmt"
+	"net/url"
+	"regexp"
 	"strings"
+	"sync"
 )
 
 // LoginErrorKind enumerates the classes of failure surfaced by the
@@ -40,15 +44,35 @@ type LoginError struct {
 
 func (e *LoginError) Error() string {
 	if e.Cause != nil {
-		return fmt.Sprintf("beanfun: %s: %v", e.Msg, e.Cause)
+		return scrubSessionKeys(fmt.Sprintf("beanfun: %s: %v", e.Msg, e.Cause))
 	}
-	return fmt.Sprintf("beanfun: %s", e.Msg)
+	return scrubSessionKeys(fmt.Sprintf("beanfun: %s", e.Msg))
 }
 
 func (e *LoginError) Unwrap() error { return e.Cause }
 
 func ErrHTTP(cause error) *LoginError {
-	return &LoginError{Kind: KindHTTP, Msg: "http transport error", Cause: cause}
+	return &LoginError{Kind: KindHTTP, Msg: "http transport error", Cause: redactURLError(cause)}
+}
+
+// redactURLError strips the query string from a transport error, because Go stores the full request URL — session key included — in url.Error and renders it in the message.
+func redactURLError(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		ue.URL = redactedURL(ue.URL)
+	}
+	return err
+}
+
+// sessionKeyParamRE matches a session-key query parameter and its value; the
+// character class mirrors sessionKeyRE in parser.go.
+var sessionKeyParamRE = sync.OnceValue(func() *regexp.Regexp {
+	return regexp.MustCompile(`([sp][Ss]?[Kk]ey=)[^&"\s]+`)
+})
+
+// scrubSessionKeys is the render-time backstop for redactURLError, which cannot reach a message fmt.Errorf already snapshotted.
+func scrubSessionKeys(msg string) string {
+	return sessionKeyParamRE().ReplaceAllString(msg, "${1}<redacted>")
 }
 
 func ErrJSON(cause error) *LoginError {
