@@ -12,9 +12,20 @@ import (
 // frontend uses these to render the post-login game list. See
 // docs/beanfun-login-protocol.md § 8.
 type Account struct {
+	// SID identifies a real game account, so log it through MaskSID.
 	SID   string `json:"sid"`
 	SSN   string `json:"ssn"`
 	SName string `json:"sname"`
+}
+
+// MaskSID trims an account identifier to its last four characters for logging; it is not a bearer, but it names a real person's game account.
+func MaskSID(sid string) string {
+	const keep = 4
+	r := []rune(sid)
+	if len(r) <= keep {
+		return "***"
+	}
+	return "***" + string(r[len(r)-keep:])
 }
 
 // GetAccounts fetches the list of game accounts under the active

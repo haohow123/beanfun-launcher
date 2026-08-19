@@ -313,3 +313,22 @@ func TestLoginService_GetAccounts_HappyPath(t *testing.T) {
 		t.Errorf("got %d rows, want 3: %+v", len(got), got)
 	}
 }
+
+func TestMaskSID(t *testing.T) {
+	t.Parallel()
+	tests := []struct{ name, in, want string }{
+		{"typical", "T9000011112222333344", "***3344"},
+		{"exactly four", "1234", "***"},
+		{"shorter than four", "12", "***"},
+		{"empty", "", "***"},
+		{"five", "12345", "***2345"},
+		{"multibyte is not split", "帳號12345", "***2345"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := MaskSID(tt.in); got != tt.want {
+				t.Errorf("MaskSID(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}

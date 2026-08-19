@@ -201,7 +201,7 @@ func (s *LauncherService) SpawnGame(account beanfun.Account) error {
 
 	if hwnd := findGameWindowFn(); hwnd != 0 {
 		slog.Warn("SpawnGame: game already running, refusing to spawn",
-			"hwnd", hwnd, "sid", account.SID)
+			"hwnd", hwnd, "sid", beanfun.MaskSID(account.SID))
 		// FE state was stale — external transition (game opened
 		// outside our launcher, or by us before this launcher
 		// session started) we missed. Push correct state so the FE
@@ -226,11 +226,11 @@ func (s *LauncherService) SpawnGame(account beanfun.Account) error {
 	if err != nil {
 		if isSessionExpired(err) {
 			slog.Warn("SpawnGame: session expired, clearing local state",
-				"sid", account.SID)
+				"sid", beanfun.MaskSID(account.SID))
 			s.login.Reset()
 			return beanfun.ErrLoginRequired()
 		}
-		slog.Error("SpawnGame: FetchOTP failed", "err", err, "sid", account.SID)
+		slog.Error("SpawnGame: FetchOTP failed", "err", err, "sid", beanfun.MaskSID(account.SID))
 		return err
 	}
 	defer beanfun.Zero(otp.Token)
@@ -246,11 +246,11 @@ func (s *LauncherService) SpawnGame(account beanfun.Account) error {
 	spawnCtx, spawnCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer spawnCancel()
 	if err := spawnFn(spawnCtx, gameExe, args); err != nil {
-		slog.Error("SpawnGame: spawnFn failed", "err", err, "sid", account.SID)
+		slog.Error("SpawnGame: spawnFn failed", "err", err, "sid", beanfun.MaskSID(account.SID))
 		return err
 	}
 	slog.Info("SpawnGame: game spawned with credentials via argv",
-		"sid", account.SID, "exe", gameExe)
+		"sid", beanfun.MaskSID(account.SID), "exe", gameExe)
 
 	// Track the SID whose credentials are now live in the game session
 	// — used by the FE pill to mark "this account is logged in." Set
@@ -412,7 +412,7 @@ func (s *LauncherService) Launch(account beanfun.Account) (LaunchResult, error) 
 		// without the FE having to invalidateQueries. Symmetric with
 		// SpawnGame's errGameAlreadyRunning corrective emit.
 		slog.Info("Launch: no game window found, emitting corrective state",
-			"sid", account.SID)
+			"sid", beanfun.MaskSID(account.SID))
 		s.setLastUsedSID("")
 		eventEmitFn(gameStateChangedEvent, GameState{Running: false})
 		return LaunchResult{NoWindow: true}, nil
@@ -425,21 +425,21 @@ func (s *LauncherService) Launch(account beanfun.Account) (LaunchResult, error) 
 	if err != nil {
 		if isSessionExpired(err) {
 			slog.Warn("Launch: session expired, clearing local state",
-				"sid", account.SID)
+				"sid", beanfun.MaskSID(account.SID))
 			s.login.Reset()
 			return LaunchResult{}, beanfun.ErrLoginRequired()
 		}
-		slog.Error("Launch: FetchOTP failed", "err", err, "sid", account.SID)
+		slog.Error("Launch: FetchOTP failed", "err", err, "sid", beanfun.MaskSID(account.SID))
 		return LaunchResult{}, err
 	}
 	defer beanfun.Zero(otp.Token)
 
 	if ierr := injectFn(hwnd, []byte(account.SID), otp.Token); ierr != nil {
 		slog.Error("Launch: inject failed, falling back to manual paste",
-			"err", ierr, "sid", account.SID)
+			"err", ierr, "sid", beanfun.MaskSID(account.SID))
 		return LaunchResult{AutoFilled: false, OTP: string(otp.Token)}, nil
 	}
-	slog.Info("Launch: credentials injected", "sid", account.SID)
+	slog.Info("Launch: credentials injected", "sid", beanfun.MaskSID(account.SID))
 
 	// State stays Running=true but the active account changed
 	// (or just became known after a clean spawn). Re-emit so the FE
@@ -478,7 +478,7 @@ func (s *LauncherService) LaunchAccount(account beanfun.Account) (LaunchResult, 
 		result, err := s.Launch(account)
 		if err == nil && result.NoWindow {
 			slog.Info("LaunchAccount: window vanished mid-call, falling back to SpawnGame",
-				"sid", account.SID)
+				"sid", beanfun.MaskSID(account.SID))
 			if spawnErr := s.SpawnGame(account); spawnErr != nil {
 				return LaunchResult{}, spawnErr
 			}
@@ -489,7 +489,7 @@ func (s *LauncherService) LaunchAccount(account beanfun.Account) (LaunchResult, 
 	err := s.SpawnGame(account)
 	if errors.Is(err, errGameAlreadyRunning) {
 		slog.Info("LaunchAccount: window appeared mid-call, falling back to Launch",
-			"sid", account.SID)
+			"sid", beanfun.MaskSID(account.SID))
 		return s.Launch(account)
 	}
 	if err != nil {
@@ -540,11 +540,11 @@ func (s *LauncherService) GetOTP(account beanfun.Account) (string, error) {
 	if err != nil {
 		if isSessionExpired(err) {
 			slog.Warn("GetOTP: session expired, clearing local state",
-				"sid", account.SID)
+				"sid", beanfun.MaskSID(account.SID))
 			s.login.Reset()
 			return "", beanfun.ErrLoginRequired()
 		}
-		slog.Error("GetOTP: FetchOTP failed", "err", err, "sid", account.SID)
+		slog.Error("GetOTP: FetchOTP failed", "err", err, "sid", beanfun.MaskSID(account.SID))
 		return "", err
 	}
 	otpStr := string(otp.Token)
