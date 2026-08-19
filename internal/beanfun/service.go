@@ -115,16 +115,6 @@ func (s *LoginService) mintCooldownRemaining() time.Duration {
 	return 0
 }
 
-// QRMintCooldownSeconds reports how long the frontend should keep the
-// regenerate button disabled; zero means no cooldown is active.
-func (s *LoginService) QRMintCooldownSeconds() int {
-	remaining := s.mintCooldownRemaining()
-	if remaining <= 0 {
-		return 0
-	}
-	return int(remaining.Seconds()) + 1
-}
-
 // StartQRLogin runs the init flow (getSessionKey → initQRLogin) and
 // returns the QR + deeplink for the frontend to render. A fresh
 // BeanfunClient (clean cookie jar) is minted on every call.

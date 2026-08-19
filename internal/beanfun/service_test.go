@@ -239,24 +239,17 @@ func TestMintCooldown(t *testing.T) {
 	t.Cleanup(srv.Close)
 	s := NewLoginServiceWithEndpoints(stubEndpoints(t, srv), bgtask.New())
 
-	if got := s.QRMintCooldownSeconds(); got != 0 {
-		t.Fatalf("fresh service: QRMintCooldownSeconds() = %d, want 0", got)
+	if got := s.mintCooldownRemaining(); got != 0 {
+		t.Fatalf("fresh service: remaining = %v, want 0", got)
 	}
 
 	s.armCooldownIfBlocked(ErrIPBlocked())
 	if got := s.mintCooldownRemaining(); got <= 0 {
 		t.Fatalf("after arming: remaining = %v, want > 0", got)
 	}
-	if got := s.QRMintCooldownSeconds(); got != 1 {
-		t.Errorf("after arming a 50ms cooldown: QRMintCooldownSeconds() = %d, want 1", got)
-	}
-
 	time.Sleep(60 * time.Millisecond)
 	if got := s.mintCooldownRemaining(); got != 0 {
 		t.Errorf("after the window: remaining = %v, want 0", got)
-	}
-	if got := s.QRMintCooldownSeconds(); got != 0 {
-		t.Errorf("after the window: QRMintCooldownSeconds() = %d, want 0", got)
 	}
 }
 
@@ -339,9 +332,8 @@ func TestCheckQRLoginInCooldownMakesNoRequest(t *testing.T) {
 	if _, err := s.CheckQRLogin(); err == nil {
 		t.Fatal("first poll: expected the block error")
 	}
-	armed := s.QRMintCooldownSeconds()
-	if armed <= 0 {
-		t.Fatalf("cooldown not armed after the first blocked poll (got %d)", armed)
+	if armed := s.mintCooldownRemaining(); armed <= 0 {
+		t.Fatalf("cooldown not armed after the first blocked poll (got %v)", armed)
 	}
 
 	for i := 0; i < 3; i++ {

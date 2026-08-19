@@ -6,6 +6,7 @@ import { type Account } from "@bindings/beanfun";
 import { AppShell } from "@/components/layout/AppShell";
 import { Hero } from "@/components/layout/Hero";
 import { Button } from "@/components/ui/button";
+import { friendlyError } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 import { useAccountsQuery } from "@/queries/accounts";
 import { useGameStateQuery } from "@/queries/gameState";
@@ -94,10 +95,7 @@ export function HomePage() {
   // rather than the raw English error.
   function friendlyMutationError(err: unknown): string | undefined {
     if (!(err instanceof Error)) return undefined;
-    if (err.message.includes("already running")) {
-      return "遊戲已開啟，請稍候再試";
-    }
-    return err.message;
+    return friendlyError(err);
   }
 
   function markCopied(sid: string) {
@@ -280,7 +278,7 @@ export function HomePage() {
       return (
         <div className="flex flex-col items-center gap-2">
           <p className="text-sm text-destructive">
-            載入失敗:{String(accounts.error)}
+            載入失敗:{friendlyError(accounts.error)}
           </p>
           <Button variant="outline" onClick={retry}>
             重試
