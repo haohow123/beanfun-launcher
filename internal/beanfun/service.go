@@ -5,6 +5,7 @@ package beanfun
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -46,6 +47,9 @@ type LoginService struct {
 	// fresh manager; main.go shares a single instance across all
 	// services so app shutdown can StopAll() them in one go.
 	mgr *bgtask.Manager
+	// blockedUntil is when the IP-lock cooldown expires; the zero value
+	// means no cooldown is active.
+	blockedUntil time.Time
 }
 
 // Cadence of the background ping that keeps the Beanfun portal
@@ -67,6 +71,11 @@ const (
 	keepAliveTaskName = "beanfun-keepalive"
 )
 
+// qrMintCooldown is how long StartQRLogin refuses after beanfun reports
+// an IP lock; the lock itself clears in 2-3 minutes, and tests override
+// this to keep runs in milliseconds.
+var qrMintCooldown = 60 * time.Second
+
 // NewLoginService returns a LoginService configured for production TW
 // endpoints. The HTTP client is minted lazily inside StartQRLogin.
 // mgr is required (non-nil) — the keep-alive heartbeat registers
@@ -82,10 +91,49 @@ func NewLoginServiceWithEndpoints(endpoints Endpoints, mgr *bgtask.Manager) *Log
 	return &LoginService{endpoints: endpoints, mgr: mgr}
 }
 
+// armCooldownIfBlocked starts the mint cooldown when err is beanfun's
+// IP-lock notice.
+func (s *LoginService) armCooldownIfBlocked(err error) {
+	var le *LoginError
+	if !errors.As(err, &le) || le.Kind != KindIPBlocked {
+		return
+	}
+	s.mu.Lock()
+	s.blockedUntil = time.Now().Add(qrMintCooldown)
+	s.mu.Unlock()
+	slog.Warn("ip-block cooldown armed", "duration", qrMintCooldown)
+}
+
+// mintCooldownRemaining returns how much of the cooldown is left, or
+// zero when none is active.
+func (s *LoginService) mintCooldownRemaining() time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if remaining := time.Until(s.blockedUntil); remaining > 0 {
+		return remaining
+	}
+	return 0
+}
+
+// QRMintCooldownSeconds reports how long the frontend should keep the
+// regenerate button disabled; zero means no cooldown is active.
+func (s *LoginService) QRMintCooldownSeconds() int {
+	remaining := s.mintCooldownRemaining()
+	if remaining <= 0 {
+		return 0
+	}
+	return int(remaining.Seconds()) + 1
+}
+
 // StartQRLogin runs the init flow (getSessionKey → initQRLogin) and
 // returns the QR + deeplink for the frontend to render. A fresh
 // BeanfunClient (clean cookie jar) is minted on every call.
 func (s *LoginService) StartQRLogin() (QRStart, error) {
+	if remaining := s.mintCooldownRemaining(); remaining > 0 {
+		slog.Warn("StartQRLogin: refused, ip-block cooldown active", "remaining", remaining)
+		return QRStart{}, ErrIPBlocked()
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -98,11 +146,13 @@ func (s *LoginService) StartQRLogin() (QRStart, error) {
 	skey, err := client.getSessionKey(ctx)
 	if err != nil {
 		slog.Error("StartQRLogin: getSessionKey failed", "err", err)
+		s.armCooldownIfBlocked(err)
 		return QRStart{}, err
 	}
 	init, err := client.initQRLogin(ctx, skey)
 	if err != nil {
 		slog.Error("StartQRLogin: initQRLogin failed", "err", err)
+		s.armCooldownIfBlocked(err)
 		return QRStart{}, err
 	}
 
@@ -138,6 +188,14 @@ func (s *LoginService) StartQRLogin() (QRStart, error) {
 // from its perspective a single CheckQRLogin call either stays Pending
 // or completes the login.
 func (s *LoginService) CheckQRLogin() (QRStatus, error) {
+	// The frontend polls every 2s and does not stop on error, so without
+	// this the poll alone would keep hitting a blocked endpoint and each
+	// hit would push the cooldown out again.
+	if remaining := s.mintCooldownRemaining(); remaining > 0 {
+		slog.Warn("CheckQRLogin: refused, ip-block cooldown active", "remaining", remaining)
+		return "", ErrIPBlocked()
+	}
+
 	s.mu.Lock()
 	pendingQR := s.pendingQR
 	client := s.client
@@ -155,6 +213,7 @@ func (s *LoginService) CheckQRLogin() (QRStatus, error) {
 
 	outcome, err := client.pollQRLoginStatus(ctx, pendingQR)
 	if err != nil {
+		s.armCooldownIfBlocked(err)
 		return "", err
 	}
 
@@ -171,6 +230,7 @@ func (s *LoginService) CheckQRLogin() (QRStatus, error) {
 	case pollOutcomeApproved:
 		sess, err := client.finalizeQRLogin(ctx, pendingQR)
 		if err != nil {
+			s.armCooldownIfBlocked(err)
 			return "", err
 		}
 		s.mu.Lock()

@@ -41,6 +41,15 @@ export function GetAccounts() {
 }
 
 /**
+ * QRMintCooldownSeconds reports how long the frontend should keep the
+ * regenerate button disabled; zero means no cooldown is active.
+ * @returns {$CancellablePromise<number>}
+ */
+export function QRMintCooldownSeconds() {
+    return $Call.ByID(2395671100);
+}
+
+/**
  * Reset stops the keep-alive heartbeat and drops the cached client +
  * session. Used when an authenticated request comes back as
  * ErrSessionExpired so the next Snapshot returns nil and the
