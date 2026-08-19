@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -117,7 +118,25 @@ func (c *BeanfunClient) boundedRead(resp *http.Response) ([]byte, error) {
 	if int64(len(body)) > maxResponseBodyBytes {
 		return nil, ErrBodyTooLarge(maxResponseBodyBytes)
 	}
+	if isIPBlockedResponse(resp) {
+		return nil, ErrIPBlocked()
+	}
 	return body, nil
+}
+
+// blockIPPathMarker is the path tw.beanfun.com redirects a
+// frequency-locked IP to; the notice answers HTTP 200, so the path is
+// the only thing separating it from a normal landing.
+const blockIPPathMarker = "BlockIPMessage"
+
+// isIPBlockedResponse reports whether resp is the portal's IP-lock
+// notice, matching the redirect path only because the page body has
+// never been captured.
+func isIPBlockedResponse(resp *http.Response) bool {
+	if resp == nil || resp.Request == nil || resp.Request.URL == nil {
+		return false
+	}
+	return strings.Contains(resp.Request.URL.Path, blockIPPathMarker)
 }
 
 // loginURL joins path onto LoginBase.
