@@ -124,7 +124,8 @@ func TestGetSessionKey_RegexMissDoesNotLogURL(t *testing.T) {
 		http.Redirect(w, r, "/login/id-pass.aspx?service=999999_T0&sessionKey="+skeyFixture, http.StatusFound)
 	})
 	mux.HandleFunc("/login/id-pass.aspx", func(w http.ResponseWriter, r *http.Request) {
-		writeHTML(w, "<html>renamed parameter</html>")
+		// A notice page that echoes the request is the realistic shape here.
+		writeHTML(w, "<html>renamed parameter: sessionKey="+skeyFixture+"</html>")
 	})
 	c, _ := newTestClient(t, mux)
 

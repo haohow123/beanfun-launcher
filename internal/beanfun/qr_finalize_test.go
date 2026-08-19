@@ -280,3 +280,25 @@ func TestFinalizeQRLogin_Step2AcceptIsQRSpecific(t *testing.T) {
 		t.Errorf("step 2 Accept = %q, want QR-specific image/avif+image/webp tokens", step2Accept)
 	}
 }
+
+func TestFinalizeQRLogin_NoFormData_DoesNotLogPageText(t *testing.T) {
+	const planted = "PLANTEDSECRET9999"
+	logs := captureLogs(t)
+
+	hooks := &finalizeMuxHooks{step2Body: `<html><body>` + planted + `</body></html>`}
+	c, _ := newTestClient(t, fullFinalizeMux(t, hooks))
+
+	_, err := c.finalizeQRLogin(context.Background(), &qrLoginInit{SKey: "SK"})
+	var le *LoginError
+	if !errors.As(err, &le) || le.Kind != KindSendLoginNoFormData {
+		t.Fatalf("got %v, want KindSendLoginNoFormData", err)
+	}
+
+	out := logs.String()
+	if !strings.Contains(out, "SendLogin returned no form data") {
+		t.Fatalf("the warn branch was not exercised:\n%s", out)
+	}
+	if strings.Contains(out, planted) {
+		t.Errorf("page text leaked into logs:\n%s", out)
+	}
+}

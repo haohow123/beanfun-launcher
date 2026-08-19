@@ -101,3 +101,35 @@ func TestScrubSessionKeys(t *testing.T) {
 		})
 	}
 }
+
+func TestDescribeBody(t *testing.T) {
+	t.Parallel()
+	tests := []struct{ name, body, want string }{
+		{"empty", "", "len=0 markers=none"},
+		{"unknown", "<html>whatever</html>", "len=21 markers=none"},
+		{"session expired", "<div>系統偵測到您尚未登入</div>", "len=41 markers=session-expired"},
+		{"ip blocked", `<a href="/TW/BlockIPMessage.htm">x</a>`, "len=38 markers=ip-blocked"},
+		{"both", "尚未登入 BlockIPMessage", "len=27 markers=session-expired,ip-blocked"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := describeBody(tt.body); got != tt.want {
+				t.Errorf("describeBody() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestDescribeBody_NoPageText pins the property that matters: whatever the
+// page contains, none of it is reproduced.
+func TestDescribeBody_NoPageText(t *testing.T) {
+	t.Parallel()
+	const planted = "PLANTEDSECRET9999"
+	got := describeBody(`<html><input name="SessionKey" value="` + planted + `"></html>`)
+	if strings.Contains(got, planted) {
+		t.Errorf("page text reproduced: %q", got)
+	}
+	if !strings.Contains(got, "len=") {
+		t.Errorf("length missing: %q", got)
+	}
+}

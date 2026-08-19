@@ -198,5 +198,30 @@ func withBodyBytes(body []byte) string {
 // divMsg content rather than the title because the title is
 // suspiciously misspelled and could change.
 func isSessionExpiredBody(body string) bool {
-	return strings.Contains(body, "尚未登入")
+	return strings.Contains(body, sessionExpiredMarker)
+}
+
+const sessionExpiredMarker = "尚未登入"
+
+// bodyMarkers name the response shapes we have actually seen, so a log
+// line can identify a page without reproducing any of its text.
+var bodyMarkers = []struct {
+	needle string
+	name   string
+}{
+	{sessionExpiredMarker, "session-expired"},
+	{"BlockIPMessage", "ip-blocked"},
+}
+
+func describeBody(body string) string {
+	var names []string
+	for _, m := range bodyMarkers {
+		if strings.Contains(body, m.needle) {
+			names = append(names, m.name)
+		}
+	}
+	if len(names) == 0 {
+		return fmt.Sprintf("len=%d markers=none", len(body))
+	}
+	return fmt.Sprintf("len=%d markers=%s", len(body), strings.Join(names, ","))
 }

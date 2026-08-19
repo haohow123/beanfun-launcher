@@ -24,9 +24,9 @@ func (c *BeanfunClient) getSessionKey(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", ErrHTTP(err)
 	}
-	// Keep the body around — if the session-key regex misses we want
-	// to log a preview so the operator can tell "Beanfun changed the
-	// redirect target" apart from "we hit a 200 page directly".
+	// Keep the body around — on a regex miss we log its shape so the
+	// operator can tell "Beanfun changed the redirect target" apart
+	// from "we hit a 200 notice page directly".
 	body, err := c.boundedRead(resp)
 	if err != nil {
 		return "", err
@@ -41,7 +41,7 @@ func (c *BeanfunClient) getSessionKey(ctx context.Context) (string, error) {
 		slog.Warn("getSessionKey: regex did not match final URL",
 			"final_url", redactedURL(finalURL),
 			"status", resp.StatusCode,
-			"body_preview", truncate(string(body), 500))
+			"body", describeBody(string(body)))
 		return "", ErrMissingSessionKey()
 	}
 	slog.Info("getSessionKey: portal redirect resolved",
