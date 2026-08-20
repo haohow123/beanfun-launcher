@@ -175,11 +175,12 @@ func (c *BeanfunClient) portalURL(path string) (*url.URL, error) {
 // it every 60 seconds after login finalizes.
 //
 // Body is intentionally discarded — the request is only useful for
-// the server-side side effect. Failures are returned but the caller
-// (LoginService.runPingLoop) swallows them at debug level: a single
-// failed tick doesn't mean the session is dead, and the next real
-// user action (FetchOTP etc.) detects expiry definitively from the
-// response body.
+// the server-side side effect, so the IP-block check reads the
+// redirect path rather than the body. Failures are returned and the
+// caller (LoginService.keepAliveTick) logs them at WARN and retries
+// sooner; a single failed tick doesn't mean the session is dead, and
+// the next real user action (FetchOTP etc.) detects expiry
+// definitively from the response body.
 func (c *BeanfunClient) Ping(ctx context.Context) error {
 	u, err := c.portalURL("beanfun_block/generic_handlers/echo_token.ashx")
 	if err != nil {
@@ -198,6 +199,9 @@ func (c *BeanfunClient) Ping(ctx context.Context) error {
 		return ErrHTTP(err)
 	}
 	defer func() { _ = resp.Body.Close() }()
+	if isIPBlockedResponse(resp) {
+		return ErrIPBlocked()
+	}
 	if resp.StatusCode >= 400 {
 		return ErrHTTP(fmt.Errorf("echo_token.ashx returned HTTP %d", resp.StatusCode))
 	}

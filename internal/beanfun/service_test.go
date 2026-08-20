@@ -1,6 +1,7 @@
 package beanfun
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -346,5 +347,92 @@ func TestCheckQRLoginInCooldownMakesNoRequest(t *testing.T) {
 
 	if got := pollRequests.Load(); got != 1 {
 		t.Errorf("poll endpoint hit %d times, want 1 — later polls must be refused locally", got)
+	}
+}
+
+// TestKeepAliveTick covers the delay decision for all three response
+// shapes. The cooldown column is the point: true for a block and false
+// for a 500 is the difference between the block being noticed and the
+// block informing anything.
+func TestKeepAliveTick(t *testing.T) {
+	const echoPath = "/beanfun_block/generic_handlers/echo_token.ashx"
+	tests := []struct {
+		name         string
+		install      func(*http.ServeMux)
+		wantDelay    time.Duration
+		wantLog      string
+		wantNoLog    string
+		wantCooldown bool
+	}{
+		{
+			name: "ping ok",
+			install: func(mux *http.ServeMux) {
+				mux.HandleFunc(echoPath, func(w http.ResponseWriter, r *http.Request) {
+					w.WriteHeader(http.StatusOK)
+				})
+			},
+			wantDelay: keepAliveIntervalOK,
+			wantLog:   "keep-alive: ping ok",
+		},
+		{
+			name: "server error",
+			install: func(mux *http.ServeMux) {
+				mux.HandleFunc(echoPath, func(w http.ResponseWriter, r *http.Request) {
+					w.WriteHeader(http.StatusInternalServerError)
+				})
+			},
+			wantDelay: keepAliveIntervalFail,
+			wantLog:   "keep-alive: ping failed",
+			wantNoLog: "keep-alive: ping ok",
+		},
+		{
+			name: "ip blocked",
+			install: func(mux *http.ServeMux) {
+				mux.HandleFunc(echoPath, func(w http.ResponseWriter, r *http.Request) {
+					http.Redirect(w, r, "/TW/BlockIPMessage.htm", http.StatusFound)
+				})
+				mux.HandleFunc("/TW/BlockIPMessage.htm", func(w http.ResponseWriter, r *http.Request) {
+					writeHTML(w, "<html>locked</html>")
+				})
+			},
+			wantDelay:    keepAliveIntervalFail,
+			wantLog:      "ip blocked, session was not refreshed",
+			wantNoLog:    "keep-alive: ping ok",
+			wantCooldown: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			withShortCooldown(t, time.Minute)
+			logs := captureLogs(t)
+
+			mux := http.NewServeMux()
+			tt.install(mux)
+			srv := httptest.NewServer(mux)
+			t.Cleanup(srv.Close)
+
+			endpoints := stubEndpoints(t, srv)
+			c, err := NewBeanfunClientWithEndpoints(endpoints)
+			if err != nil {
+				t.Fatal(err)
+			}
+			s := NewLoginServiceWithEndpoints(endpoints, bgtask.New())
+
+			got := s.keepAliveTick(context.Background(), c)
+
+			if got != tt.wantDelay {
+				t.Errorf("delay = %v, want %v", got, tt.wantDelay)
+			}
+			out := logs.String()
+			if !strings.Contains(out, tt.wantLog) {
+				t.Errorf("log missing %q:\n%s", tt.wantLog, out)
+			}
+			if tt.wantNoLog != "" && strings.Contains(out, tt.wantNoLog) {
+				t.Errorf("log should not contain %q:\n%s", tt.wantNoLog, out)
+			}
+			if armed := s.mintCooldownRemaining() > 0; armed != tt.wantCooldown {
+				t.Errorf("cooldown armed = %v, want %v", armed, tt.wantCooldown)
+			}
+		})
 	}
 }

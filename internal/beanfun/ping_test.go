@@ -2,6 +2,7 @@ package beanfun
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -54,5 +55,26 @@ func TestBeanfunClient_Ping_HTTPError(t *testing.T) {
 	}
 	if err := c.Ping(context.Background()); err == nil {
 		t.Error("Ping err = nil, want HTTP error")
+	}
+}
+
+// TestBeanfunClient_Ping_IPBlocked covers the response shape that used to
+// read as success: the block notice arrives as HTTP 200 after a redirect,
+// so only the path distinguishes it.
+func TestBeanfunClient_Ping_IPBlocked(t *testing.T) {
+	t.Parallel()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/beanfun_block/generic_handlers/echo_token.ashx", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/TW/BlockIPMessage.htm", http.StatusFound)
+	})
+	mux.HandleFunc("/TW/BlockIPMessage.htm", func(w http.ResponseWriter, r *http.Request) {
+		writeHTML(w, "<html>locked</html>")
+	})
+	c, _ := newTestClient(t, mux)
+
+	err := c.Ping(context.Background())
+	var le *LoginError
+	if !errors.As(err, &le) || le.Kind != KindIPBlocked {
+		t.Fatalf("got %v, want KindIPBlocked", err)
 	}
 }
