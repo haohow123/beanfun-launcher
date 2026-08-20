@@ -15,7 +15,7 @@ func resetForTest(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	origNow, origFrames, origLogger := nowFn, framesFn, slog.Default()
 	mu.Lock()
-	startedAt = time.Time{}
+	startedAt, readyAt = time.Time{}, time.Time{}
 	mu.Unlock()
 
 	buf := &bytes.Buffer{}
@@ -24,7 +24,7 @@ func resetForTest(t *testing.T) *bytes.Buffer {
 		nowFn, framesFn = origNow, origFrames
 		slog.SetDefault(origLogger)
 		mu.Lock()
-		startedAt = time.Time{}
+		startedAt, readyAt = time.Time{}, time.Time{}
 		mu.Unlock()
 	})
 	return buf
@@ -181,5 +181,76 @@ func TestScrubbed_NilError(t *testing.T) {
 	t.Parallel()
 	if got := scrubbed(nil); got != "<nil>" {
 		t.Errorf("scrubbed(nil) = %q, want %q", got, "<nil>")
+	}
+}
+
+// TestNoteRuntimeReady_Idempotent guards against a reload overwriting the
+// first readiness stamp, which would misreport the timing in a crash
+// record — WindowRuntimeReady fires again after every reload.
+func TestNoteRuntimeReady_Idempotent(t *testing.T) {
+	resetForTest(t)
+	base := time.Date(2026, 8, 20, 3, 46, 30, 0, time.UTC)
+
+	nowFn = func() time.Time { return base }
+	MarkStart()
+	nowFn = func() time.Time { return base.Add(1800 * time.Millisecond) }
+	NoteRuntimeReady()
+	nowFn = func() time.Time { return base.Add(9 * time.Second) }
+	NoteRuntimeReady()
+
+	mu.Lock()
+	got := readyAt.Sub(base)
+	mu.Unlock()
+	if got != 1800*time.Millisecond {
+		t.Errorf("readyAt = %v after start, want 1.8s (the first call)", got)
+	}
+}
+
+func TestWebviewError_ReadinessInRecord(t *testing.T) {
+	base := time.Date(2026, 8, 20, 3, 46, 30, 0, time.UTC)
+	tests := []struct {
+		name    string
+		ready   bool
+		present []string
+		absent  []string
+	}{
+		{
+			name:    "crashed before readiness",
+			ready:   false,
+			present: []string{"runtime_ready=false"},
+			absent:  []string{"runtime_ready_at"},
+		},
+		{
+			name:    "crashed after readiness",
+			ready:   true,
+			present: []string{"runtime_ready=true", "runtime_ready_at=1.8s"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			buf := resetForTest(t)
+			nowFn = func() time.Time { return base }
+			MarkStart()
+			if tt.ready {
+				nowFn = func() time.Time { return base.Add(1800 * time.Millisecond) }
+				NoteRuntimeReady()
+			}
+			nowFn = func() time.Time { return base.Add(4200 * time.Millisecond) }
+			framesFn = func() []string { return []string{fatalFrame + " chromium.go:151"} }
+
+			WebviewError(errors.New("MoveFocus: 0x8000FFFF"))
+
+			out := buf.String()
+			for _, want := range tt.present {
+				if !strings.Contains(out, want) {
+					t.Errorf("record missing %q:\n%s", want, out)
+				}
+			}
+			for _, bad := range tt.absent {
+				if strings.Contains(out, bad) {
+					t.Errorf("record should not contain %q:\n%s", bad, out)
+				}
+			}
+		})
 	}
 }

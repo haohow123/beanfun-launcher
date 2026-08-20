@@ -15,6 +15,7 @@ import (
 	"github.com/haohow123/beanfun-launcher/internal/launcher"
 	"github.com/haohow123/beanfun-launcher/internal/maple"
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 	"github.com/wailsapp/wails/v3/pkg/services/notifications"
 )
 
@@ -90,7 +91,7 @@ func main() {
 		ErrorHandler: diag.WebviewError,
 	})
 
-	app.Window.NewWithOptions(application.WebviewWindowOptions{
+	win := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:         "Beanfun Launcher",
 		Width:         480,
 		Height:        640,
@@ -102,6 +103,13 @@ func main() {
 		},
 		BackgroundColour: application.NewRGB(27, 38, 54),
 		URL:              "/",
+	})
+
+	// RegisterHook, not OnWindowEvent: hooks run synchronously while
+	// listeners each get a goroutine, and the crash can land within
+	// milliseconds of readiness.
+	win.RegisterHook(events.Common.WindowRuntimeReady, func(*application.WindowEvent) {
+		diag.NoteRuntimeReady()
 	})
 
 	// Stop every background goroutine on app shutdown so we don't

@@ -30,6 +30,7 @@ var framesFn = capturedFrames
 var (
 	mu        sync.Mutex
 	startedAt time.Time
+	readyAt   time.Time
 )
 
 // MarkStart records the process start instant.
@@ -37,6 +38,17 @@ func MarkStart() {
 	mu.Lock()
 	defer mu.Unlock()
 	startedAt = nowFn()
+}
+
+// NoteRuntimeReady stamps the first time the webview reported ready.
+// WindowRuntimeReady fires again after a reload; the first one is the
+// interesting one, so later calls are ignored.
+func NoteRuntimeReady() {
+	mu.Lock()
+	defer mu.Unlock()
+	if readyAt.IsZero() {
+		readyAt = nowFn()
+	}
 }
 
 // elapsed reports time since MarkStart, or zero if it was never called.
@@ -95,12 +107,23 @@ func WebviewError(err error) {
 
 	mu.Lock()
 	since := elapsed()
+	ready := !readyAt.IsZero()
+	var readyIn time.Duration
+	if ready && !startedAt.IsZero() {
+		readyIn = readyAt.Sub(startedAt)
+	}
 	mu.Unlock()
 
-	slog.Error("webview fatal: process will exit",
+	attrs := []any{
 		"err", msg,
 		"since_start", since,
-		"frames", len(frames))
+		"runtime_ready", ready,
+		"frames", len(frames),
+	}
+	if ready {
+		attrs = append(attrs, "runtime_ready_at", readyIn)
+	}
+	slog.Error("webview fatal: process will exit", attrs...)
 	for i, f := range frames {
 		slog.Error("  stack", "n", i+1, "frame", f)
 	}
