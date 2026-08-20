@@ -11,6 +11,7 @@ import (
 
 	"github.com/haohow123/beanfun-launcher/internal/beanfun"
 	"github.com/haohow123/beanfun-launcher/internal/bgtask"
+	"github.com/haohow123/beanfun-launcher/internal/diag"
 	"github.com/haohow123/beanfun-launcher/internal/launcher"
 	"github.com/haohow123/beanfun-launcher/internal/maple"
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -27,6 +28,10 @@ var assets embed.FS
 var version = "dev"
 
 func main() {
+	// Before setupLogging so the elapsed figure in a crash record
+	// covers logging setup too.
+	diag.MarkStart()
+
 	logFile := setupLogging()
 	if logFile != nil {
 		defer func() { _ = logFile.Close() }()
@@ -80,6 +85,9 @@ func main() {
 		Mac: application.MacOptions{
 			ApplicationShouldTerminateAfterLastWindowClosed: true,
 		},
+		// go-webview2 exits the process on any MoveFocus error and prints
+		// the error to a stdout that -H windowsgui detaches; this keeps it.
+		ErrorHandler: diag.WebviewError,
 	})
 
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
@@ -121,10 +129,12 @@ func main() {
 // Credentials are redacted where they are emitted: beanfun.Session.String(),
 // query-stripped URLs and scrubbed error strings in the login flow,
 // describeBody in place of page previews, MaskSID for account identifiers,
-// and len-only logging of OTP tokens. Not covered: raw server text still
-// reaches the log inside error messages — withBodyBytes on QR-init parse
-// failures, ErrServerMessage, ErrOTPServerRejected — and this file has no
-// size bound, so it grows for the life of a release tag.
+// and len-only logging of OTP tokens. diag.WebviewError logs whatever
+// Wails and go-webview2 hand it, scrubbed through the same backstop, but
+// their message shapes are not ours to audit. Not covered: raw server text
+// still reaches the log inside error messages — withBodyBytes on QR-init
+// parse failures, ErrServerMessage, ErrOTPServerRejected — and this file
+// has no size bound, so it grows for the life of a release tag.
 func setupLogging() *os.File {
 	cache, err := os.UserCacheDir()
 	if err != nil {
