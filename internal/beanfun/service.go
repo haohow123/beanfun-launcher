@@ -315,15 +315,33 @@ func (s *LoginService) startKeepAliveLocked(client *BeanfunClient) {
 	slog.Info("keep-alive: heartbeat registered",
 		"interval_ok", keepAliveIntervalOK, "interval_fail", keepAliveIntervalFail)
 	s.mgr.Heartbeat(keepAliveTaskName, keepAliveIntervalOK, func(ctx context.Context) time.Duration {
-		pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		err := client.Ping(pingCtx)
-		cancel()
-		if err != nil {
-			slog.Warn("keep-alive: ping failed (retrying sooner)",
-				"err", err, "next_interval", keepAliveIntervalFail)
-			return keepAliveIntervalFail
-		}
+		return s.keepAliveTick(ctx, client)
+	})
+}
+
+// keepAliveTick runs one ping and reports how long to wait before the
+// next one.
+func (s *LoginService) keepAliveTick(ctx context.Context, client *BeanfunClient) time.Duration {
+	pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	err := client.Ping(pingCtx)
+	cancel()
+
+	if err == nil {
 		slog.Info("keep-alive: ping ok", "next_interval", keepAliveIntervalOK)
 		return keepAliveIntervalOK
-	})
+	}
+
+	var le *LoginError
+	if errors.As(err, &le) && le.Kind == KindIPBlocked {
+		// The ping never reached the handler, so this tick did not reset
+		// the server's idle timer.
+		slog.Warn("keep-alive: ip blocked, session was not refreshed",
+			"err", err, "next_interval", keepAliveIntervalFail)
+		s.armCooldownIfBlocked(err)
+		return keepAliveIntervalFail
+	}
+
+	slog.Warn("keep-alive: ping failed (retrying sooner)",
+		"err", err, "next_interval", keepAliveIntervalFail)
+	return keepAliveIntervalFail
 }
