@@ -73,6 +73,13 @@ var credentialParamRE = sync.OnceValue(func() *regexp.Regexp {
 	return regexp.MustCompile(`(?i)((?:[sp][sp]?key|web_?token)=)[^&"\s]+`)
 })
 
+// ScrubCredentials applies the same backstop to a message produced
+// outside this package — errors from dependencies reach launcher.log
+// through internal/diag and nothing else scrubs them.
+func ScrubCredentials(msg string) string {
+	return scrubCredentialParams(msg)
+}
+
 // scrubCredentialParams is the render-time backstop for redactURLError, which cannot reach a message fmt.Errorf already snapshotted.
 func scrubCredentialParams(msg string) string {
 	return credentialParamRE().ReplaceAllString(msg, "${1}<redacted>")
