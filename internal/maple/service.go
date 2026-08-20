@@ -22,6 +22,10 @@ const statusHeartbeatName = "maple-server-status"
 // blocking the user.
 const statusInterval = 2 * time.Minute
 
+// StatusChangedEvent is the Wails event carrying a Status snapshot on every Online flip; the
+// frontend bridge in frontend/src/queries/mapleStatus.ts must use the same string.
+const StatusChangedEvent = "maple:status-changed"
+
 // MapleService is the Wails-bound facade for MapleStory-specific
 // data. Currently exposes server status only; future expansion
 // (event list, character info) hangs here. Constructed once in
@@ -42,6 +46,11 @@ type MapleService struct {
 // We don't need cookie continuity with the Beanfun login client
 // — the canary is just "can we reach Gamania's web tier".
 //
+// onStatusChanged, if non-nil, receives a Status snapshot on the
+// initial probe and on every Online flip (see
+// Checker.OnStatusChanged); installed before the heartbeat for the
+// same reason as onServerOnline.
+//
 // onServerOnline, if non-nil, is invoked when the heartbeat
 // detects an offline → online state transition (not on the
 // initial probe; see Checker.OnServerOnline). Installed BEFORE
@@ -51,9 +60,11 @@ func NewMapleService(
 	mgr *bgtask.Manager,
 	httpClient *http.Client,
 	onServerOnline func(),
+	onStatusChanged func(Status),
 ) *MapleService {
 	s := &MapleService{checker: NewChecker(httpClient)}
 	s.checker.OnServerOnline = onServerOnline
+	s.checker.OnStatusChanged = onStatusChanged
 	mgr.Heartbeat(statusHeartbeatName, 0, func(ctx context.Context) time.Duration {
 		s.checker.CheckStatus(ctx)
 		return statusInterval
