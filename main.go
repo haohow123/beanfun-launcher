@@ -65,11 +65,19 @@ func main() {
 		}
 	}
 
+	// application.Get() is resolved at emit time because mapleSvc is built before application.New
+	// and the heartbeat's first probe can complete before the app exists.
+	emitStatusChanged := func(s maple.Status) {
+		if app := application.Get(); app != nil {
+			app.Event.Emit(maple.StatusChangedEvent, s)
+		}
+	}
+
 	// MapleService starts its status-probe heartbeat immediately
 	// (firstDelay=0 in NewMapleService) so the Hero indicator
 	// transitions from "checking…" to a real green/red dot within
 	// seconds of app start, not minutes.
-	mapleSvc := maple.NewMapleService(mgr, nil, notifyServerOnline)
+	mapleSvc := maple.NewMapleService(mgr, nil, notifyServerOnline, emitStatusChanged)
 
 	app := application.New(application.Options{
 		Name:        "beanfun-launcher",

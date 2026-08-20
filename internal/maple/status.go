@@ -122,6 +122,10 @@ type Checker struct {
 	// the field is read by every CheckStatus pass and is assumed
 	// immutable from the first heartbeat tick onward.
 	OnServerOnline func()
+
+	// OnStatusChanged is the state feed — fired on the initial probe and on every Online flip in
+	// either direction, unlike the one-directional OnServerOnline above.
+	OnStatusChanged func(Status)
 }
 
 // NewChecker returns a Checker that uses httpClient for the
@@ -190,19 +194,22 @@ func (c *Checker) CheckStatus(ctx context.Context) Status {
 	c.mu.Lock()
 	prev := c.status
 	c.status.LastChecked = now
-	var serverCameOnline bool
+	var serverCameOnline, statusChanged bool
 	if !c.everChecked {
 		slog.Info("maple.status: initial probe", "online", online)
 		c.status.Online = online
 		c.status.CheckedSince = now
+		statusChanged = true
 	} else if c.status.Online != online {
 		slog.Info("maple.status: state changed",
 			"online", online, "prev_online", prev.Online)
 		c.status.Online = online
 		c.status.CheckedSince = now
 		serverCameOnline = !prev.Online && online
+		statusChanged = true
 	}
 	c.everChecked = true
+	snapshot := c.status
 	c.mu.Unlock()
 
 	// Callback fires outside the lock so a slow notification syscall
@@ -210,6 +217,9 @@ func (c *Checker) CheckStatus(ctx context.Context) Status {
 	// (not at the caller) — see Checker.OnServerOnline doc.
 	if serverCameOnline && c.OnServerOnline != nil {
 		c.OnServerOnline()
+	}
+	if statusChanged && c.OnStatusChanged != nil {
+		c.OnStatusChanged(snapshot)
 	}
 
 	return c.Status()

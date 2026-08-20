@@ -265,3 +265,70 @@ func TestCheckStatus_NoStateChange_KeepsCheckedSince(t *testing.T) {
 			first.LastChecked, second.LastChecked)
 	}
 }
+
+func TestCheckStatus_OnStatusChanged(t *testing.T) {
+	tests := []struct {
+		name            string
+		firstFails      bool
+		secondFails     bool
+		wantCalls       int32
+		wantFinalOnline bool
+	}{
+		{"initial online then steady", false, false, 1, true},
+		{"initial offline then steady", true, true, 1, false},
+		{"offline to online", true, false, 2, true},
+		{"online to offline", false, true, 2, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var fail int32
+			if tt.firstFails {
+				fail = 1
+			}
+			withFakeNet(t, &fakeNet{
+				dial: func(context.Context, string) error {
+					if atomic.LoadInt32(&fail) == 1 {
+						return errors.New("offline")
+					}
+					return nil
+				},
+				canary: func(context.Context, *http.Client) error { return nil },
+			})
+
+			var calls int32
+			var last Status
+			c := NewChecker(nil)
+			c.OnStatusChanged = func(s Status) {
+				atomic.AddInt32(&calls, 1)
+				last = s
+			}
+
+			c.CheckStatus(context.Background())
+			if tt.secondFails != tt.firstFails {
+				if tt.secondFails {
+					atomic.StoreInt32(&fail, 1)
+				} else {
+					atomic.StoreInt32(&fail, 0)
+				}
+			}
+			c.CheckStatus(context.Background())
+
+			if got := atomic.LoadInt32(&calls); got != tt.wantCalls {
+				t.Errorf("calls = %d, want %d", got, tt.wantCalls)
+			}
+			if last.Online != tt.wantFinalOnline {
+				t.Errorf("payload Online = %v, want %v", last.Online, tt.wantFinalOnline)
+			}
+			if last.CheckedSince.IsZero() {
+				t.Error("payload CheckedSince is zero; the snapshot was taken before the write")
+			}
+		})
+	}
+}
+
+func TestStatusChangedEventLiteral(t *testing.T) {
+	if StatusChangedEvent != "maple:status-changed" {
+		t.Errorf("StatusChangedEvent = %q; the frontend listener hardcodes the old string",
+			StatusChangedEvent)
+	}
+}
