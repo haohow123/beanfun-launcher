@@ -34,6 +34,13 @@ const (
 	QRStatusApproved QRStatus = "approved"
 )
 
+// QRState is the cached QR-login state. Error carries the rendered, credential-scrubbed message
+// when a poll or finalize failed, so the frontend keeps the needle it matches on today.
+type QRState struct {
+	Status QRStatus `json:"status"`
+	Error  string   `json:"error,omitempty"`
+}
+
 // LoginService is the Wails-bound login facade. The frontend calls
 // StartQRLogin once, then polls CheckQRLogin every 2 seconds.
 type LoginService struct {
@@ -50,6 +57,11 @@ type LoginService struct {
 	// blockedUntil is when the IP-lock cooldown expires; the zero value
 	// means no cooldown is active.
 	blockedUntil time.Time
+	// qrState is the latest state the background poll produced; guarded by mu.
+	qrState QRState
+	// qrGeneration increments on every StartQRLogin. bgtask.Stop cancels without waiting, so a
+	// superseded tick can still be mid-flight; it compares generations before writing.
+	qrGeneration uint64
 }
 
 // Cadence of the background ping that keeps the Beanfun portal
@@ -76,19 +88,29 @@ const (
 // this to keep runs in milliseconds.
 var qrMintCooldown = 60 * time.Second
 
+const (
+	qrPollInterval = 2 * time.Second
+	qrPollTimeout  = 30 * time.Second
+	// qrPollTaskName is the bgtask registry key; re-registering supersedes the previous loop, and
+	// Reset() stops it.
+	qrPollTaskName = "beanfun-qr-poll"
+)
+
 // NewLoginService returns a LoginService configured for production TW
 // endpoints. The HTTP client is minted lazily inside StartQRLogin.
 // mgr is required (non-nil) — the keep-alive heartbeat registers
 // against it after a successful login.
 func NewLoginService(mgr *bgtask.Manager) *LoginService {
-	return &LoginService{endpoints: DefaultEndpoints(), mgr: mgr}
+	return &LoginService{endpoints: DefaultEndpoints(), mgr: mgr,
+		qrState: QRState{Status: QRStatusExpired}}
 }
 
 // NewLoginServiceWithEndpoints injects caller-provided endpoints. Tests
 // build them from an httptest.Server and pass them in. mgr is required
 // (non-nil) — tests typically pass a fresh `bgtask.New()`.
 func NewLoginServiceWithEndpoints(endpoints Endpoints, mgr *bgtask.Manager) *LoginService {
-	return &LoginService{endpoints: endpoints, mgr: mgr}
+	return &LoginService{endpoints: endpoints, mgr: mgr,
+		qrState: QRState{Status: QRStatusExpired}}
 }
 
 // armCooldownIfBlocked starts the mint cooldown when err is beanfun's
@@ -113,6 +135,31 @@ func (s *LoginService) mintCooldownRemaining() time.Duration {
 		return remaining
 	}
 	return 0
+}
+
+func (s *LoginService) cachedQRState() QRState {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.qrState
+}
+
+func (s *LoginService) publishQRState(gen uint64, st QRState) {
+	s.mu.Lock()
+	if gen == s.qrGeneration {
+		s.qrState = st
+	}
+	s.mu.Unlock()
+}
+
+// qrErrorState keeps the last known status and attaches the failure, matching the old behaviour
+// where a failed poll left the frontend's data untouched and surfaced the error separately.
+func qrErrorState(prev QRState, err error) QRState {
+	return QRState{Status: prev.Status, Error: ScrubCredentials(err.Error())}
+}
+
+func isIPBlockedErr(err error) bool {
+	var le *LoginError
+	return errors.As(err, &le) && le.Kind == KindIPBlocked
 }
 
 // StartQRLogin runs the init flow (getSessionKey → initQRLogin) and
@@ -153,11 +200,13 @@ func (s *LoginService) StartQRLogin() (QRStart, error) {
 	// section so we don't hold a service lock while waiting on
 	// the bgtask registry's internal mutex.
 	s.mgr.Stop(keepAliveTaskName)
+	s.mgr.Stop(qrPollTaskName)
 
 	s.mu.Lock()
 	s.client = client
 	s.pendingQR = init
 	s.session = nil
+	s.startQRPollLocked(client, init)
 	s.mu.Unlock()
 
 	// Boundary log — absence of this line in launcher.log when
@@ -172,67 +221,14 @@ func (s *LoginService) StartQRLogin() (QRStart, error) {
 	}, nil
 }
 
-// CheckQRLogin polls /QRLogin/CheckLoginStatus once and, on Approved,
-// runs the 4-call finalize handshake synchronously to acquire
-// bfWebToken. The frontend never sees the finalize step explicitly —
-// from its perspective a single CheckQRLogin call either stays Pending
-// or completes the login.
+// CheckQRLogin returns the cached QR-login state. The poll that produces it runs in the heartbeat
+// StartQRLogin registers; this call touches no network.
 func (s *LoginService) CheckQRLogin() (QRStatus, error) {
-	// The frontend polls every 2s and does not stop on error, so without
-	// this the poll alone would keep hitting a blocked endpoint and each
-	// hit would push the cooldown out again.
-	if remaining := s.mintCooldownRemaining(); remaining > 0 {
-		slog.Warn("CheckQRLogin: refused, ip-block cooldown active", "remaining", remaining)
-		return "", ErrIPBlocked()
+	st := s.cachedQRState()
+	if st.Error != "" {
+		return st.Status, errors.New(st.Error)
 	}
-
-	s.mu.Lock()
-	pendingQR := s.pendingQR
-	client := s.client
-	s.mu.Unlock()
-
-	if pendingQR == nil || client == nil {
-		// No active session — caller should StartQRLogin again. Surface
-		// as Expired so the frontend's retry path is the natural next
-		// step.
-		return QRStatusExpired, nil
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	outcome, err := client.pollQRLoginStatus(ctx, pendingQR)
-	if err != nil {
-		s.armCooldownIfBlocked(err)
-		return "", err
-	}
-
-	switch outcome {
-	case pollOutcomeWaitLogin:
-		return QRStatusPending, nil
-	case pollOutcomeFailed:
-		return QRStatusRetry, nil
-	case pollOutcomeTokenExpired:
-		s.mu.Lock()
-		s.pendingQR = nil
-		s.mu.Unlock()
-		return QRStatusExpired, nil
-	case pollOutcomeApproved:
-		sess, err := client.finalizeQRLogin(ctx, pendingQR)
-		if err != nil {
-			s.armCooldownIfBlocked(err)
-			return "", err
-		}
-		s.mu.Lock()
-		s.session = sess
-		s.pendingQR = nil
-		s.startKeepAliveLocked(client)
-		s.mu.Unlock()
-		slog.Info("LoginService: login complete", "session", sess)
-		return QRStatusApproved, nil
-	default:
-		return "", &LoginError{Kind: KindUnknown, Msg: "unknown poll outcome"}
-	}
+	return st.Status, nil
 }
 
 // GetAccounts returns the list of game accounts under the active
@@ -284,11 +280,13 @@ func (s *LoginService) Reset() {
 	// Stop outside the s.mu critical section — see StartQRLogin
 	// comment for the same rationale.
 	s.mgr.Stop(keepAliveTaskName)
+	s.mgr.Stop(qrPollTaskName)
 
 	s.mu.Lock()
 	s.client = nil
 	s.session = nil
 	s.pendingQR = nil
+	s.qrState = QRState{Status: QRStatusExpired}
 	s.mu.Unlock()
 }
 
@@ -344,4 +342,81 @@ func (s *LoginService) keepAliveTick(ctx context.Context, client *BeanfunClient)
 	slog.Warn("keep-alive: ping failed (retrying sooner)",
 		"err", err, "next_interval", keepAliveIntervalFail)
 	return keepAliveIntervalFail
+}
+
+// startQRPollLocked registers the QR poll heartbeat. Must be called with s.mu held, from the same
+// critical section that installs pendingQR — that is what makes it impossible for the loop to poll
+// a stale session.
+func (s *LoginService) startQRPollLocked(client *BeanfunClient, pendingQR *qrLoginInit) {
+	s.qrGeneration++
+	gen := s.qrGeneration
+	s.qrState = QRState{Status: QRStatusPending}
+	slog.Info("qr-poll: heartbeat registered", "interval", qrPollInterval, "generation", gen)
+	s.mgr.Heartbeat(qrPollTaskName, 0, func(ctx context.Context) time.Duration {
+		return s.qrPollTick(ctx, gen, client, pendingQR)
+	})
+}
+
+// qrPollTick runs one poll and reports how long to wait before the next, returning 0 to end the
+// loop. Terminal conditions are approved, expired and IP-blocked — continuing at 2s into a blocked
+// endpoint is what the cooldown was introduced to prevent.
+func (s *LoginService) qrPollTick(ctx context.Context, gen uint64, client *BeanfunClient, pendingQR *qrLoginInit) time.Duration {
+	pollCtx, cancel := context.WithTimeout(ctx, qrPollTimeout)
+	defer cancel()
+
+	st, stop := s.advanceQRState(pollCtx, gen, client, pendingQR)
+	s.publishQRState(gen, st)
+	if stop {
+		slog.Info("qr-poll: loop ending", "status", st.Status, "has_error", st.Error != "")
+		return 0
+	}
+	return qrPollInterval
+}
+
+func (s *LoginService) advanceQRState(ctx context.Context, gen uint64, client *BeanfunClient, pendingQR *qrLoginInit) (QRState, bool) {
+	prev := s.cachedQRState()
+
+	outcome, err := client.pollQRLoginStatus(ctx, pendingQR)
+	if err != nil {
+		slog.Warn("qr-poll: poll failed", "err", err)
+		s.armCooldownIfBlocked(err)
+		return qrErrorState(prev, err), isIPBlockedErr(err)
+	}
+
+	switch outcome {
+	case pollOutcomeWaitLogin:
+		return QRState{Status: QRStatusPending}, false
+	case pollOutcomeFailed:
+		return QRState{Status: QRStatusRetry}, false
+	case pollOutcomeTokenExpired:
+		s.mu.Lock()
+		if gen == s.qrGeneration {
+			s.pendingQR = nil
+		}
+		s.mu.Unlock()
+		return QRState{Status: QRStatusExpired}, true
+	case pollOutcomeApproved:
+		sess, err := client.finalizeQRLogin(ctx, pendingQR)
+		if err != nil {
+			slog.Error("qr-poll: finalize failed", "err", err)
+			s.armCooldownIfBlocked(err)
+			return qrErrorState(prev, err), isIPBlockedErr(err)
+		}
+		s.mu.Lock()
+		stale := gen != s.qrGeneration
+		if !stale {
+			s.session = sess
+			s.pendingQR = nil
+			s.startKeepAliveLocked(client)
+		}
+		s.mu.Unlock()
+		if stale {
+			slog.Warn("qr-poll: discarding a login completed by a superseded attempt", "generation", gen)
+			return QRState{}, true
+		}
+		slog.Info("LoginService: login complete", "session", sess)
+		return QRState{Status: QRStatusApproved}, true
+	default:
+		return QRState{Status: prev.Status, Error: "unknown poll outcome"}, false
+	}
 }

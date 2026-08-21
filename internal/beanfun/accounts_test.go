@@ -302,9 +302,10 @@ func TestLoginService_GetAccounts_HappyPath(t *testing.T) {
 	if _, err := s.StartQRLogin(); err != nil {
 		t.Fatalf("StartQRLogin: %v", err)
 	}
-	if _, err := s.CheckQRLogin(); err != nil {
-		t.Fatalf("CheckQRLogin: %v", err)
-	}
+	// Drive the login to completion ourselves rather than waiting on the heartbeat StartQRLogin
+	// registered, so the assertion below does not depend on timing.
+	client, init, gen := stopLoopAndCapture(t, s)
+	s.qrPollTick(context.Background(), gen, client, init)
 	got, err := s.GetAccounts()
 	if err != nil {
 		t.Fatalf("GetAccounts: %v", err)
