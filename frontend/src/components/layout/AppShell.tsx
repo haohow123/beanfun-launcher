@@ -21,10 +21,9 @@ const isMacOS =
  * native title bar takes care of drag + window controls.
  *
  * `mainClassName` overrides the centred default. Both pages pass
- * `flex-col` so the hero sits flush at the top. LoginPage then centres
- * its own body section (fixed-height QR card, so the slack is worth
- * splitting); HomePage stacks from the top because its account list
- * grows downward.
+ * `flex-col` so the hero sits flush at the top, and both stack their
+ * body from there — centring LoginPage's fixed-height card split the
+ * slack above and below it, which read as the whole page sitting low.
  */
 export function AppShell({
   children,

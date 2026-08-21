@@ -130,7 +130,7 @@ export function LoginPage() {
     <AppShell mainClassName="flex-col">
       <Hero />
 
-      <section className="flex flex-1 flex-col items-center justify-center gap-3 px-4 py-6">
+      <section className="flex flex-1 flex-col items-center gap-3 px-4 py-6">
         <h2 className="text-base font-semibold">登入 Beanfun</h2>
         {renderQR()}
         {renderStatus()}
