@@ -46,6 +46,13 @@ func main() {
 	mgr := bgtask.New()
 
 	loginSvc := beanfun.NewLoginService(mgr)
+	// application.Get() is resolved at emit time because loginSvc is built before application.New
+	// and the poll can produce a state before the app exists.
+	loginSvc.OnQRStateChanged = func(st beanfun.QRState) {
+		if app := application.Get(); app != nil {
+			app.Event.Emit(beanfun.QRStateChangedEvent, st)
+		}
+	}
 	launcherSvc := launcher.NewLauncherService(loginSvc, mgr)
 
 	// notifSvc backs the offline→online server toast (see

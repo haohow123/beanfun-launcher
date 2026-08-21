@@ -62,6 +62,10 @@ type LoginService struct {
 	// qrGeneration increments on every StartQRLogin. bgtask.Stop cancels without waiting, so a
 	// superseded tick can still be mid-flight; it compares generations before writing.
 	qrGeneration uint64
+
+	// OnQRStateChanged, if non-nil, receives every new QRState. Install once before the first
+	// StartQRLogin — it is read by the poll goroutine and assumed immutable from then on.
+	OnQRStateChanged func(QRState)
 }
 
 // Cadence of the background ping that keeps the Beanfun portal
@@ -95,6 +99,10 @@ const (
 	// Reset() stops it.
 	qrPollTaskName = "beanfun-qr-poll"
 )
+
+// QRStateChangedEvent is the Wails event carrying each new QRState; the frontend bridge in
+// frontend/src/queries/qrLogin.ts must use the same string.
+const QRStateChangedEvent = "beanfun:qr-state-changed"
 
 // NewLoginService returns a LoginService configured for production TW
 // endpoints. The HTTP client is minted lazily inside StartQRLogin.
@@ -145,10 +153,16 @@ func (s *LoginService) cachedQRState() QRState {
 
 func (s *LoginService) publishQRState(gen uint64, st QRState) {
 	s.mu.Lock()
-	if gen == s.qrGeneration {
+	changed := gen == s.qrGeneration && s.qrState != st
+	if changed {
 		s.qrState = st
 	}
 	s.mu.Unlock()
+	// Suppressing repeats matters: a QR sitting unscanned returns Wait Login every 2s, and emitting
+	// each one would be a push-shaped poll.
+	if changed && s.OnQRStateChanged != nil {
+		s.OnQRStateChanged(st)
+	}
 }
 
 // qrErrorState keeps the last known status and attaches the failure, matching the old behaviour

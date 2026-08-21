@@ -593,3 +593,78 @@ func TestQRStatusNowMakesNoRequest(t *testing.T) {
 		t.Errorf("QRStatusNow issued %d request(s), want 0", got)
 	}
 }
+
+func TestQRStateChangedEventLiteral(t *testing.T) {
+	if QRStateChangedEvent != "beanfun:qr-state-changed" {
+		t.Errorf("QRStateChangedEvent = %q; the frontend listener hardcodes the old string",
+			QRStateChangedEvent)
+	}
+}
+
+// TestOnQRStateChanged_PayloadIsScrubbed is the one security check on the push path: the payload's
+// error string is the only field that could carry a session key to the frontend.
+func TestOnQRStateChanged_PayloadIsScrubbed(t *testing.T) {
+	t.Parallel()
+	var got []QRState
+	s := NewLoginService(bgtask.New())
+	s.OnQRStateChanged = func(st QRState) { got = append(got, st) }
+
+	s.publishQRState(0, qrErrorState(QRState{Status: QRStatusPending}, ErrHTTP(&url.Error{
+		Op:  "Post",
+		URL: "https://tw.newlogin.beanfun.com/QRLogin/CheckLoginStatus?pSKey=SECRET789",
+		Err: errors.New("boom"),
+	})))
+
+	if len(got) != 1 {
+		t.Fatalf("callback fired %d time(s), want 1", len(got))
+	}
+	if strings.Contains(got[0].Error, "SECRET789") {
+		t.Fatalf("pushed payload leaked the session key: %q", got[0].Error)
+	}
+	if !strings.Contains(got[0].Error, "<redacted>") {
+		t.Errorf("Error = %q, want the redaction marker", got[0].Error)
+	}
+}
+
+// TestOnQRStateChanged_SuppressesRepeats covers the push-shaped-poll trap: an unscanned QR answers
+// Wait Login every tick, and emitting each one would be the poll we just removed.
+func TestOnQRStateChanged_SuppressesRepeats(t *testing.T) {
+	t.Parallel()
+	var calls int
+	s := NewLoginService(bgtask.New())
+	s.OnQRStateChanged = func(QRState) { calls++ }
+
+	pending := QRState{Status: QRStatusPending}
+	s.publishQRState(0, pending)
+	s.publishQRState(0, pending)
+	s.publishQRState(0, pending)
+	if calls != 1 {
+		t.Errorf("callback fired %d time(s) for three identical states, want 1", calls)
+	}
+
+	s.publishQRState(0, QRState{Status: QRStatusApproved})
+	if calls != 2 {
+		t.Errorf("callback fired %d time(s) after a real change, want 2", calls)
+	}
+}
+
+// TestOnQRStateChanged_StaleGenerationDoesNotEmit pairs with the write guard: a superseded tick must
+// not push either.
+func TestOnQRStateChanged_StaleGenerationDoesNotEmit(t *testing.T) {
+	t.Parallel()
+	var calls int
+	s := NewLoginService(bgtask.New())
+	s.OnQRStateChanged = func(QRState) { calls++ }
+	s.mu.Lock()
+	s.qrGeneration = 7
+	s.mu.Unlock()
+
+	s.publishQRState(6, QRState{Status: QRStatusApproved})
+
+	if calls != 0 {
+		t.Errorf("callback fired %d time(s) for a superseded generation, want 0", calls)
+	}
+	if st := s.cachedQRState(); st.Status != QRStatusExpired {
+		t.Errorf("status = %q, want %q (untouched)", st.Status, QRStatusExpired)
+	}
+}

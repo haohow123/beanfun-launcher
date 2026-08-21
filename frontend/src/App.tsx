@@ -4,6 +4,7 @@ import { HomePage } from "@/pages/HomePage";
 import { LoginPage } from "@/pages/LoginPage";
 import { useGameStateEventBridge } from "@/queries/gameState";
 import { useMapleStatusEventBridge } from "@/queries/mapleStatus";
+import { useQRStateEventBridge } from "@/queries/qrLogin";
 import { loggedInAtom } from "@/state/auth";
 
 function App() {
@@ -14,6 +15,7 @@ function App() {
   // login navigation without a re-mount churn.
   useGameStateEventBridge();
   useMapleStatusEventBridge();
+  useQRStateEventBridge();
 
   const loggedIn = useAtomValue(loggedInAtom);
   return loggedIn ? <HomePage /> : <LoginPage />;
