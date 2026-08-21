@@ -2,7 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useSetAtom } from "jotai";
 import { useEffect } from "react";
 
-import { QRStatus } from "@bindings/beanfun";
+import { QRState, QRStatus } from "@bindings/beanfun";
 import { AppShell } from "@/components/layout/AppShell";
 import { Hero } from "@/components/layout/Hero";
 import { Button } from "@/components/ui/button";
@@ -22,7 +22,7 @@ export function LoginPage() {
   const statusQuery = useQRStatusQuery(qrMint.isSuccess);
 
   useEffect(() => {
-    if (statusQuery.data === QRStatus.QRStatusApproved) {
+    if (statusQuery.data?.status === QRStatus.QRStatusApproved) {
       setLoggedIn(true);
     }
   }, [statusQuery.data, setLoggedIn]);
@@ -44,12 +44,15 @@ export function LoginPage() {
   // 2 s after this call — by which time StartQRLogin (~800 ms) has
   // already installed the new session backend-side.
   function regenerate() {
-    qc.setQueryData(qrStatusQueryKey, QRStatus.QRStatusPending);
+    qc.setQueryData(
+      qrStatusQueryKey,
+      QRState.createFrom({ status: QRStatus.QRStatusPending }),
+    );
     qrMint.refetch();
   }
 
-  const expired = statusQuery.data === QRStatus.QRStatusExpired;
-  const approved = statusQuery.data === QRStatus.QRStatusApproved;
+  const expired = statusQuery.data?.status === QRStatus.QRStatusExpired;
+  const approved = statusQuery.data?.status === QRStatus.QRStatusApproved;
   const minting = qrMint.isFetching;
   const hasQR = qrMint.isSuccess && !!qrMint.data?.bitmapBase64;
 
@@ -86,6 +89,18 @@ export function LoginPage() {
     return <div className="size-56 animate-pulse rounded-md border bg-muted" />;
   }
 
+  // The backend reports a poll or finalize failure in the cached state; a rejected read is the IPC
+  // call itself failing.
+  function statusFailure(): unknown {
+    if (statusQuery.data?.error) {
+      return statusQuery.data.error;
+    }
+    if (statusQuery.isError) {
+      return statusQuery.error;
+    }
+    return undefined;
+  }
+
   function renderStatus() {
     if (approved) {
       return <p className="text-sm text-foreground">登入成功,載入中…</p>;
@@ -97,10 +112,11 @@ export function LoginPage() {
         </p>
       );
     }
-    if (statusQuery.isError) {
+    const failure = statusFailure();
+    if (failure !== undefined) {
       return (
         <p className="break-words text-sm text-destructive">
-          登入失敗:{friendlyError(statusQuery.error)}
+          登入失敗:{friendlyError(failure)}
         </p>
       );
     }

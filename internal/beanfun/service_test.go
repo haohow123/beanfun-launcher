@@ -36,7 +36,7 @@ func fullInitMux() *http.ServeMux {
 }
 
 // serviceTestMux composes init + poll + finalize stubs so that one
-// httptest server can drive a full CheckQRLogin sequence end-to-end.
+// httptest server can drive a full poll sequence end-to-end.
 // pollResult is the ResultMessage to return; if "" the poll route is
 // not mounted (forces test to call only StartQRLogin).
 func serviceTestMux(pollResult string, setStep4Cookie bool) *http.ServeMux {
@@ -129,7 +129,7 @@ func TestLoginService_StartQRLogin(t *testing.T) {
 	}
 }
 
-func TestLoginService_CheckQRLogin_NoActiveSession(t *testing.T) {
+func TestLoginService_QRStatus_NoActiveSession(t *testing.T) {
 	t.Parallel()
 	// No StartQRLogin → pendingQR is nil → expect Expired (a graceful
 	// signal for the frontend to call StartQRLogin again).
@@ -137,16 +137,12 @@ func TestLoginService_CheckQRLogin_NoActiveSession(t *testing.T) {
 	t.Cleanup(srv.Close)
 	s := NewLoginServiceWithEndpoints(stubEndpoints(t, srv), bgtask.New())
 
-	got, err := s.CheckQRLogin()
-	if err != nil {
-		t.Fatalf("CheckQRLogin: %v", err)
-	}
-	if got != QRStatusExpired {
-		t.Errorf("got %q, want %q", got, QRStatusExpired)
+	if got := s.QRStatusNow(); got.Status != QRStatusExpired {
+		t.Errorf("got %q, want %q", got.Status, QRStatusExpired)
 	}
 }
 
-func TestLoginService_CheckQRLogin_PollPending(t *testing.T) {
+func TestLoginService_QRStatus_PollPending(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(serviceTestMux("Wait Login", false))
 	t.Cleanup(srv.Close)
@@ -154,16 +150,12 @@ func TestLoginService_CheckQRLogin_PollPending(t *testing.T) {
 
 	s.qrPollTick(context.Background(), 0, client, init)
 
-	got, err := s.CheckQRLogin()
-	if err != nil {
-		t.Fatalf("CheckQRLogin: %v", err)
-	}
-	if got != QRStatusPending {
-		t.Errorf("got %q, want %q", got, QRStatusPending)
+	if got := s.QRStatusNow(); got.Status != QRStatusPending {
+		t.Errorf("got %q, want %q", got.Status, QRStatusPending)
 	}
 }
 
-func TestLoginService_CheckQRLogin_PollExpiredClearsState(t *testing.T) {
+func TestLoginService_QRStatus_PollExpiredClearsState(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(serviceTestMux("Token Expired", false))
 	t.Cleanup(srv.Close)
@@ -172,12 +164,8 @@ func TestLoginService_CheckQRLogin_PollExpiredClearsState(t *testing.T) {
 	if delay := s.qrPollTick(context.Background(), 0, client, init); delay != 0 {
 		t.Errorf("delay = %v, want 0 (expired ends the loop)", delay)
 	}
-	got, err := s.CheckQRLogin()
-	if err != nil {
-		t.Fatalf("CheckQRLogin: %v", err)
-	}
-	if got != QRStatusExpired {
-		t.Errorf("got %q, want %q", got, QRStatusExpired)
+	if got := s.QRStatusNow(); got.Status != QRStatusExpired {
+		t.Errorf("got %q, want %q", got.Status, QRStatusExpired)
 	}
 	s.mu.Lock()
 	pending := s.pendingQR
@@ -186,16 +174,12 @@ func TestLoginService_CheckQRLogin_PollExpiredClearsState(t *testing.T) {
 		t.Error("pendingQR should be cleared after Expired")
 	}
 	// The cache keeps reporting Expired without another poll.
-	got2, err := s.CheckQRLogin()
-	if err != nil {
-		t.Fatalf("CheckQRLogin #2: %v", err)
-	}
-	if got2 != QRStatusExpired {
-		t.Errorf("after Expired, got %q, want %q (state should stay cleared)", got2, QRStatusExpired)
+	if got2 := s.QRStatusNow(); got2.Status != QRStatusExpired {
+		t.Errorf("after Expired, got %q, want %q (state should stay cleared)", got2.Status, QRStatusExpired)
 	}
 }
 
-func TestLoginService_CheckQRLogin_PollApprovedRunsFinalize(t *testing.T) {
+func TestLoginService_QRStatus_PollApprovedRunsFinalize(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(serviceTestMux("Success", true))
 	t.Cleanup(srv.Close)
@@ -204,12 +188,8 @@ func TestLoginService_CheckQRLogin_PollApprovedRunsFinalize(t *testing.T) {
 	if delay := s.qrPollTick(context.Background(), 0, client, init); delay != 0 {
 		t.Errorf("delay = %v, want 0 (approved ends the loop)", delay)
 	}
-	got, err := s.CheckQRLogin()
-	if err != nil {
-		t.Fatalf("CheckQRLogin: %v", err)
-	}
-	if got != QRStatusApproved {
-		t.Fatalf("got %q, want %q", got, QRStatusApproved)
+	if got := s.QRStatusNow(); got.Status != QRStatusApproved {
+		t.Fatalf("got %q, want %q", got.Status, QRStatusApproved)
 	}
 	// Session must be stashed and carry the token from step 4.
 	s.mu.Lock()
@@ -231,7 +211,7 @@ func TestLoginService_CheckQRLogin_PollApprovedRunsFinalize(t *testing.T) {
 	}
 }
 
-func TestLoginService_CheckQRLogin_PollServerError(t *testing.T) {
+func TestLoginService_QRStatus_PollServerError(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(serviceTestMux("Mystery Status", false))
 	t.Cleanup(srv.Close)
@@ -326,7 +306,7 @@ func TestStartQRLoginInCooldownMakesNoRequest(t *testing.T) {
 	}
 }
 
-// TestQRPollLoopStopsOnIPBlock replaces the old CheckQRLogin-in-cooldown test. The subject moved:
+// TestQRPollLoopStopsOnIPBlock replaces the old poll-in-cooldown test. The subject moved:
 // the loop, not the frontend, now owns the cadence, so what has to be true is that a blocked poll
 // ends the loop after exactly one request instead of re-arming the cooldown forever.
 func TestQRPollLoopStopsOnIPBlock(t *testing.T) {
@@ -589,9 +569,9 @@ func TestQRErrorState_ScrubsCredentials(t *testing.T) {
 	}
 }
 
-// TestCheckQRLoginMakesNoRequest is the Phase 1 claim: the read side is a cache lookup, so the
+// TestQRStatusNowMakesNoRequest is the claim: the read side is a cache lookup, so the
 // frontend's existing 2s refetch costs nothing.
-func TestCheckQRLoginMakesNoRequest(t *testing.T) {
+func TestQRStatusNowMakesNoRequest(t *testing.T) {
 	t.Parallel()
 	var requests atomic.Int32
 	mux := http.NewServeMux()
@@ -605,15 +585,11 @@ func TestCheckQRLoginMakesNoRequest(t *testing.T) {
 	s.publishQRState(0, QRState{Status: QRStatusPending})
 
 	for i := 0; i < 5; i++ {
-		got, err := s.CheckQRLogin()
-		if err != nil {
-			t.Fatalf("CheckQRLogin #%d: %v", i+1, err)
-		}
-		if got != QRStatusPending {
-			t.Errorf("call %d: got %q, want %q", i+1, got, QRStatusPending)
+		if got := s.QRStatusNow(); got.Status != QRStatusPending {
+			t.Errorf("call %d: got %q, want %q", i+1, got.Status, QRStatusPending)
 		}
 	}
 	if got := requests.Load(); got != 0 {
-		t.Errorf("CheckQRLogin issued %d request(s), want 0", got)
+		t.Errorf("QRStatusNow issued %d request(s), want 0", got)
 	}
 }

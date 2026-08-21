@@ -42,7 +42,7 @@ type QRState struct {
 }
 
 // LoginService is the Wails-bound login facade. The frontend calls
-// StartQRLogin once, then polls CheckQRLogin every 2 seconds.
+// StartQRLogin once and then reads QRStatusNow; the poll itself runs in a backend heartbeat.
 type LoginService struct {
 	mu        sync.Mutex
 	endpoints Endpoints
@@ -221,18 +221,14 @@ func (s *LoginService) StartQRLogin() (QRStart, error) {
 	}, nil
 }
 
-// CheckQRLogin returns the cached QR-login state. The poll that produces it runs in the heartbeat
+// QRStatusNow returns the cached QR-login state. The poll that produces it runs in the heartbeat
 // StartQRLogin registers; this call touches no network.
-func (s *LoginService) CheckQRLogin() (QRStatus, error) {
-	st := s.cachedQRState()
-	if st.Error != "" {
-		return st.Status, errors.New(st.Error)
-	}
-	return st.Status, nil
+func (s *LoginService) QRStatusNow() QRState {
+	return s.cachedQRState()
 }
 
 // GetAccounts returns the list of game accounts under the active
-// session. Requires StartQRLogin → CheckQRLogin to have completed
+// session. Requires StartQRLogin and an approved poll to have completed
 // successfully (session != nil). See docs/beanfun-login-protocol.md § 8.
 func (s *LoginService) GetAccounts() ([]Account, error) {
 	s.mu.Lock()
@@ -296,7 +292,7 @@ func (s *LoginService) Reset() {
 // bgtask cancels the prior goroutine on same-name re-registration.
 //
 // Must be called with s.mu held (matches the call site in
-// CheckQRLogin's pollOutcomeApproved branch, which holds s.mu to
+// advanceQRState's pollOutcomeApproved branch, which holds s.mu to
 // store the session atomically with starting the loop).
 //
 // Adaptive cadence: 60 s after each successful ping, 10 s after

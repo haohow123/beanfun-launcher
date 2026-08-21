@@ -127,6 +127,45 @@ export class QRStart {
 }
 
 /**
+ * QRState is the cached QR-login state. Error carries the rendered, credential-scrubbed message
+ * when a poll or finalize failed, so the frontend keeps the needle it matches on today.
+ */
+export class QRState {
+    /**
+     * Creates a new QRState instance.
+     * @param {Partial<QRState>} [$$source = {}] - The source object to create the QRState.
+     */
+    constructor($$source = {}) {
+        if (!("status" in $$source)) {
+            /**
+             * @member
+             * @type {QRStatus}
+             */
+            this["status"] = QRStatus.$zero;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * @member
+             * @type {string | undefined}
+             */
+            this["error"] = undefined;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new QRState instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {QRState}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new QRState(/** @type {Partial<QRState>} */($$parsedSource));
+    }
+}
+
+/**
  * QRStatus mirrors the four outcomes Beanfun returns from
  * CheckLoginStatus, mapped to lower-case string tags so the TS side
  * gets a clean discriminated union.

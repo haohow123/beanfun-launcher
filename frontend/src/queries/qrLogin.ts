@@ -37,17 +37,18 @@ export function useQRMintQuery() {
 }
 
 /**
- * useQRStatusQuery polls /QRLogin/CheckLoginStatus every 2 seconds
- * while `enabled` is true, stopping automatically when the status
- * lands on a terminal value (approved or expired).
+ * useQRStatusQuery reads the backend's cached QR-login state every 2
+ * seconds while `enabled` is true, stopping automatically when the
+ * status lands on a terminal value (approved or expired). The poll that
+ * talks to Beanfun runs in a Go-side heartbeat; this read costs nothing.
  */
 export function useQRStatusQuery(enabled: boolean) {
   return useQuery({
     queryKey: qrStatusQueryKey,
-    queryFn: () => LoginService.CheckQRLogin(),
+    queryFn: () => LoginService.QRStatusNow(),
     enabled,
     refetchInterval: (q) => {
-      const s = q.state.data;
+      const s = q.state.data?.status;
       if (s === QRStatus.QRStatusApproved || s === QRStatus.QRStatusExpired) {
         return false;
       }
