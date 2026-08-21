@@ -11,6 +11,7 @@ export {
     Account,
     BeanfunClient,
     QRStart,
+    QRState,
     QRStatus,
     Session
 } from "./models.js";

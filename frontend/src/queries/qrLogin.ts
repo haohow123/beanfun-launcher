@@ -1,11 +1,14 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Events } from "@wailsio/runtime";
+import { useEffect } from "react";
 
-import { LoginService, QRStatus } from "@bindings/beanfun";
+import { LoginService, QRState } from "@bindings/beanfun";
 
 export const qrMintQueryKey = ["qrMint"] as const;
 export const qrStatusQueryKey = ["qrStatus"] as const;
 
-const POLL_INTERVAL_MS = 2000;
+// Must match beanfun.QRStateChangedEvent in internal/beanfun/service.go.
+const QR_STATE_CHANGED_EVENT = "beanfun:qr-state-changed";
 
 /**
  * useQRMintQuery fetches a fresh QR + deeplink from Beanfun. Runs
@@ -37,21 +40,35 @@ export function useQRMintQuery() {
 }
 
 /**
- * useQRStatusQuery polls /QRLogin/CheckLoginStatus every 2 seconds
- * while `enabled` is true, stopping automatically when the status
- * lands on a terminal value (approved or expired).
+ * useQRStatusQuery reads the backend's cached QR-login state once, then
+ * receives every later change through useQRStateEventBridge below.
+ *
+ * The read is kept rather than relying on the push alone: an emit is
+ * dropped outright when the window has no impl yet, and again when the
+ * frontend has not registered its listener, so the first state change
+ * can arrive before anyone is listening.
  */
 export function useQRStatusQuery(enabled: boolean) {
   return useQuery({
     queryKey: qrStatusQueryKey,
-    queryFn: () => LoginService.CheckQRLogin(),
+    queryFn: () => LoginService.QRStatusNow(),
     enabled,
-    refetchInterval: (q) => {
-      const s = q.state.data;
-      if (s === QRStatus.QRStatusApproved || s === QRStatus.QRStatusExpired) {
-        return false;
-      }
-      return POLL_INTERVAL_MS;
-    },
+    staleTime: Infinity,
   });
+}
+
+/**
+ * useQRStateEventBridge funnels the backend's QR state pushes into the
+ * qrStatusQueryKey cache. Call this once at the App root so the
+ * subscription outlives the login → home navigation.
+ */
+export function useQRStateEventBridge() {
+  const qc = useQueryClient();
+  useEffect(() => {
+    return Events.On(QR_STATE_CHANGED_EVENT, (e) => {
+      // Annotated because setQueryData is unconstrained on a key with no DataTag.
+      const next: QRState = QRState.createFrom(e.data);
+      qc.setQueryData(qrStatusQueryKey, next);
+    });
+  }, [qc]);
 }

@@ -4,7 +4,7 @@
 
 /**
  * LoginService is the Wails-bound login facade. The frontend calls
- * StartQRLogin once, then polls CheckQRLogin every 2 seconds.
+ * StartQRLogin once and then reads QRStatusNow; the poll itself runs in a backend heartbeat.
  * @module
  */
 
@@ -17,26 +17,25 @@ import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Cr
 import * as $models from "./models.js";
 
 /**
- * CheckQRLogin polls /QRLogin/CheckLoginStatus once and, on Approved,
- * runs the 4-call finalize handshake synchronously to acquire
- * bfWebToken. The frontend never sees the finalize step explicitly —
- * from its perspective a single CheckQRLogin call either stays Pending
- * or completes the login.
- * @returns {$CancellablePromise<$models.QRStatus>}
- */
-export function CheckQRLogin() {
-    return $Call.ByID(2498745925);
-}
-
-/**
  * GetAccounts returns the list of game accounts under the active
- * session. Requires StartQRLogin → CheckQRLogin to have completed
+ * session. Requires StartQRLogin and an approved poll to have completed
  * successfully (session != nil). See docs/beanfun-login-protocol.md § 8.
  * @returns {$CancellablePromise<$models.Account[]>}
  */
 export function GetAccounts() {
     return $Call.ByID(3665416331).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType1($result);
+    }));
+}
+
+/**
+ * QRStatusNow returns the cached QR-login state. The poll that produces it runs in the heartbeat
+ * StartQRLogin registers; this call touches no network.
+ * @returns {$CancellablePromise<$models.QRState>}
+ */
+export function QRStatusNow() {
+    return $Call.ByID(1485315940).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType2($result);
     }));
 }
 
@@ -67,8 +66,8 @@ export function Reset() {
  */
 export function Snapshot() {
     return $Call.ByID(917524005).then(/** @type {($result: any) => any} */(($result) => {
-        $result[0] = $$createType3($result[0]);
-        $result[1] = $$createType5($result[1]);
+        $result[0] = $$createType4($result[0]);
+        $result[1] = $$createType6($result[1]);
         return $result;
     }));
 }
@@ -81,15 +80,16 @@ export function Snapshot() {
  */
 export function StartQRLogin() {
     return $Call.ByID(3663858381).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType6($result);
+        return $$createType7($result);
     }));
 }
 
 // Private type creation functions
 const $$createType0 = $models.Account.createFrom;
 const $$createType1 = $Create.Array($$createType0);
-const $$createType2 = $models.BeanfunClient.createFrom;
-const $$createType3 = $Create.Nullable($$createType2);
-const $$createType4 = $models.Session.createFrom;
-const $$createType5 = $Create.Nullable($$createType4);
-const $$createType6 = $models.QRStart.createFrom;
+const $$createType2 = $models.QRState.createFrom;
+const $$createType3 = $models.BeanfunClient.createFrom;
+const $$createType4 = $Create.Nullable($$createType3);
+const $$createType5 = $models.Session.createFrom;
+const $$createType6 = $Create.Nullable($$createType5);
+const $$createType7 = $models.QRStart.createFrom;
