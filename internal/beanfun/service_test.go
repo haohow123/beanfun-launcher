@@ -385,8 +385,8 @@ func TestKeepAliveTick(t *testing.T) {
 					writeHTML(w, "<html>locked</html>")
 				})
 			},
-			wantDelay:    0,
-			wantLog:      "ip blocked, stopping the heartbeat",
+			wantDelay:    keepAliveIntervalBlocked,
+			wantLog:      "ip blocked, backing off",
 			wantNoLog:    "keep-alive: ping ok",
 			wantCooldown: true,
 		},
@@ -424,6 +424,23 @@ func TestKeepAliveTick(t *testing.T) {
 				t.Errorf("cooldown armed = %v, want %v", armed, tt.wantCooldown)
 			}
 		})
+	}
+}
+
+// TestKeepAliveIntervals pins the two properties the blocked cadence exists for. Comparing the
+// delay against the constant elsewhere is internal consistency — these are the absolute checks.
+func TestKeepAliveIntervals(t *testing.T) {
+	if keepAliveIntervalBlocked != 5*time.Minute {
+		t.Errorf("keepAliveIntervalBlocked = %v, want 5m", keepAliveIntervalBlocked)
+	}
+	// Shorter than the cooldown and every blocked ping would push it out again, which is the bug
+	// this replaced.
+	if keepAliveIntervalBlocked <= 60*time.Second {
+		t.Errorf("blocked interval %v must exceed the 60s cooldown", keepAliveIntervalBlocked)
+	}
+	if keepAliveIntervalBlocked <= keepAliveIntervalFail {
+		t.Errorf("blocked interval %v must back off past the failure interval %v",
+			keepAliveIntervalBlocked, keepAliveIntervalFail)
 	}
 }
 

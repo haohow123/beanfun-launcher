@@ -77,11 +77,16 @@ type LoginService struct {
 // keepAliveIntervalFail (10s) so a transient blip doesn't burn
 // most of the 55-minute server-side reap window before we try
 // again. Once the next ping succeeds we drop back to 60s. An
-// IP-blocked ping is the exception — it ends the heartbeat rather
-// than retrying, since a blocked request cannot refresh anything.
+// IP-blocked ping backs off to keepAliveIntervalBlocked instead:
+// retrying sooner cannot refresh anything and only re-arms our own
+// cooldown, but giving up entirely would lose the session even
+// though beanfun clears the block in minutes.
 const (
 	keepAliveIntervalOK   = 60 * time.Second
 	keepAliveIntervalFail = 10 * time.Second
+	// keepAliveIntervalBlocked must stay longer than qrMintCooldown, so the cooldown lapses between
+	// two blocked pings instead of being pushed out forever.
+	keepAliveIntervalBlocked = 5 * time.Minute
 	// keepAliveTaskName is the bgtask registry key for the keep-alive
 	// heartbeat. Re-registering under the same name supersedes the
 	// previous loop (used when a fresh QR login replaces an active
@@ -315,11 +320,11 @@ func (s *LoginService) Reset() {
 // store the session atomically with starting the loop).
 //
 // Adaptive cadence: 60 s after each successful ping, 10 s after
-// each failure, and a full stop when beanfun reports an IP block.
-// The shorter retry gives a transient network blip a chance to
-// clear before the server's ~55 min idle reaper kicks in, without
-// spamming the endpoint when things are fine. Once stopped, only
-// the next successful login registers it again.
+// each failure, 5 min while beanfun reports an IP block. The
+// shorter retry gives a transient network blip a chance to clear
+// before the server's ~55 min idle reaper kicks in, without
+// spamming the endpoint when things are fine; the long one waits
+// out a block without abandoning the session.
 //
 // Both success and failure log at INFO. Pungin-style debug-only
 // success logging left users (and us) staring at hour-long logs
@@ -348,11 +353,12 @@ func (s *LoginService) keepAliveTick(ctx context.Context, client *BeanfunClient)
 
 	var le *LoginError
 	if errors.As(err, &le) && le.Kind == KindIPBlocked {
-		// Retrying at the faster failure cadence would hammer a blocked endpoint, which is what the
-		// cooldown exists to prevent; the session goes unrefreshed until the next login.
-		slog.Warn("keep-alive: ip blocked, stopping the heartbeat", "err", err)
+		// Backing off rather than giving up: the block clears on its own, and the session is worth
+		// keeping if it does.
+		slog.Warn("keep-alive: ip blocked, backing off",
+			"err", err, "next_interval", keepAliveIntervalBlocked)
 		s.armCooldownIfBlocked(err)
-		return 0
+		return keepAliveIntervalBlocked
 	}
 
 	slog.Warn("keep-alive: ping failed (retrying sooner)",
