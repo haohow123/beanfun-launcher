@@ -76,7 +76,9 @@ type LoginService struct {
 // keepAliveIntervalOK (60s); a failed ping arms at
 // keepAliveIntervalFail (10s) so a transient blip doesn't burn
 // most of the 55-minute server-side reap window before we try
-// again. Once the next ping succeeds we drop back to 60s.
+// again. Once the next ping succeeds we drop back to 60s. An
+// IP-blocked ping is the exception — it ends the heartbeat rather
+// than retrying, since a blocked request cannot refresh anything.
 const (
 	keepAliveIntervalOK   = 60 * time.Second
 	keepAliveIntervalFail = 10 * time.Second
@@ -129,7 +131,10 @@ func (s *LoginService) armCooldownIfBlocked(err error) {
 		return
 	}
 	s.mu.Lock()
-	s.blockedUntil = time.Now().Add(qrMintCooldown)
+	// Extend only, so a caller with a shorter cooldown can never shorten a longer one.
+	if until := time.Now().Add(qrMintCooldown); until.After(s.blockedUntil) {
+		s.blockedUntil = until
+	}
 	s.mu.Unlock()
 	slog.Warn("ip-block cooldown armed", "duration", qrMintCooldown)
 }
@@ -310,9 +315,11 @@ func (s *LoginService) Reset() {
 // store the session atomically with starting the loop).
 //
 // Adaptive cadence: 60 s after each successful ping, 10 s after
-// each failure. The shorter retry gives a transient network blip
-// a chance to clear before the server's ~55 min idle reaper kicks
-// in, without spamming the endpoint when things are fine.
+// each failure, and a full stop when beanfun reports an IP block.
+// The shorter retry gives a transient network blip a chance to
+// clear before the server's ~55 min idle reaper kicks in, without
+// spamming the endpoint when things are fine. Once stopped, only
+// the next successful login registers it again.
 //
 // Both success and failure log at INFO. Pungin-style debug-only
 // success logging left users (and us) staring at hour-long logs
@@ -341,12 +348,11 @@ func (s *LoginService) keepAliveTick(ctx context.Context, client *BeanfunClient)
 
 	var le *LoginError
 	if errors.As(err, &le) && le.Kind == KindIPBlocked {
-		// The ping never reached the handler, so this tick did not reset
-		// the server's idle timer.
-		slog.Warn("keep-alive: ip blocked, session was not refreshed",
-			"err", err, "next_interval", keepAliveIntervalFail)
+		// Retrying at the faster failure cadence would hammer a blocked endpoint, which is what the
+		// cooldown exists to prevent; the session goes unrefreshed until the next login.
+		slog.Warn("keep-alive: ip blocked, stopping the heartbeat", "err", err)
 		s.armCooldownIfBlocked(err)
-		return keepAliveIntervalFail
+		return 0
 	}
 
 	slog.Warn("keep-alive: ping failed (retrying sooner)",

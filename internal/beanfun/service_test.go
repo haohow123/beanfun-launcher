@@ -385,8 +385,8 @@ func TestKeepAliveTick(t *testing.T) {
 					writeHTML(w, "<html>locked</html>")
 				})
 			},
-			wantDelay:    keepAliveIntervalFail,
-			wantLog:      "ip blocked, session was not refreshed",
+			wantDelay:    0,
+			wantLog:      "ip blocked, stopping the heartbeat",
 			wantNoLog:    "keep-alive: ping ok",
 			wantCooldown: true,
 		},
@@ -424,6 +424,27 @@ func TestKeepAliveTick(t *testing.T) {
 				t.Errorf("cooldown armed = %v, want %v", armed, tt.wantCooldown)
 			}
 		})
+	}
+}
+
+// TestArmCooldownOnlyExtends pins the extend-only rule: a caller arming a short cooldown must not
+// shorten one that is already longer. With a single 60s constant this is invisible today, so
+// without a test the rule would be free to regress.
+func TestArmCooldownOnlyExtends(t *testing.T) {
+	s := NewLoginService(bgtask.New())
+
+	withShortCooldown(t, time.Hour)
+	s.armCooldownIfBlocked(ErrIPBlocked())
+	long := s.mintCooldownRemaining()
+	if long < 55*time.Minute {
+		t.Fatalf("first arm left %v, want roughly an hour", long)
+	}
+
+	withShortCooldown(t, time.Second)
+	s.armCooldownIfBlocked(ErrIPBlocked())
+
+	if got := s.mintCooldownRemaining(); got < 55*time.Minute {
+		t.Errorf("remaining = %v, want the longer cooldown to survive a shorter arm", got)
 	}
 }
 
