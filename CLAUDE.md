@@ -88,7 +88,10 @@ When starting a task:
 After merge:
 
 7. `git switch main && git pull --ff-only`
-8. `git branch -d <merged-branch>` (origin's copy is usually auto-deleted by GitHub)
+8. `git branch -d <merged-branch>`. Origin's copy goes automatically — the repo has
+   `deleteBranchOnMerge` enabled. Note `gh pr merge --delete-branch` abandons the remote deletion
+   too if the local delete fails, which it does while a worktree still holds the branch: remove the
+   worktree first.
 
 Rules:
 
