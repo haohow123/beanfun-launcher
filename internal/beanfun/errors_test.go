@@ -2,6 +2,7 @@ package beanfun
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -215,5 +216,41 @@ func TestHandoffMissDetail_PreviewOnlyWhenAbsent(t *testing.T) {
 				t.Fatalf("detail leaked the launch blob: %q", got)
 			}
 		})
+	}
+}
+
+// TestErrOTPInit_SurfacesRootCause is the reason this constructor takes a cause at all: a wrapped
+// error that renders only its own prose cannot be traced. The rendered message must carry the
+// underlying failure, and errors.As must reach it.
+func TestErrOTPInit_SurfacesRootCause(t *testing.T) {
+	t.Parallel()
+
+	// A real json failure rather than a synthetic one, so the test also documents what encoding/json
+	// actually discloses: the offending byte and offset, never a field value.
+	var h struct {
+		SN string `json:"sn"`
+	}
+	cause := json.Unmarshal([]byte(`{"sn": oops}`), &h)
+	if cause == nil {
+		t.Fatal("fixture did not produce a json error")
+	}
+
+	err := ErrOTPInit("m_objData malformed-json in game_start_step2.aspx (len=64 markers=none)", cause)
+
+	if !strings.Contains(err.Error(), cause.Error()) {
+		t.Errorf("rendered message dropped the root cause:\n  got:  %s\n  want it to contain: %s",
+			err.Error(), cause.Error())
+	}
+	var se *json.SyntaxError
+	if !errors.As(err, &se) {
+		t.Errorf("errors.As could not reach the json error through the wrapper")
+	}
+	if errors.Unwrap(err) != cause {
+		t.Errorf("Unwrap returned %v, want the cause", errors.Unwrap(err))
+	}
+
+	// A nil cause must stay renderable — most call sites have no underlying error.
+	if bare := ErrOTPInit("absent in game_start_step2.aspx", nil); !strings.Contains(bare.Error(), "OTP init: absent") {
+		t.Errorf("nil-cause message = %q", bare.Error())
 	}
 }

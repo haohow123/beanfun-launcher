@@ -87,9 +87,9 @@ func (c *BeanfunClient) otpStep1(ctx context.Context, sess *Session, acc Account
 	if isSessionExpiredBody(bodyStr) {
 		return otpStep1{}, ErrSessionExpired()
 	}
-	handoff, miss := extractLaunchHandoff(bodyStr)
+	handoff, miss, cause := extractLaunchHandoff(bodyStr)
 	if miss != handoffMissNone {
-		return otpStep1{}, ErrOTPInit(handoffMissDetail(miss, bodyStr))
+		return otpStep1{}, ErrOTPInit(handoffMissDetail(miss, bodyStr), cause)
 	}
 	slog.Info("FetchOTP step 1: game_start_step2.aspx",
 		"handoff_data_len", len(handoff.Data))

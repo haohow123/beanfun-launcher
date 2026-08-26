@@ -96,12 +96,13 @@ func TestExtractLaunchHandoff(t *testing.T) {
 	</script>`
 
 	tests := []struct {
-		name   string
-		body   string
-		miss   handoffMiss
-		region string
-		sn     string
-		data   string
+		name      string
+		body      string
+		miss      handoffMiss
+		wantCause bool
+		region    string
+		sn        string
+		data      string
 	}{
 		{
 			name:   "full literal",
@@ -122,11 +123,12 @@ func TestExtractLaunchHandoff(t *testing.T) {
 		// A nested literal makes the regex capture an unbalanced fragment, so it degrades to
 		// malformed-json rather than unmatched. Also preview-free, so the gate still holds.
 		{
-			name: "nested literal",
-			body: `var m_objData = {"region": "TW", "extra": {"k": 1}, "sn": "abc", "data": "8abc"};`,
-			miss: handoffMissMalformed,
+			name:      "nested literal",
+			body:      `var m_objData = {"region": "TW", "extra": {"k": 1}, "sn": "abc", "data": "8abc"};`,
+			miss:      handoffMissMalformed,
+			wantCause: true,
 		},
-		{name: "not valid JSON", body: `var m_objData = {"region": "TW", oops};`, miss: handoffMissMalformed},
+		{name: "not valid JSON", body: `var m_objData = {"region": "TW", oops};`, miss: handoffMissMalformed, wantCause: true},
 		{name: "missing sn", body: `var m_objData = {"region": "TW", "data": "8abc"};`, miss: handoffMissEmpty},
 		{name: "missing data", body: `var m_objData = {"region": "TW", "sn": "abc"};`, miss: handoffMissEmpty},
 		{name: "empty data", body: `var m_objData = {"region": "TW", "sn": "abc", "data": ""};`, miss: handoffMissEmpty},
@@ -134,9 +136,14 @@ func TestExtractLaunchHandoff(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got, miss := extractLaunchHandoff(tt.body)
+			got, miss, cause := extractLaunchHandoff(tt.body)
 			if miss != tt.miss {
 				t.Fatalf("miss = %q, want %q", miss, tt.miss)
+			}
+			// The root cause is the point: a parse failure that reports only a category is what made
+			// the original log line untraceable.
+			if (cause != nil) != tt.wantCause {
+				t.Errorf("cause = %v, want non-nil = %v", cause, tt.wantCause)
 			}
 			if tt.miss != handoffMissNone {
 				return

@@ -85,23 +85,24 @@ const (
 )
 
 // extractLaunchHandoff pulls the m_objData literal out of game_start_step2.aspx, reporting why it
-// could not when it fails.
-func extractLaunchHandoff(htmlBody string) (launchHandoff, handoffMiss) {
+// could not when it fails, plus the underlying error where one exists. Encoding/json reports the
+// offending byte and offset but never a field value, so the returned error cannot carry the blob.
+func extractLaunchHandoff(htmlBody string) (launchHandoff, handoffMiss, error) {
 	m := launchHandoffRE().FindStringSubmatch(htmlBody)
 	if len(m) < 2 {
 		if strings.Contains(htmlBody, handoffToken) {
-			return launchHandoff{}, handoffMissUnmatched
+			return launchHandoff{}, handoffMissUnmatched, nil
 		}
-		return launchHandoff{}, handoffMissAbsent
+		return launchHandoff{}, handoffMissAbsent, nil
 	}
 	var h launchHandoff
 	if err := json.Unmarshal([]byte(m[1]), &h); err != nil {
-		return launchHandoff{}, handoffMissMalformed
+		return launchHandoff{}, handoffMissMalformed, err
 	}
 	if h.SN == "" || h.Data == "" {
-		return launchHandoff{}, handoffMissEmpty
+		return launchHandoff{}, handoffMissEmpty, nil
 	}
-	return h, handoffMissNone
+	return h, handoffMissNone, nil
 }
 
 // extractHiddenInputs streams the body's tokens and collects every

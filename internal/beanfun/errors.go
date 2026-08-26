@@ -129,10 +129,11 @@ func ErrLoginRequired() *LoginError {
 	return &LoginError{Kind: KindLoginRequired, Msg: "login required: no active session"}
 }
 
-// ErrOTPInit covers the OTP flow's page fetch — a missing or
-// unparseable m_objData handoff literal.
-func ErrOTPInit(msg string) *LoginError {
-	return &LoginError{Kind: KindOTPInit, Msg: "OTP init: " + msg}
+// ErrOTPInit covers the OTP flow's page fetch — a missing or unparseable m_objData handoff literal.
+// cause may be nil; when it is not, Error() renders it and Unwrap() exposes it to errors.Is/As, so
+// the root failure survives instead of being flattened into prose.
+func ErrOTPInit(msg string, cause error) *LoginError {
+	return &LoginError{Kind: KindOTPInit, Msg: "OTP init: " + msg, Cause: cause}
 }
 
 // ErrOTPServerRejected is returned when get_webstart_otp_v2.ashx
