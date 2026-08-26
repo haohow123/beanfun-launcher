@@ -129,10 +129,11 @@ func ErrLoginRequired() *LoginError {
 	return &LoginError{Kind: KindLoginRequired, Msg: "login required: no active session"}
 }
 
-// ErrOTPInit covers the OTP flow's page fetch — a missing or
-// unparseable m_objData handoff literal.
-func ErrOTPInit(msg string) *LoginError {
-	return &LoginError{Kind: KindOTPInit, Msg: "OTP init: " + msg}
+// ErrOTPInit covers the OTP flow's page fetch — a missing or unparseable m_objData handoff literal.
+// cause may be nil; when it is not, Error() renders it and Unwrap() exposes it to errors.Is/As, so
+// the root failure survives instead of being flattened into prose.
+func ErrOTPInit(msg string, cause error) *LoginError {
+	return &LoginError{Kind: KindOTPInit, Msg: "OTP init: " + msg, Cause: cause}
 }
 
 // ErrOTPServerRejected is returned when get_webstart_otp_v2.ashx
@@ -201,6 +202,17 @@ func withBody(body string) string {
 		return ""
 	}
 	return " :: body=" + truncate(body, bodyPreviewLimit)
+}
+
+// handoffMissDetail describes a failed launch-blob extraction for the log. The body preview is
+// attached only when the page carried no m_objData at all — every other reason means the blob was
+// there, and a preview could reproduce part of it.
+func handoffMissDetail(miss handoffMiss, body string) string {
+	detail := fmt.Sprintf("m_objData %s in game_start_step2.aspx (%s)", miss, describeBody(body))
+	if miss == handoffMissAbsent {
+		return detail + withBody(body)
+	}
+	return detail
 }
 
 // withBodyBytes is the []byte variant of withBody.

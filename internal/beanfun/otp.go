@@ -87,13 +87,9 @@ func (c *BeanfunClient) otpStep1(ctx context.Context, sess *Session, acc Account
 	if isSessionExpiredBody(bodyStr) {
 		return otpStep1{}, ErrSessionExpired()
 	}
-	// No withBody: the page carries m_objData, whose blob decodes to a
-	// live LaunchTicket with nothing but the tables in this package and
-	// the key embedded in the blob itself.
-	handoff, ok := extractLaunchHandoff(bodyStr)
-	if !ok {
-		return otpStep1{}, ErrOTPInit(fmt.Sprintf(
-			"m_objData not found in game_start_step2.aspx (body %d bytes)", len(bodyStr)))
+	handoff, miss, cause := extractLaunchHandoff(bodyStr)
+	if miss != handoffMissNone {
+		return otpStep1{}, ErrOTPInit(handoffMissDetail(miss, bodyStr), cause)
 	}
 	slog.Info("FetchOTP step 1: game_start_step2.aspx",
 		"handoff_data_len", len(handoff.Data))

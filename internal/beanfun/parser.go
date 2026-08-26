@@ -67,22 +67,42 @@ type launchHandoff struct {
 	Data   string `json:"data"`
 }
 
-// extractLaunchHandoff pulls the m_objData literal out of
-// game_start_step2.aspx. Returns false when it is absent, unparseable,
-// or missing either value the OTP request needs.
-func extractLaunchHandoff(htmlBody string) (launchHandoff, bool) {
+// handoffToken is the literal the launch blob is assigned to. Checked as a plain substring,
+// independently of launchHandoffRE, to decide whether a body is safe to log.
+const handoffToken = "m_objData"
+
+// handoffMiss names why extractLaunchHandoff failed. The distinction matters for diagnosis: only
+// handoffMissAbsent means the page carried no launch blob at all, and only then is the body safe to
+// put in a log line.
+type handoffMiss string
+
+const (
+	handoffMissNone      handoffMiss = ""
+	handoffMissAbsent    handoffMiss = "absent"
+	handoffMissUnmatched handoffMiss = "present-but-unmatched"
+	handoffMissMalformed handoffMiss = "malformed-json"
+	handoffMissEmpty     handoffMiss = "empty-fields"
+)
+
+// extractLaunchHandoff pulls the m_objData literal out of game_start_step2.aspx, reporting why it
+// could not when it fails, plus the underlying error where one exists. Encoding/json reports the
+// offending byte and offset but never a field value, so the returned error cannot carry the blob.
+func extractLaunchHandoff(htmlBody string) (launchHandoff, handoffMiss, error) {
 	m := launchHandoffRE().FindStringSubmatch(htmlBody)
 	if len(m) < 2 {
-		return launchHandoff{}, false
+		if strings.Contains(htmlBody, handoffToken) {
+			return launchHandoff{}, handoffMissUnmatched, nil
+		}
+		return launchHandoff{}, handoffMissAbsent, nil
 	}
 	var h launchHandoff
 	if err := json.Unmarshal([]byte(m[1]), &h); err != nil {
-		return launchHandoff{}, false
+		return launchHandoff{}, handoffMissMalformed, err
 	}
 	if h.SN == "" || h.Data == "" {
-		return launchHandoff{}, false
+		return launchHandoff{}, handoffMissEmpty, nil
 	}
-	return h, true
+	return h, handoffMissNone, nil
 }
 
 // extractHiddenInputs streams the body's tokens and collects every

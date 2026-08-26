@@ -96,35 +96,56 @@ func TestExtractLaunchHandoff(t *testing.T) {
 	</script>`
 
 	tests := []struct {
-		name   string
-		body   string
-		ok     bool
-		region string
-		sn     string
-		data   string
+		name      string
+		body      string
+		miss      handoffMiss
+		wantCause bool
+		region    string
+		sn        string
+		data      string
 	}{
 		{
 			name:   "full literal",
 			body:   page,
-			ok:     true,
+			miss:   handoffMissNone,
 			region: "TW;Production",
 			sn:     "b1e2d3c4-0000-1111-2222-33445566aabb",
 			data:   "8abcdefghij",
 		},
-		{name: "absent", body: `<script>var other = 1;</script>`},
-		{name: "not valid JSON", body: `var m_objData = {"region": "TW", oops};`},
-		{name: "missing sn", body: `var m_objData = {"region": "TW", "data": "8abc"};`},
-		{name: "missing data", body: `var m_objData = {"region": "TW", "sn": "abc"};`},
-		{name: "empty data", body: `var m_objData = {"region": "TW", "sn": "abc", "data": ""};`},
+		{name: "absent", body: `<script>var other = 1;</script>`, miss: handoffMissAbsent},
+		// Token on the page but not in the `var x = {…}` shape the regex wants. Distinguishing this
+		// from "absent" is the point: the blob may still be there, so it must never reach a preview.
+		{
+			name: "present but unmatched",
+			body: `<script>window.m_objData = buildData();</script>`,
+			miss: handoffMissUnmatched,
+		},
+		// A nested literal makes the regex capture an unbalanced fragment, so it degrades to
+		// malformed-json rather than unmatched. Also preview-free, so the gate still holds.
+		{
+			name:      "nested literal",
+			body:      `var m_objData = {"region": "TW", "extra": {"k": 1}, "sn": "abc", "data": "8abc"};`,
+			miss:      handoffMissMalformed,
+			wantCause: true,
+		},
+		{name: "not valid JSON", body: `var m_objData = {"region": "TW", oops};`, miss: handoffMissMalformed, wantCause: true},
+		{name: "missing sn", body: `var m_objData = {"region": "TW", "data": "8abc"};`, miss: handoffMissEmpty},
+		{name: "missing data", body: `var m_objData = {"region": "TW", "sn": "abc"};`, miss: handoffMissEmpty},
+		{name: "empty data", body: `var m_objData = {"region": "TW", "sn": "abc", "data": ""};`, miss: handoffMissEmpty},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got, ok := extractLaunchHandoff(tt.body)
-			if ok != tt.ok {
-				t.Fatalf("ok = %v, want %v", ok, tt.ok)
+			got, miss, cause := extractLaunchHandoff(tt.body)
+			if miss != tt.miss {
+				t.Fatalf("miss = %q, want %q", miss, tt.miss)
 			}
-			if !tt.ok {
+			// The root cause is the point: a parse failure that reports only a category is what made
+			// the original log line untraceable.
+			if (cause != nil) != tt.wantCause {
+				t.Errorf("cause = %v, want non-nil = %v", cause, tt.wantCause)
+			}
+			if tt.miss != handoffMissNone {
 				return
 			}
 			if got.Region != tt.region {

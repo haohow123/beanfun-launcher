@@ -2,6 +2,7 @@ package beanfun
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -175,5 +176,81 @@ func TestFrontendErrorNeedles(t *testing.T) {
 				t.Errorf("%q does not contain %q — %s will stop matching", got, tt.needle, tt.where)
 			}
 		})
+	}
+}
+
+// TestHandoffMissDetail_PreviewOnlyWhenAbsent is the security gate on this diagnostic: the body may
+// only be reproduced when the page carried no launch blob at all. Every other reason means the blob
+// was there, so a 500-byte preview could reproduce part of it.
+func TestHandoffMissDetail_PreviewOnlyWhenAbsent(t *testing.T) {
+	t.Parallel()
+	const blob = "8SECRETBLOBVALUE"
+	withToken := `<script>window.m_objData = {"data":"` + blob + `"};</script>`
+
+	tests := []struct {
+		name        string
+		miss        handoffMiss
+		body        string
+		wantPreview bool
+	}{
+		{"absent gets a preview", handoffMissAbsent, "<html>maintenance notice</html>", true},
+		{"unmatched does not", handoffMissUnmatched, withToken, false},
+		{"malformed does not", handoffMissMalformed, withToken, false},
+		{"empty fields do not", handoffMissEmpty, withToken, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := handoffMissDetail(tt.miss, tt.body)
+
+			if !strings.Contains(got, string(tt.miss)) {
+				t.Errorf("detail %q does not name the reason %q", got, tt.miss)
+			}
+			if hasPreview := strings.Contains(got, " :: body="); hasPreview != tt.wantPreview {
+				t.Errorf("preview present = %v, want %v; detail = %q", hasPreview, tt.wantPreview, got)
+			}
+			if tt.wantPreview {
+				return
+			}
+			if strings.Contains(got, blob) {
+				t.Fatalf("detail leaked the launch blob: %q", got)
+			}
+		})
+	}
+}
+
+// TestErrOTPInit_SurfacesRootCause is the reason this constructor takes a cause at all: a wrapped
+// error that renders only its own prose cannot be traced. The rendered message must carry the
+// underlying failure, and errors.As must reach it.
+func TestErrOTPInit_SurfacesRootCause(t *testing.T) {
+	t.Parallel()
+
+	// A real json failure rather than a synthetic one, so the test also documents what encoding/json
+	// actually discloses: the offending byte and offset, never a field value.
+	var h struct {
+		SN string `json:"sn"`
+	}
+	cause := json.Unmarshal([]byte(`{"sn": oops}`), &h)
+	if cause == nil {
+		t.Fatal("fixture did not produce a json error")
+	}
+
+	err := ErrOTPInit("m_objData malformed-json in game_start_step2.aspx (len=64 markers=none)", cause)
+
+	if !strings.Contains(err.Error(), cause.Error()) {
+		t.Errorf("rendered message dropped the root cause:\n  got:  %s\n  want it to contain: %s",
+			err.Error(), cause.Error())
+	}
+	var se *json.SyntaxError
+	if !errors.As(err, &se) {
+		t.Errorf("errors.As could not reach the json error through the wrapper")
+	}
+	if errors.Unwrap(err) != cause {
+		t.Errorf("Unwrap returned %v, want the cause", errors.Unwrap(err))
+	}
+
+	// A nil cause must stay renderable — most call sites have no underlying error.
+	if bare := ErrOTPInit("absent in game_start_step2.aspx", nil); !strings.Contains(bare.Error(), "OTP init: absent") {
+		t.Errorf("nil-cause message = %q", bare.Error())
 	}
 }
