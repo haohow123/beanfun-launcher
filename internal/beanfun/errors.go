@@ -203,6 +203,17 @@ func withBody(body string) string {
 	return " :: body=" + truncate(body, bodyPreviewLimit)
 }
 
+// handoffMissDetail describes a failed launch-blob extraction for the log. The body preview is
+// attached only when the page carried no m_objData at all — every other reason means the blob was
+// there, and a preview could reproduce part of it.
+func handoffMissDetail(miss handoffMiss, body string) string {
+	detail := fmt.Sprintf("m_objData %s in game_start_step2.aspx (%s)", miss, describeBody(body))
+	if miss == handoffMissAbsent {
+		return detail + withBody(body)
+	}
+	return detail
+}
+
 // withBodyBytes is the []byte variant of withBody.
 func withBodyBytes(body []byte) string {
 	return withBody(string(body))

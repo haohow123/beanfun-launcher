@@ -177,3 +177,43 @@ func TestFrontendErrorNeedles(t *testing.T) {
 		})
 	}
 }
+
+// TestHandoffMissDetail_PreviewOnlyWhenAbsent is the security gate on this diagnostic: the body may
+// only be reproduced when the page carried no launch blob at all. Every other reason means the blob
+// was there, so a 500-byte preview could reproduce part of it.
+func TestHandoffMissDetail_PreviewOnlyWhenAbsent(t *testing.T) {
+	t.Parallel()
+	const blob = "8SECRETBLOBVALUE"
+	withToken := `<script>window.m_objData = {"data":"` + blob + `"};</script>`
+
+	tests := []struct {
+		name        string
+		miss        handoffMiss
+		body        string
+		wantPreview bool
+	}{
+		{"absent gets a preview", handoffMissAbsent, "<html>maintenance notice</html>", true},
+		{"unmatched does not", handoffMissUnmatched, withToken, false},
+		{"malformed does not", handoffMissMalformed, withToken, false},
+		{"empty fields do not", handoffMissEmpty, withToken, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := handoffMissDetail(tt.miss, tt.body)
+
+			if !strings.Contains(got, string(tt.miss)) {
+				t.Errorf("detail %q does not name the reason %q", got, tt.miss)
+			}
+			if hasPreview := strings.Contains(got, " :: body="); hasPreview != tt.wantPreview {
+				t.Errorf("preview present = %v, want %v; detail = %q", hasPreview, tt.wantPreview, got)
+			}
+			if tt.wantPreview {
+				return
+			}
+			if strings.Contains(got, blob) {
+				t.Fatalf("detail leaked the launch blob: %q", got)
+			}
+		})
+	}
+}
