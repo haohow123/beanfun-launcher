@@ -15,6 +15,7 @@ import (
 	"github.com/haohow123/beanfun-launcher/internal/diag"
 	"github.com/haohow123/beanfun-launcher/internal/launcher"
 	"github.com/haohow123/beanfun-launcher/internal/maple"
+	"github.com/haohow123/beanfun-launcher/internal/settings"
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 	"github.com/wailsapp/wails/v3/pkg/services/notifications"
@@ -64,13 +65,18 @@ func main() {
 	// that pushServerOnlineToast relies on; the actual send bypasses it
 	// so alertsound.Play stays the only source of sound.
 	notifSvc := notifications.New()
+
+	settingsPath, err := settings.DefaultPath()
+	if err != nil {
+		slog.Warn("settings: no config dir, using defaults in memory", "err", err)
+	}
+	alertSvc := alertsound.NewService(settings.NewFile(settingsPath))
+
 	notifyServerOnline := func() {
 		if err := pushServerOnlineToast(appName); err != nil {
 			slog.Warn("notify: push toast failed", "err", err)
 		}
-		if err := alertsound.Play(alertsound.Sound{Kind: alertsound.KindDefault}); err != nil {
-			slog.Warn("alertsound: play failed", "err", err)
-		}
+		alertSvc.PlaySelected()
 	}
 
 	// application.Get() is resolved at emit time because mapleSvc is built before application.New
@@ -95,6 +101,7 @@ func main() {
 			application.NewService(launcherSvc),
 			application.NewService(mapleSvc),
 			application.NewService(notifSvc),
+			application.NewService(alertSvc),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),

@@ -1,6 +1,10 @@
+import { useSetAtom } from "jotai";
+import { Settings } from "lucide-react";
 import { type ReactNode } from "react";
 
+import { Button } from "@/components/ui/button";
 import { useMapleStatusQuery } from "@/queries/mapleStatus";
+import { settingsOpenAtom } from "@/state/settings";
 
 // MapleStory event banner hosted on Beanfun's CDN. Loaded at runtime
 // so we don't bundle Gamania artwork into the repo; the gradient
@@ -46,6 +50,23 @@ function statusVisualFor(
   return { dotClass: "bg-rose-400", label: "伺服器關閉中" };
 }
 
+// Rendered by Hero itself rather than via `action`, so LoginPage gets it too.
+function SettingsButton() {
+  const setSettingsOpen = useSetAtom(settingsOpenAtom);
+  return (
+    <Button
+      variant="outline"
+      size="icon-sm"
+      className="bg-background/80 backdrop-blur"
+      aria-label="設定"
+      title="設定"
+      onClick={() => setSettingsOpen(true)}
+    >
+      <Settings />
+    </Button>
+  );
+}
+
 export function Hero({ action }: { action?: ReactNode }) {
   const status = useMapleStatusQuery();
   const visual = statusVisualFor(
@@ -80,7 +101,10 @@ export function Hero({ action }: { action?: ReactNode }) {
             <span>{visual.label}</span>
           </p>
         </div>
-        {action && <div className="shrink-0">{action}</div>}
+        <div className="flex shrink-0 items-center gap-2">
+          <SettingsButton />
+          {action}
+        </div>
       </div>
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-b from-transparent to-background" />
     </section>
