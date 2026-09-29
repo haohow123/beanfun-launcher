@@ -170,9 +170,8 @@ func (c *BeanfunClient) portalURL(path string) (*url.URL, error) {
 }
 
 // Ping hits the Beanfun portal's session keep-alive endpoint so the
-// server's idle timer is reset. Mirrors WPF's BeanfunClient.Ping()
-// (bfClient.cs L193-212) and the run_ping_loop call site that drives
-// it every 60 seconds after login finalizes.
+// server's idle timer is reset. It runs every 60 seconds once login
+// finalizes.
 //
 // Body is intentionally discarded — the request is only useful for
 // the server-side side effect, so the IP-block check reads the

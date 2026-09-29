@@ -47,8 +47,8 @@ var m_objData = {"region": "TW;Production", "sn": "%s", "data": "%s"};
 // happy-path test to build a fixture without hardcoding magic bytes.
 func encryptForFixture(t *testing.T, plaintext, key string) string {
 	t.Helper()
-	// Pad plaintext to 8-byte block with trailing NULs (Beanfun's WPF
-	// uses NoPadding — sender appends zero bytes).
+	// Pad plaintext to 8-byte block with trailing NULs (the cipher is
+	// NoPadding — the sender appends zero bytes).
 	padded := []byte(plaintext)
 	for len(padded)%des.BlockSize != 0 {
 		padded = append(padded, 0)

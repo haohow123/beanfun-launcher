@@ -29,8 +29,8 @@ const gameExitWatcherTaskName = "launcher-game-exit"
 //	wmic process where name="MapleStory.exe" get commandline /value
 //
 // The game spawns with five positional arguments, NOT slash-prefixed
-// flags. Earlier docs (and the pungin reference) described
-// `/hb /u:<SID> /p:<OTP>` which Gamania has since replaced. The exact
+// flags. The older `/hb /u:<SID> /p:<OTP>` form has since been
+// replaced by Gamania. The exact
 // format is:
 //
 //	MapleStory.exe <host> <port> BeanFun <SID> <OTP>

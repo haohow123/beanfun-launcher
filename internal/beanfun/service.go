@@ -69,8 +69,7 @@ type LoginService struct {
 }
 
 // Cadence of the background ping that keeps the Beanfun portal
-// from reaping the session as idle. WPF (and pungin/Beanfun's Rust
-// port) drive `echo_token.ashx` every 60 seconds.
+// from reaping the session as idle: `echo_token.ashx` every 60 seconds.
 //
 // Adaptive on failure: a successful ping arms the next tick at
 // keepAliveIntervalOK (60s); a failed ping arms at
@@ -326,8 +325,8 @@ func (s *LoginService) Reset() {
 // spamming the endpoint when things are fine; the long one waits
 // out a block without abandoning the session.
 //
-// Both success and failure log at INFO. Pungin-style debug-only
-// success logging left users (and us) staring at hour-long logs
+// Both success and failure log at INFO. Debug-only success
+// logging would leave users (and us) staring at hour-long logs
 // with no evidence the loop was alive; an alpha cycle is worth
 // the ~1 line/min of noise so a glance at launcher.log can confirm
 // "keep-alive ticking" without instrumenting.

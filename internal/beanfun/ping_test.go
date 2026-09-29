@@ -11,8 +11,7 @@ import (
 
 func TestBeanfunClient_Ping(t *testing.T) {
 	// Smoke: Ping hits portal echo_token.ashx with webtoken=1.
-	// Body is discarded; success is HTTP 2xx. WPF parity per
-	// bfClient.cs L193-212.
+	// Body is discarded; success is HTTP 2xx.
 	t.Parallel()
 	var hits int32
 	var sawQuery string
