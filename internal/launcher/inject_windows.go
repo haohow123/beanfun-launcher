@@ -66,11 +66,10 @@ func findGameWindow() uintptr {
 }
 
 // injectCredentials types the account + OTP into the game's
-// currently focused login form. The sequence mirrors Beanfun's WPF
-// launcher (MainWindow.xaml.cs L2158-2238) without the SEA / TW
-// pre-typing click: in the explicit two-step UI flow the user only
-// clicks 帶入帳密 after visually seeing the login form, so focus is
-// already on the textbox and a synthetic click adds nothing but
+// currently focused login form, without a pre-typing click: in the
+// explicit two-step UI flow the user only clicks 帶入帳密 after
+// visually seeing the login form, so focus is already on the
+// textbox and a synthetic click adds nothing but
 // cursor flicker.
 //
 //  1. SetForegroundWindow + 100ms settle.
@@ -81,7 +80,7 @@ func findGameWindow() uintptr {
 //  6. Type OTP: per-byte WM_CHAR.
 //  7. VK_RETURN to submit.
 //
-// Per the WPF code's lParam analysis, MapleStory dispatches on
+// MapleStory dispatches on
 // wParam (the VK) and ignores lParam's scan-code bits in standard
 // input controls — so we emit lParam=1 (repeat count only) without
 // MapVirtualKey scan-code computation. Safe for this game.

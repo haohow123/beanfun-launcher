@@ -640,6 +640,15 @@ consult the corresponding files:
 Our test suite mirrors the cases in those files where they apply to
 our scope (TW only; QR-only).
 
+A few behaviours were checked against the older Beanfun WPF client
+instead:
+
+| Topic | WPF file |
+|---|---|
+| Session keep-alive `Ping()` on `echo_token.ashx`, success = HTTP 2xx (`internal/beanfun/client.go`); the upstream launcher's `run_ping_loop` drives it every 60 s after login finalizes | `bfClient.cs` L193–212 |
+| Credential injection sequence (`internal/launcher/inject_windows.go`), which we run without the SEA / TW pre-typing click; also the source of the lParam analysis behind sending `lParam=1` | `MainWindow.xaml.cs` L2158–2238 |
+| WCDES is DES NoPadding with trailing zero bytes appended by the sender (`internal/beanfun/otp_test.go` fixture) | — |
+
 The v2 OTP flow in Step 9 is our own implementation — the upstream
 launcher's v2 code was deliberately not ported. Its published protocol
 notes were used as a starting point for the endpoint name and JSON
