@@ -30,6 +30,7 @@ type Option struct {
 	Sound   Sound  `json:"sound"`
 	Label   string `json:"label"`
 	Missing bool   `json:"missing"`
+	Group   Group  `json:"group"`
 }
 
 // Selection is the currently selected sound plus whether it is playable.
@@ -97,19 +98,14 @@ func validBuiltinName(name string) bool {
 // Options lists none, then the built-in catalogue, then the custom list.
 func (s *Service) Options() ([]Option, error) {
 	opts := []Option{
-		{Sound: Sound{Kind: KindNone}, Label: "無聲"},
+		{Sound: Sound{Kind: KindNone}, Label: "無聲", Group: GroupNone},
 	}
 	names, err := listBuiltinFn()
 	if err != nil {
 		slog.Warn("alertsound: list built-ins failed", "err", err)
 		return opts, nil
 	}
-	for _, name := range names {
-		opts = append(opts, Option{
-			Sound: Sound{Kind: KindBuiltin, Name: name},
-			Label: builtinLabel(name),
-		})
-	}
+	opts = append(opts, sortedBuiltinOptions(names)...)
 	s.mu.Lock()
 	custom := append([]string(nil), s.prefs.Custom...)
 	s.mu.Unlock()
@@ -118,6 +114,7 @@ func (s *Service) Options() ([]Option, error) {
 			Sound:   Sound{Kind: KindCustom, Path: path},
 			Label:   filepath.Base(path),
 			Missing: checkLocalPath(path) != nil || rejectLink(path) != nil || !statOK(path),
+			Group:   GroupCustom,
 		})
 	}
 	return opts, nil

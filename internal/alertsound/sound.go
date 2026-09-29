@@ -21,6 +21,18 @@ type Sound struct {
 	Path string `json:"path,omitempty"`
 }
 
+// Group is the settings-list section an Option is displayed under.
+type Group string
+
+const (
+	GroupNone    Group = "none"
+	GroupWindows Group = "windows"
+	GroupAlarm   Group = "alarm"
+	GroupRing    Group = "ring"
+	GroupOther   Group = "other"
+	GroupCustom  Group = "custom"
+)
+
 // ErrUnsupported is returned by playFn/mediaDirFn on platforms without a player binding.
 var ErrUnsupported = errors.New("sound playback not supported on this platform")
 

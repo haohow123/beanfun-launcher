@@ -53,9 +53,9 @@ func TestService_Options(t *testing.T) {
 		t.Fatalf("Options() err = %v, want nil", err)
 	}
 	want := []Option{
-		{Sound: Sound{Kind: KindNone}, Label: "無聲"},
-		{Sound: Sound{Kind: KindBuiltin, Name: "Alarm01.wav"}, Label: "Alarm01"},
-		{Sound: Sound{Kind: KindBuiltin, Name: "Ring05.wav"}, Label: "Ring05"},
+		{Sound: Sound{Kind: KindNone}, Label: "無聲", Group: GroupNone},
+		{Sound: Sound{Kind: KindBuiltin, Name: "Alarm01.wav"}, Label: "Alarm01", Group: GroupAlarm},
+		{Sound: Sound{Kind: KindBuiltin, Name: "Ring05.wav"}, Label: "Ring05", Group: GroupRing},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("Options() = %+v, want %+v", got, want)
@@ -64,6 +64,54 @@ func TestService_Options(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("Options()[%d] = %+v, want %+v", i, got[i], want[i])
 		}
+	}
+}
+
+// Windows Logon stays first in its group even though it sorts after Windows Background.
+func TestService_Options_GroupsAndOrdersBuiltins(t *testing.T) {
+	withFakeCatalog(t, []string{
+		"tada.wav", "Alarm02.wav", "Windows Background.wav", "Ring01.wav",
+		"alarm01.wav", "windows logon.wav", "Speech On.wav", "chimes.wav", "Windows Notify.wav",
+	}, nil)
+	svc := NewService(&fakeStore{})
+
+	got, err := svc.Options()
+	if err != nil {
+		t.Fatalf("Options() err = %v, want nil", err)
+	}
+
+	want := []Option{
+		{Sound: Sound{Kind: KindNone}, Label: "無聲", Group: GroupNone},
+		{Sound: Sound{Kind: KindBuiltin, Name: "windows logon.wav"}, Label: "windows logon", Group: GroupWindows},
+		{Sound: Sound{Kind: KindBuiltin, Name: "Windows Background.wav"}, Label: "Windows Background", Group: GroupWindows},
+		{Sound: Sound{Kind: KindBuiltin, Name: "Windows Notify.wav"}, Label: "Windows Notify", Group: GroupWindows},
+		{Sound: Sound{Kind: KindBuiltin, Name: "alarm01.wav"}, Label: "alarm01", Group: GroupAlarm},
+		{Sound: Sound{Kind: KindBuiltin, Name: "Alarm02.wav"}, Label: "Alarm02", Group: GroupAlarm},
+		{Sound: Sound{Kind: KindBuiltin, Name: "Ring01.wav"}, Label: "Ring01", Group: GroupRing},
+		{Sound: Sound{Kind: KindBuiltin, Name: "chimes.wav"}, Label: "chimes", Group: GroupOther},
+		{Sound: Sound{Kind: KindBuiltin, Name: "Speech On.wav"}, Label: "Speech On", Group: GroupOther},
+		{Sound: Sound{Kind: KindBuiltin, Name: "tada.wav"}, Label: "tada", Group: GroupOther},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("Options() = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("Options()[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+
+	logonIdx, backgroundIdx := -1, -1
+	for i, o := range got {
+		switch o.Sound.Name {
+		case "windows logon.wav":
+			logonIdx = i
+		case "Windows Background.wav":
+			backgroundIdx = i
+		}
+	}
+	if logonIdx == -1 || backgroundIdx == -1 || logonIdx >= backgroundIdx {
+		t.Fatalf("Logon index = %d, Background index = %d; want Logon before Background despite alphabetical order", logonIdx, backgroundIdx)
 	}
 }
 

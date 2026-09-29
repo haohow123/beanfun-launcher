@@ -7,6 +7,25 @@
 import { Create as $Create } from "@wailsio/runtime";
 
 /**
+ * Group is the settings-list section an Option is displayed under.
+ * @readonly
+ * @enum {string}
+ */
+export const Group = {
+    /**
+     * The Go zero value for the underlying type of the enum.
+     */
+    $zero: "",
+
+    GroupNone: "none",
+    GroupWindows: "windows",
+    GroupAlarm: "alarm",
+    GroupRing: "ring",
+    GroupOther: "other",
+    GroupCustom: "custom",
+};
+
+/**
  * Kind selects how a Sound resolves to a playable target.
  * @readonly
  * @enum {string}
@@ -52,6 +71,13 @@ export class Option {
              * @type {boolean}
              */
             this["missing"] = false;
+        }
+        if (!("group" in $$source)) {
+            /**
+             * @member
+             * @type {Group}
+             */
+            this["group"] = Group.$zero;
         }
 
         Object.assign(this, $$source);

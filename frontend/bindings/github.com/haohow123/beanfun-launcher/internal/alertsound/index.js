@@ -8,6 +8,7 @@ export {
 };
 
 export {
+    Group,
     Kind,
     Option,
     Selection,

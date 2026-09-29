@@ -1,7 +1,7 @@
 import { Dialogs } from "@wailsio/runtime";
 import { useSetAtom } from "jotai";
 import { Play, Plus, TriangleAlert, X } from "lucide-react";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 
 import { type Option, type Sound } from "@bindings/alertsound";
 import { AppShell } from "@/components/layout/AppShell";
@@ -19,20 +19,17 @@ import {
 } from "@/queries/alertSound";
 import { settingsOpenAtom } from "@/state/settings";
 
-function builtinOptions(options: Option[]): Option[] {
-  return options.filter((o) => o.sound.kind === "builtin");
-}
-
-function customOptions(options: Option[]): Option[] {
-  return options.filter((o) => o.sound.kind === "custom");
-}
-
-function noneOption(options: Option[]): Option | undefined {
-  return options.find((o) => o.sound.kind === "none");
-}
-
 // GROUP_HEADING_ID links the radiogroup wrapper to the visible h2 heading it names.
 const GROUP_HEADING_ID = "alert-sound-group-heading";
+
+// "none" is deliberately absent so 無聲 renders without a heading.
+const GROUP_LABELS: Record<string, string> = {
+  windows: "Windows",
+  alarm: "鬧鐘",
+  ring: "鈴聲",
+  other: "其他",
+  custom: "我的音檔",
+};
 
 export function SettingsPage() {
   const setSettingsOpen = useSetAtom(settingsOpenAtom);
@@ -157,18 +154,19 @@ export function SettingsPage() {
         </p>
       );
     }
-    const none = noneOption(options.data);
-    const builtins = builtinOptions(options.data);
-    const customs = customOptions(options.data);
+    const rows: ReactNode[] = [];
+    let lastGroup: string | undefined;
+    for (const opt of options.data) {
+      if (opt.group !== lastGroup) {
+        const label = GROUP_LABELS[opt.group];
+        if (label) rows.push(renderGroupHeading(label));
+        lastGroup = opt.group;
+      }
+      rows.push(renderRow(opt));
+    }
     return (
       <div role="radiogroup" aria-labelledby={GROUP_HEADING_ID}>
-        <ul className="flex max-h-72 flex-col divide-y overflow-y-auto">
-          {none && renderRow(none)}
-          {renderGroupHeading("Windows 內建")}
-          {builtins.map(renderRow)}
-          {customs.length > 0 && renderGroupHeading("我的音檔")}
-          {customs.map(renderRow)}
-        </ul>
+        <ul className="flex max-h-72 flex-col divide-y overflow-y-auto">{rows}</ul>
       </div>
     );
   }
