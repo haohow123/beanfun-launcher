@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/haohow123/beanfun-launcher/internal/alertsound"
 	"github.com/haohow123/beanfun-launcher/internal/beanfun"
 	"github.com/haohow123/beanfun-launcher/internal/bgtask"
 	"github.com/haohow123/beanfun-launcher/internal/diag"
@@ -27,6 +28,9 @@ var assets embed.FS
 // dev builds keep the default. Used to namespace the log file so
 // upgrading to a new alpha leaves the previous run's log intact.
 var version = "dev"
+
+// appName is the Wails app name, also the AUMID toast notifications register under.
+const appName = "beanfun-launcher"
 
 func main() {
 	// Before setupLogging so the elapsed figure in a crash record
@@ -55,20 +59,17 @@ func main() {
 	}
 	launcherSvc := launcher.NewLauncherService(loginSvc, mgr)
 
-	// notifSvc backs the offline→online server toast (see
-	// maple.Checker.OnServerOnline). Wails calls ServiceStartup
-	// on it during app.Run, which on Windows registers the
-	// AppUserModelID + COM activator needed for toast delivery.
-	// On macOS / Linux dev the SendNotification call below
-	// degrades to slog.Warn — no special-casing needed here.
+	// notifSvc is kept registered purely for its Windows ServiceStartup
+	// side effect (AUMID + COM activator registration, IconUri write)
+	// that pushServerOnlineToast relies on; the actual send bypasses it
+	// so alertsound.Play stays the only source of sound.
 	notifSvc := notifications.New()
 	notifyServerOnline := func() {
-		if err := notifSvc.SendNotification(notifications.NotificationOptions{
-			ID:    "maple-server-online",
-			Title: "新楓之谷 MapleStory",
-			Body:  "伺服器已開啟",
-		}); err != nil {
-			slog.Warn("notify: SendNotification failed", "err", err)
+		if err := pushServerOnlineToast(appName); err != nil {
+			slog.Warn("notify: push toast failed", "err", err)
+		}
+		if err := alertsound.Play(alertsound.Sound{Kind: alertsound.KindDefault}); err != nil {
+			slog.Warn("alertsound: play failed", "err", err)
 		}
 	}
 
@@ -87,7 +88,7 @@ func main() {
 	mapleSvc := maple.NewMapleService(mgr, nil, notifyServerOnline, emitStatusChanged)
 
 	app := application.New(application.Options{
-		Name:        "beanfun-launcher",
+		Name:        appName,
 		Description: "Personal third-party Beanfun launcher",
 		Services: []application.Service{
 			application.NewService(loginSvc),

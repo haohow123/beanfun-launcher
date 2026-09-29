@@ -3,6 +3,7 @@ module github.com/haohow123/beanfun-launcher
 go 1.25.0
 
 require (
+	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3
 	github.com/wailsapp/wails/v3 v3.0.0-alpha.91
 	golang.org/x/net v0.54.0
 	golang.org/x/sys v0.44.0
@@ -10,7 +11,6 @@ require (
 
 require (
 	dario.cat/mergo v1.0.2 // indirect
-	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/ProtonMail/go-crypto v1.3.0 // indirect
 	github.com/adrg/xdg v0.5.3 // indirect
