@@ -115,7 +115,7 @@ export class Selection {
 }
 
 /**
- * Sound identifies one selectable alert sound; Name is a built-in file name, Path a custom absolute path.
+ * Name holds a built-in file name and Path a custom absolute path.
  */
 export class Sound {
     /**

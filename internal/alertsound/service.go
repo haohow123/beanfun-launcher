@@ -5,21 +5,21 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 )
 
-// statFn checks whether a resolved sound target exists; overridden in tests.
 var statFn = os.Stat
 
-// Prefs is the persisted alert-sound state: the current selection plus the
-// custom-file list (Phase 3 populates Custom; Phase 2 always saves it empty).
+var validateWAVFn = ValidateWAV
+
+// Prefs is the persisted alert-sound state: the current selection plus the custom-file list.
 type Prefs struct {
 	Selected Sound    `json:"selected"`
 	Custom   []string `json:"custom,omitempty"`
 }
 
-// PrefsStore loads and saves Prefs; internal/settings.File implements it.
 type PrefsStore interface {
 	LoadPrefs() Prefs
 	SavePrefs(Prefs) error
@@ -50,7 +50,50 @@ type Service struct {
 
 // NewService loads the initial Prefs from store.
 func NewService(store PrefsStore) *Service {
-	return &Service{store: store, prefs: store.LoadPrefs()}
+	return &Service{store: store, prefs: sanitizePrefs(store.LoadPrefs())}
+}
+
+// The sanitized prefs stay in memory until the next Select, AddCustom or RemoveCustom saves them.
+func sanitizePrefs(p Prefs) Prefs {
+	kept := make([]string, 0, len(p.Custom))
+	for _, path := range p.Custom {
+		clean := filepath.Clean(path)
+		if checkLocalPath(clean) != nil {
+			continue
+		}
+		if containsPathFold(kept, clean) {
+			continue
+		}
+		kept = append(kept, clean)
+	}
+	p.Custom = kept
+	if p.Selected.Kind == KindCustom {
+		p.Selected.Path = filepath.Clean(p.Selected.Path)
+	}
+	if !selectedValid(p.Selected, kept) {
+		p.Selected = Sound{Kind: KindDefault}
+	}
+	return p
+}
+
+// selectedValid mirrors the rules Options() and resolve() apply to each
+// Kind, so a sanitized Selected always resolves to something the settings
+// page would still list.
+func selectedValid(snd Sound, custom []string) bool {
+	switch snd.Kind {
+	case KindNone, KindDefault:
+		return true
+	case KindBuiltin:
+		return validBuiltinName(snd.Name)
+	case KindCustom:
+		return checkLocalPath(snd.Path) == nil && containsPathFold(custom, snd.Path)
+	}
+	return false
+}
+
+// validBuiltinName mirrors resolve()'s guard against a tampered built-in name.
+func validBuiltinName(name string) bool {
+	return name != "" && !strings.ContainsAny(name, `\/`) && filepath.Base(name) == name
 }
 
 // Options lists none, Windows default, then the built-in catalogue.
@@ -77,7 +120,7 @@ func (s *Service) Options() ([]Option, error) {
 		opts = append(opts, Option{
 			Sound:   Sound{Kind: KindCustom, Path: path},
 			Label:   filepath.Base(path),
-			Missing: !statOK(path),
+			Missing: checkLocalPath(path) != nil || rejectLink(path) != nil || !statOK(path),
 		})
 	}
 	return opts, nil
@@ -95,13 +138,26 @@ func (s *Service) Selected() Selection {
 	return Selection{Sound: s.prefs.Selected, Missing: !playable(s.prefs.Selected)}
 }
 
-// Select saves snd as the new selection, rejecting one Options() would not show.
+// Select checks and writes under one lock so a concurrent RemoveCustom cannot invalidate the check.
 func (s *Service) Select(snd Sound) error {
-	if err := s.checkSelectable(snd); err != nil {
+	if err := checkKindValid(snd); err != nil {
 		return err
 	}
+	// listBuiltinFn does disk I/O, so it runs before the lock is taken.
+	var builtinNames []string
+	if snd.Kind == KindBuiltin {
+		names, err := listBuiltinFn()
+		if err != nil {
+			return err
+		}
+		builtinNames = names
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.checkSelectableLocked(snd, builtinNames); err != nil {
+		return err
+	}
 	next := s.prefs
 	next.Selected = snd
 	if err := s.store.SavePrefs(next); err != nil {
@@ -111,58 +167,52 @@ func (s *Service) Select(snd Sound) error {
 	return nil
 }
 
-// checkSelectable rejects a sound that Options() would not offer: an
-// unlisted built-in, or a custom path missing from the saved list.
-func (s *Service) checkSelectable(snd Sound) error {
+func checkKindValid(snd Sound) error {
 	switch snd.Kind {
-	case KindNone, KindDefault:
+	case KindNone, KindDefault, KindBuiltin, KindCustom:
 		return nil
-	case KindBuiltin:
-		return s.checkBuiltinSelectable(snd)
-	case KindCustom:
-		return s.checkCustomSelectable(snd)
 	}
 	return errUnknownKind(snd.Kind)
 }
 
-func (s *Service) checkBuiltinSelectable(snd Sound) error {
-	names, err := listBuiltinFn()
-	if err != nil {
-		return err
-	}
-	for _, name := range names {
-		if name == snd.Name {
+// Callers must hold s.mu.
+func (s *Service) checkSelectableLocked(snd Sound, builtinNames []string) error {
+	switch snd.Kind {
+	case KindNone, KindDefault:
+		return nil
+	case KindBuiltin:
+		for _, name := range builtinNames {
+			if name == snd.Name {
+				return nil
+			}
+		}
+		return errNotSelectable(snd)
+	case KindCustom:
+		if containsPathFold(s.prefs.Custom, snd.Path) {
 			return nil
 		}
+		return errNotSelectable(snd)
 	}
-	return errNotSelectable(snd)
-}
-
-func (s *Service) checkCustomSelectable(snd Sound) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, p := range s.prefs.Custom {
-		if p == snd.Path {
-			return nil
-		}
-	}
-	return errNotSelectable(snd)
+	return errUnknownKind(snd.Kind)
 }
 
 // AddCustom validates path as a WAV, adds it to the custom list (deduping by absolute path), and selects it as the current sound.
 func (s *Service) AddCustom(path string) (Sound, error) {
-	clean := filepath.Clean(path)
-	if !filepath.IsAbs(clean) {
-		return Sound{}, fmt.Errorf("custom sound path %q is not absolute", path)
+	if err := checkLocalPath(path); err != nil {
+		return Sound{}, err
 	}
-	if err := ValidateWAV(clean); err != nil {
+	clean := filepath.Clean(path)
+	if err := rejectLink(clean); err != nil {
+		return Sound{}, err
+	}
+	if err := validateWAVFn(clean); err != nil {
 		return Sound{}, err
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	next := s.prefs
-	if !containsPath(next.Custom, clean) {
+	if !containsPathFold(next.Custom, clean) {
 		next.Custom = append(append([]string(nil), next.Custom...), clean)
 	}
 	next.Selected = Sound{Kind: KindCustom, Path: clean}
@@ -179,8 +229,8 @@ func (s *Service) RemoveCustom(path string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	next := s.prefs
-	next.Custom = removePath(next.Custom, clean)
-	if next.Selected.Kind == KindCustom && next.Selected.Path == clean {
+	next.Custom = removePathFold(next.Custom, clean)
+	if next.Selected.Kind == KindCustom && strings.EqualFold(next.Selected.Path, clean) {
 		next.Selected = Sound{Kind: KindDefault}
 	}
 	if err := s.store.SavePrefs(next); err != nil {
@@ -190,19 +240,16 @@ func (s *Service) RemoveCustom(path string) error {
 	return nil
 }
 
-func containsPath(paths []string, path string) bool {
-	for _, p := range paths {
-		if p == path {
-			return true
-		}
-	}
-	return false
+// containsPathFold reports whether path is in paths, ignoring case (Windows
+// paths are case-insensitive).
+func containsPathFold(paths []string, path string) bool {
+	return slices.ContainsFunc(paths, func(p string) bool { return strings.EqualFold(p, path) })
 }
 
-func removePath(paths []string, path string) []string {
+func removePathFold(paths []string, path string) []string {
 	out := make([]string, 0, len(paths))
 	for _, p := range paths {
-		if p != path {
+		if !strings.EqualFold(p, path) {
 			out = append(out, p)
 		}
 	}
@@ -214,8 +261,9 @@ func (s *Service) Preview(snd Sound) error {
 	return Play(snd)
 }
 
-// PlaySelected plays the current selection, falling back to KindDefault (and
-// logging a warning) when it is missing.
+// PlaySelected plays the current selection, falling back to KindDefault when
+// it is missing or when playback itself fails (a play failure on the
+// default is only logged, not retried).
 func (s *Service) PlaySelected() {
 	sel := s.Selected()
 	target := sel.Sound
@@ -224,12 +272,16 @@ func (s *Service) PlaySelected() {
 		target = Sound{Kind: KindDefault}
 	}
 	if err := Play(target); err != nil {
-		slog.Warn("alertsound: play failed", "err", err)
+		slog.Warn("alertsound: play failed, falling back to default", "sound", target, "err", err)
+		if target.Kind == KindDefault {
+			return
+		}
+		if err := Play(Sound{Kind: KindDefault}); err != nil {
+			slog.Warn("alertsound: default play failed", "err", err)
+		}
 	}
 }
 
-// playable reports whether s resolves to a target that exists on disk;
-// none/default are always playable.
 func playable(s Sound) bool {
 	switch s.Kind {
 	case KindNone, KindDefault:
@@ -241,6 +293,9 @@ func playable(s Sound) bool {
 		}
 		return statOK(filepath.Join(dir, s.Name))
 	case KindCustom:
+		if checkLocalPath(s.Path) != nil || rejectLink(s.Path) != nil {
+			return false
+		}
 		return statOK(s.Path)
 	}
 	return false

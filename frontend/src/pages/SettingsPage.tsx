@@ -1,12 +1,13 @@
 import { Dialogs } from "@wailsio/runtime";
 import { useSetAtom } from "jotai";
 import { Play, Plus, TriangleAlert, X } from "lucide-react";
+import { useState } from "react";
 
 import { type Option, type Sound } from "@bindings/alertsound";
 import { AppShell } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { friendlyError } from "@/lib/errors";
+import { friendlyError, isDialogCancelled } from "@/lib/errors";
 import {
   sameSound,
   useAddCustomAlertSoundMutation,
@@ -35,40 +36,55 @@ function noneOption(options: Option[]): Option | undefined {
   return options.find((o) => o.sound.kind === "none");
 }
 
+// GROUP_HEADING_ID links the radiogroup wrapper to the visible h2 heading it names.
+const GROUP_HEADING_ID = "alert-sound-group-heading";
+
 export function SettingsPage() {
   const setSettingsOpen = useSetAtom(settingsOpenAtom);
   const options = useAlertSoundOptionsQuery();
   const selected = useAlertSoundSelectedQuery();
-  const selectMutation = useSelectAlertSoundMutation();
-  const previewMutation = usePreviewAlertSoundMutation();
-  const addCustomMutation = useAddCustomAlertSoundMutation();
-  const removeCustomMutation = useRemoveCustomAlertSoundMutation();
+  const [lastError, setLastError] = useState<string>();
+  const onMutationError = (err: unknown) => setLastError(friendlyError(err));
+  const selectMutation = useSelectAlertSoundMutation({ onError: onMutationError });
+  const previewMutation = usePreviewAlertSoundMutation({ onError: onMutationError });
+  const addCustomMutation = useAddCustomAlertSoundMutation({ onError: onMutationError });
+  const removeCustomMutation = useRemoveCustomAlertSoundMutation({ onError: onMutationError });
 
   function goBack() {
     setSettingsOpen(false);
   }
 
   function selectSound(snd: Sound) {
+    setLastError(undefined);
     selectMutation.mutate(snd);
   }
 
   function previewSound(snd: Sound) {
+    setLastError(undefined);
     previewMutation.mutate(snd);
   }
 
   function removeCustomSound(path: string) {
+    setLastError(undefined);
     removeCustomMutation.mutate(path);
   }
 
   async function handleAddSound() {
-    const path = await Dialogs.OpenFile({
-      Title: "選擇提示音",
-      CanChooseFiles: true,
-      CanChooseDirectories: false,
-      AllowsMultipleSelection: false,
-      Filters: [{ DisplayName: "WAV 音檔 (*.wav)", Pattern: "*.wav" }],
-    });
-    if (!path) return;
+    setLastError(undefined);
+    let path: string;
+    try {
+      path = await Dialogs.OpenFile({
+        Title: "選擇提示音",
+        CanChooseFiles: true,
+        CanChooseDirectories: false,
+        AllowsMultipleSelection: false,
+        Filters: [{ DisplayName: "WAV 音檔 (*.wav)", Pattern: "*.wav" }],
+      });
+    } catch (err) {
+      if (!isDialogCancelled(err)) setLastError(friendlyError(err));
+      return;
+    }
+    if (!path) return; // macOS reports cancellation as an empty path, not a rejection.
     addCustomMutation.mutate(path);
   }
 
@@ -84,14 +100,16 @@ export function SettingsPage() {
         key={`${opt.sound.kind}:${opt.sound.name ?? ""}:${opt.sound.path ?? ""}`}
         className="flex items-center gap-2 px-3 py-2"
       >
-        <input
-          type="radio"
-          name="alert-sound"
-          className="size-4"
-          checked={isChecked(opt.sound)}
-          onChange={() => selectSound(opt.sound)}
-        />
-        <span className="flex-1 text-sm">{opt.label}</span>
+        <label className="flex flex-1 items-center gap-2">
+          <input
+            type="radio"
+            name="alert-sound"
+            className="size-4"
+            checked={isChecked(opt.sound)}
+            onChange={() => selectSound(opt.sound)}
+          />
+          <span className="flex-1 text-sm">{opt.label}</span>
+        </label>
         {opt.missing && (
           <span className="flex items-center gap-1 text-xs text-amber-600">
             <TriangleAlert className="size-3.5" />
@@ -102,7 +120,7 @@ export function SettingsPage() {
           <Button
             variant="ghost"
             size="icon-sm"
-            aria-label="試聽"
+            aria-label={`試聽 ${opt.label}`}
             title="試聽"
             disabled={opt.missing}
             onClick={() => previewSound(opt.sound)}
@@ -114,7 +132,7 @@ export function SettingsPage() {
           <Button
             variant="ghost"
             size="icon-sm"
-            aria-label="從清單移除"
+            aria-label={`從清單移除 ${opt.label}`}
             title="從清單移除"
             onClick={() => removeCustomSound(opt.sound.path!)}
           >
@@ -148,26 +166,17 @@ export function SettingsPage() {
     const builtins = windowsBuiltinOptions(options.data);
     const customs = customOptions(options.data);
     return (
-      <ul className="flex max-h-72 flex-col divide-y overflow-y-auto">
-        {none && renderRow(none)}
-        {renderGroupHeading("Windows 內建")}
-        {builtins.map(renderRow)}
-        {customs.length > 0 && renderGroupHeading("我的音檔")}
-        {customs.map(renderRow)}
-      </ul>
+      <div role="radiogroup" aria-labelledby={GROUP_HEADING_ID}>
+        <ul className="flex max-h-72 flex-col divide-y overflow-y-auto">
+          {none && renderRow(none)}
+          {renderGroupHeading("Windows 內建")}
+          {builtins.map(renderRow)}
+          {customs.length > 0 && renderGroupHeading("我的音檔")}
+          {customs.map(renderRow)}
+        </ul>
+      </div>
     );
   }
-
-  function mutationErrorText(): string | undefined {
-    const err =
-      selectMutation.error ??
-      previewMutation.error ??
-      addCustomMutation.error ??
-      removeCustomMutation.error;
-    return err ? friendlyError(err) : undefined;
-  }
-
-  const errorText = mutationErrorText();
 
   return (
     <AppShell mainClassName="flex-col items-stretch p-0">
@@ -180,7 +189,9 @@ export function SettingsPage() {
 
       <section className="flex flex-col gap-2 p-4">
         <div>
-          <h2 className="text-sm font-medium">伺服器開機提示音</h2>
+          <h2 id={GROUP_HEADING_ID} className="text-sm font-medium">
+            伺服器開機提示音
+          </h2>
           <p className="text-xs text-muted-foreground">
             伺服器從關閉變成開啟時播放
           </p>
@@ -198,7 +209,7 @@ export function SettingsPage() {
           </span>
         </div>
 
-        {errorText && <p className="text-xs text-destructive">{errorText}</p>}
+        {lastError && <p className="text-xs text-destructive">{lastError}</p>}
       </section>
     </AppShell>
   );

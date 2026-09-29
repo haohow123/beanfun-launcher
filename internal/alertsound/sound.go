@@ -14,7 +14,7 @@ const (
 	KindCustom  Kind = "custom"
 )
 
-// Sound identifies one selectable alert sound; Name is a built-in file name, Path a custom absolute path.
+// Name holds a built-in file name and Path a custom absolute path.
 type Sound struct {
 	Kind Kind   `json:"kind"`
 	Name string `json:"name,omitempty"`

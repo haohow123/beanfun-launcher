@@ -35,12 +35,16 @@ export function useAlertSoundSelectedQuery() {
   });
 }
 
+/** MutationErrorOptions lets a caller receive every mutate() failure via the hook's own onError, not a per-call one. */
+type MutationErrorOptions = { onError?: (err: unknown) => void };
+
 /** useSelectAlertSoundMutation persists a new selection; select-to-save, no separate save button. */
-export function useSelectAlertSoundMutation() {
+export function useSelectAlertSoundMutation(opts?: MutationErrorOptions) {
   const qc = useQueryClient();
   return useMutation({
     mutationKey: selectAlertSoundMutationKey,
     mutationFn: (snd: Sound) => AlertSoundService.Select(snd),
+    onError: opts?.onError,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: alertSoundOptionsQueryKey });
       qc.invalidateQueries({ queryKey: alertSoundSelectedQueryKey });
@@ -49,19 +53,21 @@ export function useSelectAlertSoundMutation() {
 }
 
 /** usePreviewAlertSoundMutation plays a sound once without changing the selection. */
-export function usePreviewAlertSoundMutation() {
+export function usePreviewAlertSoundMutation(opts?: MutationErrorOptions) {
   return useMutation({
     mutationKey: previewAlertSoundMutationKey,
     mutationFn: (snd: Sound) => AlertSoundService.Preview(snd),
+    onError: opts?.onError,
   });
 }
 
 /** useAddCustomAlertSoundMutation validates and adds a WAV path, selecting it. */
-export function useAddCustomAlertSoundMutation() {
+export function useAddCustomAlertSoundMutation(opts?: MutationErrorOptions) {
   const qc = useQueryClient();
   return useMutation({
     mutationKey: addCustomAlertSoundMutationKey,
     mutationFn: (path: string) => AlertSoundService.AddCustom(path),
+    onError: opts?.onError,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: alertSoundOptionsQueryKey });
       qc.invalidateQueries({ queryKey: alertSoundSelectedQueryKey });
@@ -70,11 +76,12 @@ export function useAddCustomAlertSoundMutation() {
 }
 
 /** useRemoveCustomAlertSoundMutation drops a path from the list; the file on disk is untouched. */
-export function useRemoveCustomAlertSoundMutation() {
+export function useRemoveCustomAlertSoundMutation(opts?: MutationErrorOptions) {
   const qc = useQueryClient();
   return useMutation({
     mutationKey: removeCustomAlertSoundMutationKey,
     mutationFn: (path: string) => AlertSoundService.RemoveCustom(path),
+    onError: opts?.onError,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: alertSoundOptionsQueryKey });
       qc.invalidateQueries({ queryKey: alertSoundSelectedQueryKey });

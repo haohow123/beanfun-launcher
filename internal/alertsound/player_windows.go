@@ -3,6 +3,7 @@
 package alertsound
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"unsafe"
@@ -48,6 +49,10 @@ func playSound(target string, alias bool) error {
 	}
 	ret, _, callErr := procPlaySoundW.Call(uintptr(unsafe.Pointer(p)), 0, flags)
 	if ret == 0 {
+		// PlaySoundW fails without setting last-error, so callErr is often ERROR_SUCCESS here.
+		if errors.Is(callErr, windows.ERROR_SUCCESS) {
+			return fmt.Errorf("PlaySoundW %q failed", target)
+		}
 		return fmt.Errorf("PlaySoundW %q: %w", target, callErr)
 	}
 	return nil

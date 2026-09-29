@@ -2,6 +2,7 @@ package alertsound
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -35,6 +36,7 @@ func withFakePlayer(t *testing.T, dir string) *[]call {
 
 func TestPlay(t *testing.T) {
 	const dir = "/media/dir"
+	withFakeLstat(t, func(string) (os.FileInfo, error) { return fakeFileInfo{}, nil })
 
 	tests := []struct {
 		name    string
@@ -79,6 +81,47 @@ func TestPlay(t *testing.T) {
 				t.Fatalf("Play() calls = %v, want [%v]", *calls, *tt.want)
 			}
 		})
+	}
+}
+
+// TestPlay_CustomUNC_WindowsRules exercises the real Windows UNC rejection
+// via checkWindowsPath, not IsAbs's accidental false-on-Unix.
+func TestPlay_CustomUNC_WindowsRules(t *testing.T) {
+	origCheck := checkLocalPathFn
+	checkLocalPathFn = checkWindowsPath
+	t.Cleanup(func() { checkLocalPathFn = origCheck })
+	withFakeRemoteDrive(t, false)
+
+	calls := withFakePlayer(t, "/media/dir")
+	err := Play(Sound{Kind: KindCustom, Path: `\\host\share\x.wav`})
+	if !errors.Is(err, errNotLocal) {
+		t.Fatalf("Play() = %v, want %v", err, errNotLocal)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("Play() called playFn %v, want no call", *calls)
+	}
+}
+
+// TestPlay_CustomSymlink_Rejected asserts resolve's KindCustom branch rejects
+// a symlink before it ever reaches playFn.
+func TestPlay_CustomSymlink_Rejected(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "real.wav")
+	if err := os.WriteFile(target, []byte("RIFF"), 0o600); err != nil {
+		t.Fatalf("WriteFile() = %v", err)
+	}
+	link := filepath.Join(dir, "link.wav")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("os.Symlink unsupported: %v", err)
+	}
+	calls := withFakePlayer(t, "/media/dir")
+
+	err := Play(Sound{Kind: KindCustom, Path: link})
+	if !errors.Is(err, errNotLocal) {
+		t.Fatalf("Play() = %v, want %v", err, errNotLocal)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("Play() called playFn %v, want no call", *calls)
 	}
 }
 

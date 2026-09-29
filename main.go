@@ -73,10 +73,10 @@ func main() {
 	alertSvc := alertsound.NewService(settings.NewFile(settingsPath))
 
 	notifyServerOnline := func() {
+		alertSvc.PlaySelected()
 		if err := pushServerOnlineToast(appName); err != nil {
 			slog.Warn("notify: push toast failed", "err", err)
 		}
-		alertSvc.PlaySelected()
 	}
 
 	// application.Get() is resolved at emit time because mapleSvc is built before application.New

@@ -167,6 +167,25 @@ func TestService_AddCustom_Valid(t *testing.T) {
 	}
 }
 
+func TestService_AddCustom_UNC(t *testing.T) {
+	withFakeCatalog(t, nil, nil)
+	origCheck := checkLocalPathFn
+	checkLocalPathFn = checkWindowsPath
+	t.Cleanup(func() { checkLocalPathFn = origCheck })
+	withFakeRemoteDrive(t, false)
+
+	store := &fakeStore{}
+	svc := NewService(store)
+
+	_, err := svc.AddCustom(`\\host\share\x.wav`)
+	if !errors.Is(err, errNotLocal) {
+		t.Fatalf("AddCustom() = %v, want %v", err, errNotLocal)
+	}
+	if store.saved != 0 {
+		t.Fatalf("store.saved = %d, want 0", store.saved)
+	}
+}
+
 func TestService_AddCustom_NotWAV(t *testing.T) {
 	withFakeCatalog(t, nil, nil)
 	store := &fakeStore{}
@@ -231,6 +250,56 @@ func TestService_RemoveCustom_Selected(t *testing.T) {
 	}
 }
 
+func TestService_AddCustom_RejectsSymlink(t *testing.T) {
+	withFakeCatalog(t, nil, nil)
+	store := &fakeStore{}
+	svc := NewService(store)
+	target := writeWAV(t, "real.wav")
+	link := filepath.Join(filepath.Dir(target), "link.wav")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("os.Symlink unsupported: %v", err)
+	}
+
+	_, err := svc.AddCustom(link)
+	if !errors.Is(err, errNotLocal) {
+		t.Fatalf("AddCustom() = %v, want %v", err, errNotLocal)
+	}
+	if store.saved != 0 {
+		t.Fatalf("store.saved = %d, want 0", store.saved)
+	}
+}
+
+// TestService_CustomSymlink_Missing asserts a symlink already in the saved
+// Custom list (bypassing AddCustom) is reported Missing without statFn ever
+// resolving through it.
+func TestService_CustomSymlink_Missing(t *testing.T) {
+	withFakeCatalog(t, nil, nil)
+	target := writeWAV(t, "real.wav")
+	link := filepath.Join(filepath.Dir(target), "link.wav")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("os.Symlink unsupported: %v", err)
+	}
+	store := &fakeStore{prefs: Prefs{Custom: []string{link}}}
+	svc := NewService(store)
+
+	opts, err := svc.Options()
+	if err != nil {
+		t.Fatalf("Options() = %v, want nil", err)
+	}
+	var found bool
+	for _, o := range opts {
+		if o.Sound.Kind == KindCustom && o.Sound.Path == link {
+			found = true
+			if !o.Missing {
+				t.Fatalf("Options() entry Missing = false, want true (symlink)")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("symlink custom entry not found in Options()")
+	}
+}
+
 func TestService_CustomMissing(t *testing.T) {
 	withFakeCatalog(t, nil, nil)
 	calls := withFakePlayer(t, "/media/dir")
@@ -256,6 +325,371 @@ func TestService_CustomMissing(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("missing custom entry not found in Options()")
+	}
+
+	if !svc.Selected().Missing {
+		t.Fatal("Selected().Missing = false, want true")
+	}
+
+	svc.PlaySelected()
+	want := call{target: "SystemDefault", alias: true}
+	if len(*calls) != 1 || (*calls)[0] != want {
+		t.Fatalf("PlaySelected() calls = %v, want [%v]", *calls, want)
+	}
+}
+
+func TestNewService_SanitizesUNCFromPrefs(t *testing.T) {
+	withFakeCatalog(t, nil, nil)
+	origCheck := checkLocalPathFn
+	checkLocalPathFn = checkWindowsPath
+	t.Cleanup(func() { checkLocalPathFn = origCheck })
+	withFakeRemoteDrive(t, false)
+
+	const legit = `C:\Users\a\ding.wav`
+	const unc = `\\host\share\x.wav`
+
+	var statCalls []string
+	origStat := statFn
+	statFn = func(p string) (os.FileInfo, error) {
+		statCalls = append(statCalls, p)
+		return origStat(p)
+	}
+	t.Cleanup(func() { statFn = origStat })
+
+	store := &fakeStore{prefs: Prefs{
+		Selected: Sound{Kind: KindCustom, Path: unc},
+		Custom:   []string{unc, legit},
+	}}
+	svc := NewService(store)
+
+	opts, err := svc.Options()
+	if err != nil {
+		t.Fatalf("Options() = %v, want nil", err)
+	}
+	var customPaths []string
+	for _, o := range opts {
+		if o.Sound.Kind == KindCustom {
+			customPaths = append(customPaths, o.Sound.Path)
+		}
+	}
+	if len(customPaths) != 1 || customPaths[0] != legit {
+		t.Fatalf("custom Options() = %v, want [%q]", customPaths, legit)
+	}
+
+	if got, want := svc.Selected().Sound, (Sound{Kind: KindDefault}); got != want {
+		t.Fatalf("Selected().Sound = %+v, want %+v", got, want)
+	}
+
+	for _, p := range statCalls {
+		if p == unc {
+			t.Fatalf("statFn was called with UNC path %q", unc)
+		}
+	}
+}
+
+// TestNewService_SanitizesDotDotAndDedupesCustom asserts sanitizePrefs Cleans
+// a "/a/../ding.wav"-shaped entry to its canonical form, that a second entry
+// differing only by case dedupes against it, and that the cleaned path (not
+// the raw dotted one) is what RemoveCustom and Selected agree on.
+func TestNewService_SanitizesDotDotAndDedupesCustom(t *testing.T) {
+	withFakeCatalog(t, nil, nil)
+	clean := writeWAV(t, "ding.wav")
+	dir := filepath.Dir(clean)
+	if err := os.Mkdir(filepath.Join(dir, "a"), 0o700); err != nil {
+		t.Fatalf("Mkdir() = %v", err)
+	}
+	dotdot := filepath.Join(dir, "a", "..", "ding.wav")
+	dup := filepath.Join(dir, "DING.WAV")
+
+	store := &fakeStore{prefs: Prefs{
+		Selected: Sound{Kind: KindCustom, Path: dotdot},
+		Custom:   []string{dotdot, dup},
+	}}
+	svc := NewService(store)
+
+	if got, want := svc.Selected().Sound, (Sound{Kind: KindCustom, Path: clean}); got != want {
+		t.Fatalf("Selected().Sound = %+v, want %+v", got, want)
+	}
+
+	opts, err := svc.Options()
+	if err != nil {
+		t.Fatalf("Options() = %v, want nil", err)
+	}
+	var customPaths []string
+	for _, o := range opts {
+		if o.Sound.Kind == KindCustom {
+			customPaths = append(customPaths, o.Sound.Path)
+		}
+	}
+	if len(customPaths) != 1 || customPaths[0] != clean {
+		t.Fatalf("custom Options() = %v, want [%q]", customPaths, clean)
+	}
+
+	if err := svc.RemoveCustom(clean); err != nil {
+		t.Fatalf("RemoveCustom() = %v, want nil", err)
+	}
+	opts, err = svc.Options()
+	if err != nil {
+		t.Fatalf("Options() = %v, want nil", err)
+	}
+	for _, o := range opts {
+		if o.Sound.Kind == KindCustom {
+			t.Fatalf("Options() contains custom entry %+v after RemoveCustom", o)
+		}
+	}
+}
+
+func TestService_PlaySelected_PlayErrorFallsBackToDefault(t *testing.T) {
+	withFakeCatalog(t, nil, nil)
+	path := writeWAV(t, "ding.wav")
+
+	origPlay := playFn
+	origMediaDir := mediaDirFn
+	var calls []call
+	playFn = func(target string, alias bool) error {
+		calls = append(calls, call{target: target, alias: alias})
+		if target == path {
+			return errors.New("playsoundw failed")
+		}
+		return nil
+	}
+	mediaDirFn = func() (string, error) { return "/media/dir", nil }
+	t.Cleanup(func() {
+		playFn = origPlay
+		mediaDirFn = origMediaDir
+	})
+
+	store := &fakeStore{prefs: Prefs{
+		Selected: Sound{Kind: KindCustom, Path: path},
+		Custom:   []string{path},
+	}}
+	svc := NewService(store)
+
+	svc.PlaySelected()
+
+	want := []call{{target: path, alias: false}, {target: "SystemDefault", alias: true}}
+	if len(calls) != len(want) || calls[0] != want[0] || calls[1] != want[1] {
+		t.Fatalf("PlaySelected() calls = %v, want %v", calls, want)
+	}
+}
+
+func TestService_AddCustom_SaveError(t *testing.T) {
+	withFakeCatalog(t, nil, nil)
+	wantErr := errors.New("disk full")
+	store := &fakeStore{saveErr: wantErr}
+	svc := NewService(store)
+	path := writeWAV(t, "ding.wav")
+
+	if _, err := svc.AddCustom(path); !errors.Is(err, wantErr) {
+		t.Fatalf("AddCustom() = %v, want %v", err, wantErr)
+	}
+	if got := svc.Selected().Sound; got != (Sound{Kind: KindDefault}) {
+		t.Fatalf("Selected().Sound = %+v, want KindDefault (unchanged)", got)
+	}
+	opts, err := svc.Options()
+	if err != nil {
+		t.Fatalf("Options() = %v, want nil", err)
+	}
+	for _, o := range opts {
+		if o.Sound.Kind == KindCustom {
+			t.Fatalf("Options() contains custom entry %+v after failed save", o)
+		}
+	}
+}
+
+func TestService_RemoveCustom_SaveError(t *testing.T) {
+	withFakeCatalog(t, nil, nil)
+	path := writeWAV(t, "ding.wav")
+	wantErr := errors.New("disk full")
+	store := &fakeStore{prefs: Prefs{
+		Selected: Sound{Kind: KindCustom, Path: path},
+		Custom:   []string{path},
+	}}
+	svc := NewService(store)
+	store.saveErr = wantErr
+
+	if err := svc.RemoveCustom(path); !errors.Is(err, wantErr) {
+		t.Fatalf("RemoveCustom() = %v, want %v", err, wantErr)
+	}
+	want := Sound{Kind: KindCustom, Path: path}
+	if got := svc.Selected().Sound; got != want {
+		t.Fatalf("Selected().Sound = %+v, want %+v (unchanged)", got, want)
+	}
+	opts, err := svc.Options()
+	if err != nil {
+		t.Fatalf("Options() = %v, want nil", err)
+	}
+	var found bool
+	for _, o := range opts {
+		if o.Sound.Kind == KindCustom && o.Sound.Path == path {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("custom entry removed from Options() despite failed save")
+	}
+}
+
+// TestService_AddCustom_CaseInsensitiveDuplicate swaps checkLocalPathFn,
+// validateWAVFn, and lstatFn so a Windows-style drive path can be exercised
+// (and deduped case-insensitively) without a matching file on disk.
+func TestService_AddCustom_CaseInsensitiveDuplicate(t *testing.T) {
+	withFakeCatalog(t, nil, nil)
+	origCheck := checkLocalPathFn
+	checkLocalPathFn = checkWindowsPath
+	origValidate := validateWAVFn
+	validateWAVFn = func(string) error { return nil }
+	t.Cleanup(func() {
+		checkLocalPathFn = origCheck
+		validateWAVFn = origValidate
+	})
+	withFakeRemoteDrive(t, false)
+	withFakeLstat(t, func(string) (os.FileInfo, error) { return fakeFileInfo{}, nil })
+
+	svc := NewService(&fakeStore{})
+
+	if _, err := svc.AddCustom(`C:\A.wav`); err != nil {
+		t.Fatalf("AddCustom(#1) = %v, want nil", err)
+	}
+	if _, err := svc.AddCustom(`c:\a.wav`); err != nil {
+		t.Fatalf("AddCustom(#2) = %v, want nil", err)
+	}
+
+	opts, err := svc.Options()
+	if err != nil {
+		t.Fatalf("Options() = %v, want nil", err)
+	}
+	count := 0
+	for _, o := range opts {
+		if o.Sound.Kind == KindCustom {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("custom entries = %d, want 1 (case-insensitive dedupe)", count)
+	}
+}
+
+// TestService_Select_CustomCaseInsensitive asserts checkSelectableLocked's
+// custom-list lookup matches regardless of case, matching Windows path semantics.
+func TestService_Select_CustomCaseInsensitive(t *testing.T) {
+	withFakeCatalog(t, nil, nil)
+	origCheck := checkLocalPathFn
+	checkLocalPathFn = checkWindowsPath
+	t.Cleanup(func() { checkLocalPathFn = origCheck })
+	withFakeRemoteDrive(t, false)
+
+	store := &fakeStore{prefs: Prefs{Custom: []string{`C:\A.wav`}}}
+	svc := NewService(store)
+
+	if err := svc.Select(Sound{Kind: KindCustom, Path: `c:\a.wav`}); err != nil {
+		t.Fatalf("Select() = %v, want nil (case-insensitive match)", err)
+	}
+}
+
+// TestService_RemoveCustom_SelectedCaseInsensitive asserts RemoveCustom
+// clears a selection that differs from the removed path only by case.
+func TestService_RemoveCustom_SelectedCaseInsensitive(t *testing.T) {
+	withFakeCatalog(t, nil, nil)
+	origCheck := checkLocalPathFn
+	checkLocalPathFn = checkWindowsPath
+	origValidate := validateWAVFn
+	validateWAVFn = func(string) error { return nil }
+	t.Cleanup(func() {
+		checkLocalPathFn = origCheck
+		validateWAVFn = origValidate
+	})
+	withFakeRemoteDrive(t, false)
+	withFakeLstat(t, func(string) (os.FileInfo, error) { return fakeFileInfo{}, nil })
+
+	svc := NewService(&fakeStore{})
+	if _, err := svc.AddCustom(`C:\A.wav`); err != nil {
+		t.Fatalf("AddCustom() = %v, want nil", err)
+	}
+
+	if err := svc.RemoveCustom(`c:\a.wav`); err != nil {
+		t.Fatalf("RemoveCustom() = %v, want nil", err)
+	}
+	if got, want := svc.Selected().Sound, (Sound{Kind: KindDefault}); got != want {
+		t.Fatalf("Selected().Sound = %+v, want %+v", got, want)
+	}
+}
+
+// TestService_PlaySelected_DefaultFailureDoesNotRetry asserts a failed play
+// of the default sound is only logged, never replayed.
+func TestService_PlaySelected_DefaultFailureDoesNotRetry(t *testing.T) {
+	withFakeCatalog(t, nil, nil)
+	origPlay := playFn
+	var calls []call
+	playFn = func(target string, alias bool) error {
+		calls = append(calls, call{target: target, alias: alias})
+		return errors.New("playsoundw failed")
+	}
+	t.Cleanup(func() { playFn = origPlay })
+
+	store := &fakeStore{prefs: Prefs{Selected: Sound{Kind: KindDefault}}}
+	svc := NewService(store)
+
+	svc.PlaySelected()
+
+	want := call{target: "SystemDefault", alias: true}
+	if len(calls) != 1 || calls[0] != want {
+		t.Fatalf("PlaySelected() calls = %v, want [%v]", calls, want)
+	}
+}
+
+// TestService_CustomBecomesRemoteAfterLoad asserts the local-drive check is
+// re-evaluated live (not just cached from sanitizePrefs at load time): once
+// isRemoteDriveFn starts reporting the drive as remote, Options/Selected mark
+// the entry Missing without ever calling statFn, and PlaySelected falls back
+// to the default sound.
+func TestService_CustomBecomesRemoteAfterLoad(t *testing.T) {
+	withFakeCatalog(t, nil, nil)
+	calls := withFakePlayer(t, "/media/dir")
+	origCheck := checkLocalPathFn
+	checkLocalPathFn = checkWindowsPath
+	t.Cleanup(func() { checkLocalPathFn = origCheck })
+	withFakeRemoteDrive(t, false)
+	withFakeLstat(t, func(string) (os.FileInfo, error) { return fakeFileInfo{}, nil })
+
+	const path = `C:\Users\a\ding.wav`
+	origStat := statFn
+	var statCalls []string
+	statFn = func(p string) (os.FileInfo, error) {
+		statCalls = append(statCalls, p)
+		return fakeFileInfo{}, nil
+	}
+	t.Cleanup(func() { statFn = origStat })
+
+	store := &fakeStore{prefs: Prefs{
+		Selected: Sound{Kind: KindCustom, Path: path},
+		Custom:   []string{path},
+	}}
+	svc := NewService(store)
+
+	// Simulate the drive turning into a mapped network drive after load.
+	isRemoteDriveFn = func(string) bool { return true }
+
+	opts, err := svc.Options()
+	if err != nil {
+		t.Fatalf("Options() = %v, want nil", err)
+	}
+	var found bool
+	for _, o := range opts {
+		if o.Sound.Kind == KindCustom && o.Sound.Path == path {
+			found = true
+			if !o.Missing {
+				t.Fatalf("Options() entry Missing = false, want true")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("custom entry not found in Options()")
+	}
+	for _, p := range statCalls {
+		if p == path {
+			t.Fatalf("statFn was called with %q after drive became remote", path)
+		}
 	}
 
 	if !svc.Selected().Missing {

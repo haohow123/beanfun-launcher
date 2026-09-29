@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// playFn plays target asynchronously; alias selects SND_ALIAS instead of SND_FILENAME.
+// alias selects SND_ALIAS instead of SND_FILENAME.
 var playFn func(target string, alias bool) error
 
 var mediaDirFn func() (string, error)
@@ -37,6 +37,12 @@ func resolve(s Sound) (target string, alias bool, err error) {
 		}
 		return filepath.Join(dir, s.Name), false, nil
 	case KindCustom:
+		if err := checkLocalPath(s.Path); err != nil {
+			return "", false, err
+		}
+		if err := rejectLink(s.Path); err != nil {
+			return "", false, err
+		}
 		return s.Path, false, nil
 	}
 	return "", false, fmt.Errorf("unknown sound kind %q", s.Kind)

@@ -40,8 +40,9 @@ export function Options() {
 }
 
 /**
- * PlaySelected plays the current selection, falling back to KindDefault (and
- * logging a warning) when it is missing.
+ * PlaySelected plays the current selection, falling back to KindDefault when
+ * it is missing or when playback itself fails (a play failure on the
+ * default is only logged, not retried).
  * @returns {$CancellablePromise<void>}
  */
 export function PlaySelected() {
@@ -67,7 +68,7 @@ export function RemoveCustom(path) {
 }
 
 /**
- * Select saves snd as the new selection, rejecting one Options() would not show.
+ * Select checks and writes under one lock so a concurrent RemoveCustom cannot invalidate the check.
  * @param {$models.Sound} snd
  * @returns {$CancellablePromise<void>}
  */

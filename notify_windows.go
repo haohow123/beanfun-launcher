@@ -14,9 +14,13 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-// pushServerOnlineToast pushes a silent toast directly via go-toast, bypassing
-// the Wails notifier's SendNotification (which always plays its own audio) so
-// alertsound.Play is the only thing that makes sound.
+const (
+	serverOnlineID    = "maple-server-online"
+	serverOnlineTitle = "新楓之谷 MapleStory"
+	serverOnlineBody  = "伺服器已開啟"
+)
+
+// Bypasses Wails' SendNotification, which always attaches its own toast audio.
 func pushServerOnlineToast(appName string) error {
 	saveToastIcon(appName)
 	opts := notifications.NotificationOptions{ID: serverOnlineID, Title: serverOnlineTitle, Body: serverOnlineBody}
