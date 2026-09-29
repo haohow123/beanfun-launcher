@@ -22,7 +22,10 @@ personal data beyond what is strictly required to operate.
   sources.
 - No reading of files outside what is needed to locate the game
   executable (the `BEANFUN_GAME_EXE` environment variable or
-  Beanfun's published registry entry).
+  Beanfun's published registry entry), listing the `.wav` files
+  in the Windows `Media` folder to offer them as alert sounds, or
+  reading the header of, and playing, WAV files you add yourself
+  as alert sounds.
 
 ## Local data
 
@@ -34,6 +37,11 @@ personal data beyond what is strictly required to operate.
   or `%LOCALAPPDATA%\beanfun-launcher\` (Windows) records
   operational events with all token values redacted. The file
   is local — never uploaded, never shared.
+- **Settings file** at `~/Library/Application Support/beanfun-launcher/settings.json`
+  (macOS) or `%APPDATA%\beanfun-launcher\settings.json` (Windows)
+  stores the chosen alert sound and the paths of WAV files you
+  added; the files themselves are never copied or modified. Local
+  only, no credentials.
 
 ## Open source
 
