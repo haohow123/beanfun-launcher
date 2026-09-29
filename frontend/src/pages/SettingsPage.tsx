@@ -1,5 +1,6 @@
+import { Dialogs } from "@wailsio/runtime";
 import { useSetAtom } from "jotai";
-import { Play } from "lucide-react";
+import { Play, Plus, TriangleAlert, X } from "lucide-react";
 
 import { type Option, type Sound } from "@bindings/alertsound";
 import { AppShell } from "@/components/layout/AppShell";
@@ -8,9 +9,11 @@ import { Card } from "@/components/ui/card";
 import { friendlyError } from "@/lib/errors";
 import {
   sameSound,
+  useAddCustomAlertSoundMutation,
   useAlertSoundOptionsQuery,
   useAlertSoundSelectedQuery,
   usePreviewAlertSoundMutation,
+  useRemoveCustomAlertSoundMutation,
   useSelectAlertSoundMutation,
 } from "@/queries/alertSound";
 import { settingsOpenAtom } from "@/state/settings";
@@ -38,6 +41,8 @@ export function SettingsPage() {
   const selected = useAlertSoundSelectedQuery();
   const selectMutation = useSelectAlertSoundMutation();
   const previewMutation = usePreviewAlertSoundMutation();
+  const addCustomMutation = useAddCustomAlertSoundMutation();
+  const removeCustomMutation = useRemoveCustomAlertSoundMutation();
 
   function goBack() {
     setSettingsOpen(false);
@@ -51,12 +56,29 @@ export function SettingsPage() {
     previewMutation.mutate(snd);
   }
 
+  function removeCustomSound(path: string) {
+    removeCustomMutation.mutate(path);
+  }
+
+  async function handleAddSound() {
+    const path = await Dialogs.OpenFile({
+      Title: "選擇提示音",
+      CanChooseFiles: true,
+      CanChooseDirectories: false,
+      AllowsMultipleSelection: false,
+      Filters: [{ DisplayName: "WAV 音檔 (*.wav)", Pattern: "*.wav" }],
+    });
+    if (!path) return;
+    addCustomMutation.mutate(path);
+  }
+
   function isChecked(snd: Sound): boolean {
     return !!selected.data && sameSound(snd, selected.data.sound);
   }
 
   function renderRow(opt: Option) {
     const isNone = opt.sound.kind === "none";
+    const isCustom = opt.sound.kind === "custom";
     return (
       <li
         key={`${opt.sound.kind}:${opt.sound.name ?? ""}:${opt.sound.path ?? ""}`}
@@ -70,15 +92,33 @@ export function SettingsPage() {
           onChange={() => selectSound(opt.sound)}
         />
         <span className="flex-1 text-sm">{opt.label}</span>
+        {opt.missing && (
+          <span className="flex items-center gap-1 text-xs text-amber-600">
+            <TriangleAlert className="size-3.5" />
+            找不到檔案
+          </span>
+        )}
         {!isNone && (
           <Button
             variant="ghost"
             size="icon-sm"
             aria-label="試聽"
             title="試聽"
+            disabled={opt.missing}
             onClick={() => previewSound(opt.sound)}
           >
             <Play />
+          </Button>
+        )}
+        {isCustom && opt.sound.path && (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="從清單移除"
+            title="從清單移除"
+            onClick={() => removeCustomSound(opt.sound.path!)}
+          >
+            <X />
           </Button>
         )}
       </li>
@@ -119,7 +159,11 @@ export function SettingsPage() {
   }
 
   function mutationErrorText(): string | undefined {
-    const err = selectMutation.error ?? previewMutation.error;
+    const err =
+      selectMutation.error ??
+      previewMutation.error ??
+      addCustomMutation.error ??
+      removeCustomMutation.error;
     return err ? friendlyError(err) : undefined;
   }
 
@@ -143,6 +187,16 @@ export function SettingsPage() {
         </div>
 
         <Card className="gap-0 py-0">{renderList()}</Card>
+
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={handleAddSound}>
+            <Plus />
+            加入音檔…
+          </Button>
+          <span className="text-xs text-muted-foreground">
+            只支援 WAV 檔
+          </span>
+        </div>
 
         {errorText && <p className="text-xs text-destructive">{errorText}</p>}
       </section>

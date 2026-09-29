@@ -6,6 +6,12 @@ const FRIENDLY: ReadonlyArray<readonly [string, string]> = [
   ["ip temporarily blocked", "beanfun 暫時鎖定此 IP，請稍後再試"],
   // internal/launcher/service.go errGameAlreadyRunning
   ["already running", "遊戲已開啟，請稍候再試"],
+  // internal/alertsound/wav.go errNotWAV
+  ["not a WAV file", "只支援 WAV 檔"],
+  // internal/alertsound/wav.go errPathTooLong
+  ["path too long", "檔案路徑太長，請把檔案移到較短的路徑"],
+  // internal/alertsound/sound.go ErrUnsupported
+  ["sound playback not supported", "此平台不支援播放提示音"],
 ];
 
 /**

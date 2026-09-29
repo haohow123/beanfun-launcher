@@ -1,8 +1,9 @@
 import { useSetAtom } from "jotai";
-import { Settings } from "lucide-react";
+import { Settings, TriangleAlert } from "lucide-react";
 import { type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
+import { useAlertSoundSelectedQuery } from "@/queries/alertSound";
 import { useMapleStatusQuery } from "@/queries/mapleStatus";
 import { settingsOpenAtom } from "@/state/settings";
 
@@ -53,17 +54,24 @@ function statusVisualFor(
 // Rendered by Hero itself rather than via `action`, so LoginPage gets it too.
 function SettingsButton() {
   const setSettingsOpen = useSetAtom(settingsOpenAtom);
+  const selected = useAlertSoundSelectedQuery();
+  const missing = selected.data?.missing ?? false;
   return (
-    <Button
-      variant="outline"
-      size="icon-sm"
-      className="bg-background/80 backdrop-blur"
-      aria-label="設定"
-      title="設定"
-      onClick={() => setSettingsOpen(true)}
-    >
-      <Settings />
-    </Button>
+    <div className="relative">
+      <Button
+        variant="outline"
+        size="icon-sm"
+        className="bg-background/80 backdrop-blur"
+        aria-label="設定"
+        title={missing ? "找不到提示音檔案" : "設定"}
+        onClick={() => setSettingsOpen(true)}
+      >
+        <Settings />
+      </Button>
+      {missing && (
+        <TriangleAlert className="absolute -top-1 -right-1 size-3 fill-amber-400 text-amber-950" />
+      )}
+    </div>
   );
 }
 

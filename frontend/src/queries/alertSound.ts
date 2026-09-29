@@ -6,6 +6,8 @@ export const alertSoundOptionsQueryKey = ["alertSound", "options"] as const;
 export const alertSoundSelectedQueryKey = ["alertSound", "selected"] as const;
 const selectAlertSoundMutationKey = ["alertSound", "select"] as const;
 const previewAlertSoundMutationKey = ["alertSound", "preview"] as const;
+const addCustomAlertSoundMutationKey = ["alertSound", "addCustom"] as const;
+const removeCustomAlertSoundMutationKey = ["alertSound", "removeCustom"] as const;
 
 /**
  * sameSound compares two Sound values by their identifying fields — used to
@@ -51,5 +53,31 @@ export function usePreviewAlertSoundMutation() {
   return useMutation({
     mutationKey: previewAlertSoundMutationKey,
     mutationFn: (snd: Sound) => AlertSoundService.Preview(snd),
+  });
+}
+
+/** useAddCustomAlertSoundMutation validates and adds a WAV path, selecting it. */
+export function useAddCustomAlertSoundMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationKey: addCustomAlertSoundMutationKey,
+    mutationFn: (path: string) => AlertSoundService.AddCustom(path),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: alertSoundOptionsQueryKey });
+      qc.invalidateQueries({ queryKey: alertSoundSelectedQueryKey });
+    },
+  });
+}
+
+/** useRemoveCustomAlertSoundMutation drops a path from the list; the file on disk is untouched. */
+export function useRemoveCustomAlertSoundMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationKey: removeCustomAlertSoundMutationKey,
+    mutationFn: (path: string) => AlertSoundService.RemoveCustom(path),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: alertSoundOptionsQueryKey });
+      qc.invalidateQueries({ queryKey: alertSoundSelectedQueryKey });
+    },
   });
 }

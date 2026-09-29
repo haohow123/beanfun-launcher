@@ -19,12 +19,23 @@ import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Cr
 import * as $models from "./models.js";
 
 /**
+ * AddCustom validates path as a WAV, adds it to the custom list (deduping by absolute path), and selects it as the current sound.
+ * @param {string} path
+ * @returns {$CancellablePromise<$models.Sound>}
+ */
+export function AddCustom(path) {
+    return $Call.ByID(1680240028, path).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType0($result);
+    }));
+}
+
+/**
  * Options lists none, Windows default, then the built-in catalogue.
  * @returns {$CancellablePromise<$models.Option[]>}
  */
 export function Options() {
     return $Call.ByID(3621009290).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType1($result);
+        return $$createType2($result);
     }));
 }
 
@@ -47,6 +58,15 @@ export function Preview(snd) {
 }
 
 /**
+ * RemoveCustom drops path from the custom list without touching the file on disk, falling the selection back to KindDefault if path was selected.
+ * @param {string} path
+ * @returns {$CancellablePromise<void>}
+ */
+export function RemoveCustom(path) {
+    return $Call.ByID(766291359, path);
+}
+
+/**
  * Select saves snd as the new selection, rejecting one Options() would not show.
  * @param {$models.Sound} snd
  * @returns {$CancellablePromise<void>}
@@ -61,11 +81,12 @@ export function Select(snd) {
  */
 export function Selected() {
     return $Call.ByID(2854372285).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType2($result);
+        return $$createType3($result);
     }));
 }
 
 // Private type creation functions
-const $$createType0 = $models.Option.createFrom;
-const $$createType1 = $Create.Array($$createType0);
-const $$createType2 = $models.Selection.createFrom;
+const $$createType0 = $models.Sound.createFrom;
+const $$createType1 = $models.Option.createFrom;
+const $$createType2 = $Create.Array($$createType1);
+const $$createType3 = $models.Selection.createFrom;

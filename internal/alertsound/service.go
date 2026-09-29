@@ -70,6 +70,16 @@ func (s *Service) Options() ([]Option, error) {
 			Label: builtinLabel(name),
 		})
 	}
+	s.mu.Lock()
+	custom := append([]string(nil), s.prefs.Custom...)
+	s.mu.Unlock()
+	for _, path := range custom {
+		opts = append(opts, Option{
+			Sound:   Sound{Kind: KindCustom, Path: path},
+			Label:   filepath.Base(path),
+			Missing: !statOK(path),
+		})
+	}
 	return opts, nil
 }
 
@@ -137,6 +147,66 @@ func (s *Service) checkCustomSelectable(snd Sound) error {
 		}
 	}
 	return errNotSelectable(snd)
+}
+
+// AddCustom validates path as a WAV, adds it to the custom list (deduping by absolute path), and selects it as the current sound.
+func (s *Service) AddCustom(path string) (Sound, error) {
+	clean := filepath.Clean(path)
+	if !filepath.IsAbs(clean) {
+		return Sound{}, fmt.Errorf("custom sound path %q is not absolute", path)
+	}
+	if err := ValidateWAV(clean); err != nil {
+		return Sound{}, err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := s.prefs
+	if !containsPath(next.Custom, clean) {
+		next.Custom = append(append([]string(nil), next.Custom...), clean)
+	}
+	next.Selected = Sound{Kind: KindCustom, Path: clean}
+	if err := s.store.SavePrefs(next); err != nil {
+		return Sound{}, err
+	}
+	s.prefs = next
+	return next.Selected, nil
+}
+
+// RemoveCustom drops path from the custom list without touching the file on disk, falling the selection back to KindDefault if path was selected.
+func (s *Service) RemoveCustom(path string) error {
+	clean := filepath.Clean(path)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := s.prefs
+	next.Custom = removePath(next.Custom, clean)
+	if next.Selected.Kind == KindCustom && next.Selected.Path == clean {
+		next.Selected = Sound{Kind: KindDefault}
+	}
+	if err := s.store.SavePrefs(next); err != nil {
+		return err
+	}
+	s.prefs = next
+	return nil
+}
+
+func containsPath(paths []string, path string) bool {
+	for _, p := range paths {
+		if p == path {
+			return true
+		}
+	}
+	return false
+}
+
+func removePath(paths []string, path string) []string {
+	out := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if p != path {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // Preview plays snd once without changing the selection.
