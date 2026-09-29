@@ -23,3 +23,6 @@ type Sound struct {
 
 // ErrUnsupported is returned by playFn/mediaDirFn on platforms without a player binding.
 var ErrUnsupported = errors.New("sound playback not supported on this platform")
+
+// KindDefault stays behind DefaultSound as the last-resort fallback, never as a listed option.
+var DefaultSound = Sound{Kind: KindBuiltin, Name: "Windows Logon.wav"}

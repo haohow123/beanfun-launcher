@@ -54,7 +54,6 @@ func TestService_Options(t *testing.T) {
 	}
 	want := []Option{
 		{Sound: Sound{Kind: KindNone}, Label: "無聲"},
-		{Sound: Sound{Kind: KindDefault}, Label: "Windows 預設"},
 		{Sound: Sound{Kind: KindBuiltin, Name: "Alarm01.wav"}, Label: "Alarm01"},
 		{Sound: Sound{Kind: KindBuiltin, Name: "Ring05.wav"}, Label: "Ring05"},
 	}
@@ -105,9 +104,41 @@ func TestService_Select_SaveError(t *testing.T) {
 	store := &fakeStore{saveErr: wantErr}
 	svc := NewService(store)
 
-	err := svc.Select(Sound{Kind: KindDefault})
+	err := svc.Select(Sound{Kind: KindNone})
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("Select() = %v, want %v", err, wantErr)
+	}
+}
+
+// TestService_Select_DefaultNotSelectable asserts KindDefault (the internal
+// SystemDefault fallback) cannot be chosen through Select.
+func TestService_Select_DefaultNotSelectable(t *testing.T) {
+	withFakeCatalog(t, nil, nil)
+	store := &fakeStore{}
+	svc := NewService(store)
+
+	err := svc.Select(Sound{Kind: KindDefault})
+	if err == nil {
+		t.Fatal("Select() = nil, want error")
+	}
+	if store.saved != 0 {
+		t.Fatalf("store.saved = %d, want 0", store.saved)
+	}
+}
+
+// TestService_Select_BuiltinCaseInsensitiveStoresCatalogCasing asserts a
+// case-insensitive builtin match persists the catalogue's own file-name
+// casing, not whatever casing the caller passed in.
+func TestService_Select_BuiltinCaseInsensitiveStoresCatalogCasing(t *testing.T) {
+	withFakeCatalog(t, []string{"Alarm01.wav"}, nil)
+	svc := NewService(&fakeStore{})
+
+	if err := svc.Select(Sound{Kind: KindBuiltin, Name: "ALARM01.WAV"}); err != nil {
+		t.Fatalf("Select() = %v, want nil", err)
+	}
+	want := Sound{Kind: KindBuiltin, Name: "Alarm01.wav"}
+	if got := svc.Selected().Sound; got != want {
+		t.Fatalf("Selected().Sound = %+v, want %+v (catalogue casing)", got, want)
 	}
 }
 
@@ -242,7 +273,7 @@ func TestService_RemoveCustom_Selected(t *testing.T) {
 	if err := svc.RemoveCustom(path); err != nil {
 		t.Fatalf("RemoveCustom() = %v, want nil", err)
 	}
-	if got, want := svc.Selected().Sound, (Sound{Kind: KindDefault}); got != want {
+	if got, want := svc.Selected().Sound, DefaultSound; got != want {
 		t.Fatalf("Selected().Sound = %+v, want %+v", got, want)
 	}
 	if _, err := os.Stat(path); err != nil {
@@ -332,7 +363,7 @@ func TestService_CustomMissing(t *testing.T) {
 	}
 
 	svc.PlaySelected()
-	want := call{target: "SystemDefault", alias: true}
+	want := call{target: filepath.Join("/media/dir", "Windows Logon.wav"), alias: false}
 	if len(*calls) != 1 || (*calls)[0] != want {
 		t.Fatalf("PlaySelected() calls = %v, want [%v]", *calls, want)
 	}
@@ -376,7 +407,7 @@ func TestNewService_SanitizesUNCFromPrefs(t *testing.T) {
 		t.Fatalf("custom Options() = %v, want [%q]", customPaths, legit)
 	}
 
-	if got, want := svc.Selected().Sound, (Sound{Kind: KindDefault}); got != want {
+	if got, want := svc.Selected().Sound, DefaultSound; got != want {
 		t.Fatalf("Selected().Sound = %+v, want %+v", got, want)
 	}
 
@@ -384,6 +415,19 @@ func TestNewService_SanitizesUNCFromPrefs(t *testing.T) {
 		if p == unc {
 			t.Fatalf("statFn was called with UNC path %q", unc)
 		}
+	}
+}
+
+// TestNewService_KindDefaultBecomesDefaultSound asserts a persisted
+// KindDefault selection (from before this Kind was removed from the UI) is
+// sanitized into DefaultSound on load.
+func TestNewService_KindDefaultBecomesDefaultSound(t *testing.T) {
+	withFakeCatalog(t, nil, nil)
+	store := &fakeStore{prefs: Prefs{Selected: Sound{Kind: KindDefault}}}
+	svc := NewService(store)
+
+	if got, want := svc.Selected().Sound, DefaultSound; got != want {
+		t.Fatalf("Selected().Sound = %+v, want %+v", got, want)
 	}
 }
 
@@ -467,7 +511,10 @@ func TestService_PlaySelected_PlayErrorFallsBackToDefault(t *testing.T) {
 
 	svc.PlaySelected()
 
-	want := []call{{target: path, alias: false}, {target: "SystemDefault", alias: true}}
+	want := []call{
+		{target: path, alias: false},
+		{target: filepath.Join("/media/dir", "Windows Logon.wav"), alias: false},
+	}
 	if len(calls) != len(want) || calls[0] != want[0] || calls[1] != want[1] {
 		t.Fatalf("PlaySelected() calls = %v, want %v", calls, want)
 	}
@@ -483,8 +530,8 @@ func TestService_AddCustom_SaveError(t *testing.T) {
 	if _, err := svc.AddCustom(path); !errors.Is(err, wantErr) {
 		t.Fatalf("AddCustom() = %v, want %v", err, wantErr)
 	}
-	if got := svc.Selected().Sound; got != (Sound{Kind: KindDefault}) {
-		t.Fatalf("Selected().Sound = %+v, want KindDefault (unchanged)", got)
+	if got := svc.Selected().Sound; got != DefaultSound {
+		t.Fatalf("Selected().Sound = %+v, want DefaultSound (unchanged)", got)
 	}
 	opts, err := svc.Options()
 	if err != nil {
@@ -610,31 +657,43 @@ func TestService_RemoveCustom_SelectedCaseInsensitive(t *testing.T) {
 	if err := svc.RemoveCustom(`c:\a.wav`); err != nil {
 		t.Fatalf("RemoveCustom() = %v, want nil", err)
 	}
-	if got, want := svc.Selected().Sound, (Sound{Kind: KindDefault}); got != want {
+	if got, want := svc.Selected().Sound, DefaultSound; got != want {
 		t.Fatalf("Selected().Sound = %+v, want %+v", got, want)
 	}
 }
 
-// TestService_PlaySelected_DefaultFailureDoesNotRetry asserts a failed play
-// of the default sound is only logged, never replayed.
+// TestService_PlaySelected_DefaultFailureDoesNotRetry asserts that when the
+// selection already is DefaultSound and it fails to play, PlaySelected goes
+// straight to the SystemDefault alias instead of replaying DefaultSound.
 func TestService_PlaySelected_DefaultFailureDoesNotRetry(t *testing.T) {
 	withFakeCatalog(t, nil, nil)
 	origPlay := playFn
+	origMediaDir := mediaDirFn
 	var calls []call
 	playFn = func(target string, alias bool) error {
 		calls = append(calls, call{target: target, alias: alias})
-		return errors.New("playsoundw failed")
+		if alias {
+			return nil // SystemDefault succeeds.
+		}
+		return errors.New("playsoundw failed") // Windows Logon.wav fails.
 	}
-	t.Cleanup(func() { playFn = origPlay })
+	mediaDirFn = func() (string, error) { return "/media/dir", nil }
+	t.Cleanup(func() {
+		playFn = origPlay
+		mediaDirFn = origMediaDir
+	})
 
-	store := &fakeStore{prefs: Prefs{Selected: Sound{Kind: KindDefault}}}
+	store := &fakeStore{prefs: Prefs{Selected: DefaultSound}}
 	svc := NewService(store)
 
 	svc.PlaySelected()
 
-	want := call{target: "SystemDefault", alias: true}
-	if len(calls) != 1 || calls[0] != want {
-		t.Fatalf("PlaySelected() calls = %v, want [%v]", calls, want)
+	want := []call{
+		{target: filepath.Join("/media/dir", "Windows Logon.wav"), alias: false},
+		{target: "SystemDefault", alias: true},
+	}
+	if len(calls) != len(want) || calls[0] != want[0] || calls[1] != want[1] {
+		t.Fatalf("PlaySelected() calls = %v, want %v", calls, want)
 	}
 }
 
@@ -697,7 +756,7 @@ func TestService_CustomBecomesRemoteAfterLoad(t *testing.T) {
 	}
 
 	svc.PlaySelected()
-	want := call{target: "SystemDefault", alias: true}
+	want := call{target: filepath.Join("/media/dir", "Windows Logon.wav"), alias: false}
 	if len(*calls) != 1 || (*calls)[0] != want {
 		t.Fatalf("PlaySelected() calls = %v, want [%v]", *calls, want)
 	}
@@ -713,8 +772,50 @@ func TestService_PlaySelected_MissingFallsBackToDefault(t *testing.T) {
 
 	svc.PlaySelected()
 
-	want := call{target: "SystemDefault", alias: true}
+	want := call{target: filepath.Join("/media/dir", "Windows Logon.wav"), alias: false}
 	if len(*calls) != 1 || (*calls)[0] != want {
 		t.Fatalf("PlaySelected() calls = %v, want [%v]", *calls, want)
+	}
+}
+
+// TestService_PlaySelected_DefaultAlsoUnplayableFallsBackToSystemDefault
+// asserts that when the selected sound is missing AND DefaultSound
+// (Windows Logon.wav) itself fails to play, PlaySelected cascades to the
+// SystemDefault alias as the final fallback.
+func TestService_PlaySelected_DefaultAlsoUnplayableFallsBackToSystemDefault(t *testing.T) {
+	withFakeCatalog(t, nil, nil)
+	withAllStatsMissing(t)
+
+	origPlay := playFn
+	origMediaDir := mediaDirFn
+	var calls []call
+	playFn = func(target string, alias bool) error {
+		calls = append(calls, call{target: target, alias: alias})
+		if alias {
+			return nil // SystemDefault succeeds.
+		}
+		return errors.New("playsoundw failed") // Windows Logon.wav also fails.
+	}
+	mediaDirFn = func() (string, error) { return "/media/dir", nil }
+	t.Cleanup(func() {
+		playFn = origPlay
+		mediaDirFn = origMediaDir
+	})
+
+	const missingPath = "/does/not/exist.wav"
+	store := &fakeStore{prefs: Prefs{
+		Selected: Sound{Kind: KindCustom, Path: missingPath},
+		Custom:   []string{missingPath},
+	}}
+	svc := NewService(store)
+
+	svc.PlaySelected()
+
+	want := []call{
+		{target: filepath.Join("/media/dir", "Windows Logon.wav"), alias: false},
+		{target: "SystemDefault", alias: true},
+	}
+	if len(calls) != len(want) || calls[0] != want[0] || calls[1] != want[1] {
+		t.Fatalf("PlaySelected() calls = %v, want %v", calls, want)
 	}
 }

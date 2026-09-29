@@ -71,17 +71,15 @@ func sanitizePrefs(p Prefs) Prefs {
 		p.Selected.Path = filepath.Clean(p.Selected.Path)
 	}
 	if !selectedValid(p.Selected, kept) {
-		p.Selected = Sound{Kind: KindDefault}
+		p.Selected = DefaultSound
 	}
 	return p
 }
 
-// selectedValid mirrors the rules Options() and resolve() apply to each
-// Kind, so a sanitized Selected always resolves to something the settings
-// page would still list.
+// Mirrors the Options() and resolve() rules, so KindDefault and anything unlisted fall through to DefaultSound.
 func selectedValid(snd Sound, custom []string) bool {
 	switch snd.Kind {
-	case KindNone, KindDefault:
+	case KindNone:
 		return true
 	case KindBuiltin:
 		return validBuiltinName(snd.Name)
@@ -96,11 +94,10 @@ func validBuiltinName(name string) bool {
 	return name != "" && !strings.ContainsAny(name, `\/`) && filepath.Base(name) == name
 }
 
-// Options lists none, Windows default, then the built-in catalogue.
+// Options lists none, then the built-in catalogue, then the custom list.
 func (s *Service) Options() ([]Option, error) {
 	opts := []Option{
 		{Sound: Sound{Kind: KindNone}, Label: "無聲"},
-		{Sound: Sound{Kind: KindDefault}, Label: "Windows 預設"},
 	}
 	names, err := listBuiltinFn()
 	if err != nil {
@@ -155,11 +152,12 @@ func (s *Service) Select(snd Sound) error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.checkSelectableLocked(snd, builtinNames); err != nil {
+	canonical, err := s.checkSelectableLocked(snd, builtinNames)
+	if err != nil {
 		return err
 	}
 	next := s.prefs
-	next.Selected = snd
+	next.Selected = canonical
 	if err := s.store.SavePrefs(next); err != nil {
 		return err
 	}
@@ -176,24 +174,27 @@ func checkKindValid(snd Sound) error {
 }
 
 // Callers must hold s.mu.
-func (s *Service) checkSelectableLocked(snd Sound, builtinNames []string) error {
+func (s *Service) checkSelectableLocked(snd Sound, builtinNames []string) (Sound, error) {
 	switch snd.Kind {
-	case KindNone, KindDefault:
-		return nil
+	case KindNone:
+		return snd, nil
+	case KindDefault:
+		return Sound{}, errNotSelectable(snd)
 	case KindBuiltin:
 		for _, name := range builtinNames {
-			if name == snd.Name {
-				return nil
+			if strings.EqualFold(name, snd.Name) {
+				snd.Name = name
+				return snd, nil
 			}
 		}
-		return errNotSelectable(snd)
+		return Sound{}, errNotSelectable(snd)
 	case KindCustom:
 		if containsPathFold(s.prefs.Custom, snd.Path) {
-			return nil
+			return snd, nil
 		}
-		return errNotSelectable(snd)
+		return Sound{}, errNotSelectable(snd)
 	}
-	return errUnknownKind(snd.Kind)
+	return Sound{}, errUnknownKind(snd.Kind)
 }
 
 // AddCustom validates path as a WAV, adds it to the custom list (deduping by absolute path), and selects it as the current sound.
@@ -223,7 +224,7 @@ func (s *Service) AddCustom(path string) (Sound, error) {
 	return next.Selected, nil
 }
 
-// RemoveCustom drops path from the custom list without touching the file on disk, falling the selection back to KindDefault if path was selected.
+// RemoveCustom drops path from the custom list without touching the file on disk, falling the selection back to DefaultSound if path was selected.
 func (s *Service) RemoveCustom(path string) error {
 	clean := filepath.Clean(path)
 	s.mu.Lock()
@@ -231,7 +232,7 @@ func (s *Service) RemoveCustom(path string) error {
 	next := s.prefs
 	next.Custom = removePathFold(next.Custom, clean)
 	if next.Selected.Kind == KindCustom && strings.EqualFold(next.Selected.Path, clean) {
-		next.Selected = Sound{Kind: KindDefault}
+		next.Selected = DefaultSound
 	}
 	if err := s.store.SavePrefs(next); err != nil {
 		return err
@@ -261,24 +262,33 @@ func (s *Service) Preview(snd Sound) error {
 	return Play(snd)
 }
 
-// PlaySelected plays the current selection, falling back to KindDefault when
-// it is missing or when playback itself fails (a play failure on the
-// default is only logged, not retried).
+// PlaySelected falls back to DefaultSound and then to the SystemDefault alias, never replaying the same target.
 func (s *Service) PlaySelected() {
 	sel := s.Selected()
 	target := sel.Sound
 	if sel.Missing {
 		slog.Warn("alertsound: selected sound missing, falling back to default", "sound", sel.Sound)
-		target = Sound{Kind: KindDefault}
+		target = DefaultSound
 	}
-	if err := Play(target); err != nil {
-		slog.Warn("alertsound: play failed, falling back to default", "sound", target, "err", err)
-		if target.Kind == KindDefault {
-			return
-		}
-		if err := Play(Sound{Kind: KindDefault}); err != nil {
-			slog.Warn("alertsound: default play failed", "err", err)
-		}
+	err := Play(target)
+	if err == nil {
+		return
+	}
+	slog.Warn("alertsound: play failed, falling back to default", "sound", target, "err", err)
+	if target == DefaultSound {
+		playSystemDefault()
+		return
+	}
+	if err := Play(DefaultSound); err != nil {
+		slog.Warn("alertsound: default play failed, falling back to system default", "err", err)
+		playSystemDefault()
+	}
+}
+
+// playSystemDefault is the last-resort fallback after DefaultSound also fails.
+func playSystemDefault() {
+	if err := Play(Sound{Kind: KindDefault}); err != nil {
+		slog.Warn("alertsound: system default play failed", "err", err)
 	}
 }
 

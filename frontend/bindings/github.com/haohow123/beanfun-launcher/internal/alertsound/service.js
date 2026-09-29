@@ -30,7 +30,7 @@ export function AddCustom(path) {
 }
 
 /**
- * Options lists none, Windows default, then the built-in catalogue.
+ * Options lists none, then the built-in catalogue, then the custom list.
  * @returns {$CancellablePromise<$models.Option[]>}
  */
 export function Options() {
@@ -40,9 +40,7 @@ export function Options() {
 }
 
 /**
- * PlaySelected plays the current selection, falling back to KindDefault when
- * it is missing or when playback itself fails (a play failure on the
- * default is only logged, not retried).
+ * PlaySelected falls back to DefaultSound and then to the SystemDefault alias, never replaying the same target.
  * @returns {$CancellablePromise<void>}
  */
 export function PlaySelected() {
@@ -59,7 +57,7 @@ export function Preview(snd) {
 }
 
 /**
- * RemoveCustom drops path from the custom list without touching the file on disk, falling the selection back to KindDefault if path was selected.
+ * RemoveCustom drops path from the custom list without touching the file on disk, falling the selection back to DefaultSound if path was selected.
  * @param {string} path
  * @returns {$CancellablePromise<void>}
  */

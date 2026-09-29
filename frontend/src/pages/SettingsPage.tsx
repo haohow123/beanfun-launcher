@@ -19,13 +19,8 @@ import {
 } from "@/queries/alertSound";
 import { settingsOpenAtom } from "@/state/settings";
 
-// windowsBuiltinOptions groups the Windows 預設 alias with the *.wav catalogue
-// under one "Windows 內建" heading; noneOption and customOptions are the
-// other two groups in the list.
-function windowsBuiltinOptions(options: Option[]): Option[] {
-  return options.filter(
-    (o) => o.sound.kind === "default" || o.sound.kind === "builtin",
-  );
+function builtinOptions(options: Option[]): Option[] {
+  return options.filter((o) => o.sound.kind === "builtin");
 }
 
 function customOptions(options: Option[]): Option[] {
@@ -163,7 +158,7 @@ export function SettingsPage() {
       );
     }
     const none = noneOption(options.data);
-    const builtins = windowsBuiltinOptions(options.data);
+    const builtins = builtinOptions(options.data);
     const customs = customOptions(options.data);
     return (
       <div role="radiogroup" aria-labelledby={GROUP_HEADING_ID}>

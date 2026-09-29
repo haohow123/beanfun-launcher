@@ -19,6 +19,9 @@ func TestFile_Load_MissingFile(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Load() = %+v, want %+v", got, want)
 	}
+	if got.AlertSound.Selected != alertsound.DefaultSound {
+		t.Fatalf("Load().AlertSound.Selected = %+v, want %+v", got.AlertSound.Selected, alertsound.DefaultSound)
+	}
 }
 
 func TestFile_SaveLoad_RoundTrip(t *testing.T) {

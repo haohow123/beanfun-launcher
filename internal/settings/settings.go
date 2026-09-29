@@ -30,7 +30,7 @@ type Settings struct {
 
 // Defaults is the Settings used when no file exists or it can't be read.
 func Defaults() Settings {
-	return Settings{AlertSound: alertsound.Prefs{Selected: alertsound.Sound{Kind: alertsound.KindDefault}}}
+	return Settings{AlertSound: alertsound.Prefs{Selected: alertsound.DefaultSound}}
 }
 
 // isValidKind rejects a settings file naming a Kind the current binary
