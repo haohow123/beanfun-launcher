@@ -30,6 +30,15 @@ export function AddCustom(path) {
 }
 
 /**
+ * Wails' Windows file dialog reports its own failures as a cancel, so a cancel is logged rather than trusted.
+ * @param {string} detail
+ * @returns {$CancellablePromise<void>}
+ */
+export function NoteDialogCancelled(detail) {
+    return $Call.ByID(1967121955, detail);
+}
+
+/**
  * Options lists none, then the built-in catalogue, then the custom list.
  * @returns {$CancellablePromise<$models.Option[]>}
  */

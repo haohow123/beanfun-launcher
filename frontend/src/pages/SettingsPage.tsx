@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { friendlyError, isDialogCancelled } from "@/lib/errors";
 import {
+  noteDialogCancelled,
   sameSound,
   useAddCustomAlertSoundMutation,
   useAlertSoundOptionsQuery,
@@ -73,10 +74,18 @@ export function SettingsPage() {
         Filters: [{ DisplayName: "WAV 音檔 (*.wav)", Pattern: "*.wav" }],
       });
     } catch (err) {
-      if (!isDialogCancelled(err)) setLastError(friendlyError(err));
+      if (isDialogCancelled(err)) {
+        noteDialogCancelled(err instanceof Error ? err.message : String(err));
+        return;
+      }
+      setLastError(friendlyError(err));
       return;
     }
-    if (!path) return; // macOS reports cancellation as an empty path, not a rejection.
+    // macOS reports cancellation as an empty path, not a rejection.
+    if (!path) {
+      noteDialogCancelled("empty path");
+      return;
+    }
     addCustomMutation.mutate(path);
   }
 
