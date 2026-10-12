@@ -1,0 +1,22 @@
+name: Wails version watch
+
+on:
+  schedule:
+    # Mondays 09:00 Asia/Taipei.
+    - cron: "0 1 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  watch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Open or update the Wails upgrade issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/wails-version-watch.sh
