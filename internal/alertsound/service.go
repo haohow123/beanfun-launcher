@@ -259,6 +259,11 @@ func (s *Service) Preview(snd Sound) error {
 	return Play(snd)
 }
 
+// Wails' Windows file dialog reports its own failures as a cancel, so a cancel is logged rather than trusted.
+func (s *Service) NoteDialogCancelled(detail string) {
+	slog.Info("alertsound: file dialog closed without a selection", "detail", detail)
+}
+
 // PlaySelected falls back to DefaultSound and then to the SystemDefault alias, never replaying the same target.
 func (s *Service) PlaySelected() {
 	sel := s.Selected()
