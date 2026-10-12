@@ -44,6 +44,12 @@ if [ -n "$existing" ]; then
     echo "#$number already targets $go_latest"
     exit 0
   fi
+  # The title keeps the version it was opened with, so an earlier comment is what records a newer one.
+  comments=$(gh issue view "$number" --json comments --jq '[.comments[].body] | join("\n")')
+  if [[ "$comments" == *"${go_latest#v}"* ]]; then
+    echo "#$number already mentions $go_latest in a comment"
+    exit 0
+  fi
   run gh issue comment "$number" --body "Wails 又出新版了：\`$go_latest\`（\`go.mod\` 目前是 \`$current\`）。$npm_note 升級時請以最新版為目標。"
   exit 0
 fi
