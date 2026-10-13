@@ -37,6 +37,8 @@ func withFakePlayer(t *testing.T, dir string) *[]call {
 func TestPlay(t *testing.T) {
 	const dir = "/media/dir"
 	withFakeLstat(t, func(string) (os.FileInfo, error) { return fakeFileInfo{}, nil })
+	// A host-native absolute path: a Unix one is rejected by the Windows local-path rule.
+	customPath := filepath.Join(t.TempDir(), "ding.wav")
 
 	tests := []struct {
 		name    string
@@ -50,7 +52,7 @@ func TestPlay(t *testing.T) {
 		{name: "builtin path traversal", sound: Sound{Kind: KindBuiltin, Name: "../x.wav"}, wantErr: true},
 		{name: "builtin embedded separator", sound: Sound{Kind: KindBuiltin, Name: `a\b.wav`}, wantErr: true},
 		{name: "builtin empty name", sound: Sound{Kind: KindBuiltin, Name: ""}, wantErr: true},
-		{name: "custom", sound: Sound{Kind: KindCustom, Path: "/u/ding.wav"}, want: &call{target: "/u/ding.wav", alias: false}},
+		{name: "custom", sound: Sound{Kind: KindCustom, Path: customPath}, want: &call{target: customPath, alias: false}},
 		{name: "unknown kind", sound: Sound{Kind: "bogus"}, wantErr: true},
 	}
 

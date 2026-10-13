@@ -382,7 +382,7 @@ func TestService_CustomSymlink_Missing(t *testing.T) {
 func TestService_CustomMissing(t *testing.T) {
 	withFakeCatalog(t, nil, nil)
 	calls := withFakePlayer(t, "/media/dir")
-	const missingPath = "/does/not/exist.wav"
+	missingPath := filepath.Join(t.TempDir(), "does-not-exist.wav")
 	store := &fakeStore{prefs: Prefs{
 		Selected: Sound{Kind: KindCustom, Path: missingPath},
 		Custom:   []string{missingPath},
