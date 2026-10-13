@@ -1,13 +1,18 @@
 import { Dialogs } from "@wailsio/runtime";
 import { useSetAtom } from "jotai";
 import { Play, Plus, TriangleAlert, X } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { type FocusEvent, type ReactNode, useRef, useState } from "react";
 
 import { type Option, type Sound } from "@bindings/alertsound";
 import { AppShell } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { friendlyError, isDialogCancelled } from "@/lib/errors";
+import {
+  friendlyError,
+  friendlyGameCheckProblem,
+  friendlyGameCheckWarning,
+  isDialogCancelled,
+} from "@/lib/errors";
 import {
   noteDialogCancelled,
   sameSound,
@@ -18,6 +23,11 @@ import {
   useRemoveCustomAlertSoundMutation,
   useSelectAlertSoundMutation,
 } from "@/queries/alertSound";
+import {
+  useGamePathQuery,
+  useSetGamePathMutation,
+  useTestGamePathMutation,
+} from "@/queries/gamePath";
 import { settingsOpenAtom } from "@/state/settings";
 
 // GROUP_HEADING_ID links the radiogroup wrapper to the visible h2 heading it names.
@@ -43,7 +53,30 @@ export function SettingsPage() {
   const addCustomMutation = useAddCustomAlertSoundMutation({ onError: onMutationError });
   const removeCustomMutation = useRemoveCustomAlertSoundMutation({ onError: onMutationError });
 
-  function goBack() {
+  const gamePath = useGamePathQuery();
+  const gamePathSectionRef = useRef<HTMLElement>(null);
+  const [gamePathInput, setGamePathInput] = useState<string>();
+  const [gamePathError, setGamePathError] = useState<string>();
+  const savedGamePath = gamePath.data?.setting ?? "";
+  const gamePathValue = gamePathInput ?? savedGamePath;
+  const isEnvGamePath = gamePath.data?.source === "env";
+  const onGamePathError = (err: unknown) => setGamePathError(friendlyError(err));
+  const setGamePathMutation = useSetGamePathMutation({ onError: onGamePathError });
+  const testGamePathMutation = useTestGamePathMutation();
+
+  // Flushes a pending edit before navigating away so a save failure surfaces here, not after unmount.
+  async function goBack() {
+    const trimmed = gamePathValue.trim();
+    if (trimmed !== savedGamePath) {
+      setGamePathError(undefined);
+      try {
+        await setGamePathMutation.mutateAsync(trimmed);
+        setGamePathInput(undefined);
+      } catch (err) {
+        setGamePathError(friendlyError(err));
+        return;
+      }
+    }
     setSettingsOpen(false);
   }
 
@@ -87,6 +120,69 @@ export function SettingsPage() {
       return;
     }
     addCustomMutation.mutate(path);
+  }
+
+  function saveGamePath(path: string) {
+    setGamePathError(undefined);
+    setGamePathMutation.mutate(path, { onSuccess: () => setGamePathInput(undefined) });
+  }
+
+  // Skips the auto-save when focus is moving to one of this section's own buttons, so their click isn't swallowed by the save disabling them mid-click.
+  function handleGamePathBlur(e: FocusEvent<HTMLInputElement>) {
+    const trimmed = gamePathValue.trim();
+    if (trimmed === savedGamePath) return;
+    const next = e.relatedTarget;
+    if (next instanceof Node && gamePathSectionRef.current?.contains(next)) return;
+    saveGamePath(trimmed);
+  }
+
+  function handleRestoreGamePath() {
+    setGamePathInput(undefined);
+    setGamePathError(undefined);
+    testGamePathMutation.reset();
+  }
+
+  function handleClearGamePath() {
+    testGamePathMutation.reset();
+    setGamePathInput("");
+    saveGamePath("");
+  }
+
+  // Under an env override the input is disabled and may hold a stale setting value, so testing always asks the backend for the effective path instead.
+  function handleTestGamePath() {
+    testGamePathMutation.mutate(isEnvGamePath ? "" : gamePathValue.trim());
+  }
+
+  async function handleBrowseGamePath() {
+    setGamePathError(undefined);
+    testGamePathMutation.reset();
+    let path: string;
+    try {
+      path = await Dialogs.OpenFile({
+        Title: "選擇 MapleStory.exe",
+        CanChooseFiles: true,
+        CanChooseDirectories: false,
+        AllowsMultipleSelection: false,
+        Filters: [
+          { DisplayName: "MapleStory.exe", Pattern: "MapleStory.exe" },
+          { DisplayName: "執行檔 (*.exe)", Pattern: "*.exe" },
+        ],
+      });
+    } catch (err) {
+      if (isDialogCancelled(err)) {
+        noteDialogCancelled(err instanceof Error ? err.message : String(err));
+        return;
+      }
+      setGamePathError(friendlyError(err));
+      return;
+    }
+    // macOS reports cancellation as an empty path, not a rejection.
+    if (!path) {
+      noteDialogCancelled("empty path");
+      return;
+    }
+    setGamePathInput(path);
+    saveGamePath(path);
   }
 
   function isChecked(snd: Sound): boolean {
@@ -180,6 +276,70 @@ export function SettingsPage() {
     );
   }
 
+  // Under an env override the browse button is disabled, so the placeholder must not tell the user to click it.
+  function gamePathPlaceholder(): string {
+    if (isEnvGamePath) return "";
+    if (gamePath.data?.detected) return gamePath.data.detected;
+    return "找不到遊戲，請按瀏覽選擇 MapleStory.exe";
+  }
+
+  // envGamePathInvalidMessage is the shared copy for an env-overridden game path that fails checkGameExe, used by both the test result and the effective-path hint.
+  function envGamePathInvalidMessage(): string {
+    return "環境變數 BEANFUN_GAME_EXE 指定的路徑無效";
+  }
+
+  function renderGamePathTestResult() {
+    const result = testGamePathMutation.data;
+    if (!result) return null;
+    if (result.ok) {
+      return (
+        <div className="flex flex-col gap-0.5 text-xs">
+          <p className="text-emerald-600">✓ 找到遊戲：{result.path}</p>
+          {result.warnings?.map((w) => (
+            <p key={w} className="text-amber-600">
+              ⚠ {friendlyGameCheckWarning(w)}
+            </p>
+          ))}
+        </div>
+      );
+    }
+    if (isEnvGamePath) {
+      return <p className="text-xs text-destructive">{envGamePathInvalidMessage()}</p>;
+    }
+    return (
+      <p className="text-xs text-destructive">{friendlyGameCheckProblem(result.problem ?? "")}</p>
+    );
+  }
+
+  // Under an env override the browse button is disabled, so this must not tell the user to click it — the env notice above already names the offending path.
+  function renderGamePathEffectiveHint() {
+    if (!gamePath.data || gamePath.data.check.ok) return null;
+    if (isEnvGamePath) {
+      return (
+        <p className="flex items-center gap-1 text-xs text-amber-600">
+          <TriangleAlert className="size-3.5" />
+          {envGamePathInvalidMessage()}
+        </p>
+      );
+    }
+    return (
+      <p className="flex items-center gap-1 text-xs text-amber-600">
+        <TriangleAlert className="size-3.5" />
+        {friendlyGameCheckProblem(gamePath.data.check.problem ?? "")}
+      </p>
+    );
+  }
+
+  function renderGamePathEnvNotice() {
+    if (!isEnvGamePath) return null;
+    return (
+      <p className="flex items-center gap-1 text-xs text-amber-600">
+        <TriangleAlert className="size-3.5" />
+        目前由環境變數 BEANFUN_GAME_EXE 指定：{gamePath.data?.effective}，這裡的設定不會生效
+      </p>
+    );
+  }
+
   return (
     <AppShell mainClassName="flex-col items-stretch p-0">
       <div className="flex items-center gap-2 border-b p-4">
@@ -188,6 +348,75 @@ export function SettingsPage() {
         </Button>
         <h1 className="text-base font-semibold">設定</h1>
       </div>
+
+      <section ref={gamePathSectionRef} className="flex flex-col gap-2 border-b p-4">
+        <div>
+          <h2 className="text-sm font-medium">遊戲位置</h2>
+          <p className="text-xs text-muted-foreground">
+            自訂 MapleStory.exe 的位置，留空則自動偵測
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <input
+            type="text"
+            aria-label="遊戲執行檔路徑"
+            className="h-7 flex-1 rounded-md border border-border bg-background px-2 text-sm placeholder:text-muted-foreground dark:border-input dark:bg-input/30"
+            value={gamePathValue}
+            placeholder={gamePathPlaceholder()}
+            disabled={isEnvGamePath}
+            onChange={(e) => {
+              testGamePathMutation.reset();
+              setGamePathInput(e.target.value);
+            }}
+            onBlur={handleGamePathBlur}
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={isEnvGamePath || setGamePathMutation.isPending}
+            onClick={handleBrowseGamePath}
+          >
+            瀏覽…
+          </Button>
+          {savedGamePath && (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={isEnvGamePath || setGamePathMutation.isPending}
+              onClick={handleClearGamePath}
+            >
+              清除
+            </Button>
+          )}
+        </div>
+
+        {renderGamePathEnvNotice()}
+
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={testGamePathMutation.isPending || setGamePathMutation.isPending}
+            onClick={handleTestGamePath}
+          >
+            {testGamePathMutation.isPending ? "測試中…" : "測試"}
+          </Button>
+          <div aria-live="polite">{renderGamePathTestResult()}</div>
+        </div>
+
+        {gamePathError && (
+          <div className="flex items-center gap-2">
+            <p className="text-xs text-destructive">{gamePathError}</p>
+            {gamePathInput !== undefined && (
+              <Button variant="ghost" size="sm" onClick={handleRestoreGamePath}>
+                還原
+              </Button>
+            )}
+          </div>
+        )}
+        {renderGamePathEffectiveHint()}
+      </section>
 
       <section className="flex flex-col gap-2 p-4">
         <div>

@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/haohow123/beanfun-launcher/internal/beanfun"
 	"github.com/haohow123/beanfun-launcher/internal/bgtask"
+	"github.com/haohow123/beanfun-launcher/internal/localpath"
 )
 
 // gameExeEnvVar is the override env var for the game executable
@@ -84,6 +87,30 @@ type GameState struct {
 // backstop if the FE somehow calls SpawnGame anyway.
 var errGameAlreadyRunning = errors.New("game already running; use Launch to inject into the existing window")
 
+// errNoGamePathStore guards SetGamePath against a nil store.
+var errNoGamePathStore = errors.New("launcher: game path store not configured")
+
+// GamePathStore persists the user-configured game executable path across launches.
+type GamePathStore interface {
+	LoadGameExePath() string
+	SaveGameExePath(string) error
+}
+
+// loginSnapshotter is the minimal *beanfun.LoginService surface Spawn*/Launch/GetOTP need to fake a session in tests.
+type loginSnapshotter interface {
+	Snapshot() (*beanfun.BeanfunClient, *beanfun.Session)
+	Reset()
+}
+
+// GamePathInfo is the settings page's snapshot: the raw setting, the registry's detection, the effective path, and whether it passes checkGameExe.
+type GamePathInfo struct {
+	Setting   string         `json:"setting"`
+	Detected  string         `json:"detected"`
+	Effective string         `json:"effective"`
+	Source    GamePathSource `json:"source"`
+	Check     GameCheck      `json:"check"`
+}
+
 // LauncherService is the Wails-bound facade for "click an account →
 // game launches with credentials filled". Three flows:
 //
@@ -109,21 +136,15 @@ var errGameAlreadyRunning = errors.New("game already running; use Launch to inje
 // asynchronously via the gameStateChangedEvent Wails event.
 type LauncherService struct {
 	mu          sync.Mutex
-	login       *beanfun.LoginService
+	login       loginSnapshotter
 	mgr         *bgtask.Manager
+	store       GamePathStore
 	lastUsedSID string
 }
 
-// NewLauncherService wires the service and, if a game window already
-// exists at startup, attaches the exit watcher to it. This handles
-// the launcher-restart-while-game-running case so closing the game
-// later still produces a clean state-changed event. The watcher's
-// emit is a no-op until application.New() runs (see
-// watcher_emit_windows.go's init), so this early registration is
-// safe: the watcher will block on WaitForSingleObject until the
-// game exits, then emit once the Wails app is live.
-func NewLauncherService(login *beanfun.LoginService, mgr *bgtask.Manager) *LauncherService {
-	s := &LauncherService{login: login, mgr: mgr}
+// NewLauncherService wires the service, attaching the exit watcher to any game window already running at startup (so a launcher restart while the game is running still produces a clean state-changed event), and treats a nil store as "no settings-page path configured".
+func NewLauncherService(login loginSnapshotter, mgr *bgtask.Manager, store GamePathStore) *LauncherService {
+	s := &LauncherService{login: login, mgr: mgr, store: store}
 	if hwnd := findGameWindowFn(); hwnd != 0 {
 		slog.Info("launcher: game already running at startup, attaching watcher",
 			"hwnd", hwnd)
@@ -156,6 +177,79 @@ func (s *LauncherService) setLastUsedSID(sid string) {
 	s.mu.Unlock()
 }
 
+// settingPath reads the persisted settings-page game path, treating a nil
+// store (as used by tests that skip this feature) as unconfigured.
+func (s *LauncherService) settingPath() string {
+	if s.store == nil {
+		return ""
+	}
+	return s.store.LoadGameExePath()
+}
+
+// GamePath is the settings page's source for the game-path section: the raw
+// setting, the registry's current detection regardless of the setting (for
+// the input's placeholder), which one is actually in effect, and whether
+// that effective path passes checkGameExe.
+func (s *LauncherService) GamePath() GamePathInfo {
+	setting := s.settingPath()
+	detected, _ := readGameExeFromRegistryFn()
+	effective, source := resolveGameExe(setting)
+	return GamePathInfo{
+		Setting:   setting,
+		Detected:  detected,
+		Effective: effective,
+		Source:    source,
+		Check:     checkGameExe(effective),
+	}
+}
+
+// SetGamePath validates and persists the settings-page path without
+// requiring the file to exist yet, since the settings page's test button
+// and the pre-launch guard are what surface a missing file.
+func (s *LauncherService) SetGamePath(p string) error {
+	p = normalizeGamePath(p)
+	if p == "" {
+		return s.saveGamePath("")
+	}
+	if err := localpath.Check(p); err != nil {
+		return err
+	}
+	if !strings.EqualFold(filepath.Ext(p), ".exe") {
+		return ErrGamePathNotExe()
+	}
+	return s.saveGamePath(filepath.Clean(p))
+}
+
+func (s *LauncherService) saveGamePath(p string) error {
+	if s.store == nil {
+		return errNoGamePathStore
+	}
+	return s.store.SaveGameExePath(p)
+}
+
+// TestGamePath runs checkGameExe against p (or, when empty, the currently
+// effective path) — the exact check Spawn* runs — so the settings page's
+// test button reports precisely what a real launch would see.
+func (s *LauncherService) TestGamePath(p string) GameCheck {
+	p = normalizeGamePath(p)
+	if p == "" {
+		p, _ = resolveGameExe(s.settingPath())
+	}
+	return checkGameExe(p)
+}
+
+// resolveCheckedGameExe is Spawn*'s shared pre-launch guard, run before
+// findGameWindowFn or spawnFn and factored out so a test can exercise it
+// without a live login session (which would otherwise short-circuit first).
+func (s *LauncherService) resolveCheckedGameExe() (gameExe string, warnings []string, gameErr *LauncherError) {
+	gameExe, _ = resolveGameExe(s.settingPath())
+	check := checkGameExe(gameExe)
+	if !check.OK {
+		return "", nil, errFromGameCheck(check)
+	}
+	return gameExe, check.Warnings, nil
+}
+
 // SpawnGame fetches an OTP for the given account and spawns
 // MapleStory.exe with the canonical 5-arg positional argv that
 // triggers Gamania's auto-login path. Game.exe takes the OTP from
@@ -176,8 +270,9 @@ func (s *LauncherService) setLastUsedSID(sid string) {
 //     re-login.
 //   - errGameAlreadyRunning: defensive — FE should route to Launch
 //     when GameState.Running is true. Surface error directly.
-//   - resolveGameExe errors: registry value missing or override env
-//     var unset. Surface error directly.
+//   - checkGameExe failures (KindGameExeMissing / KindGamePathInvalid):
+//     no resolvable source, or the resolved path doesn't check out,
+//     surfaced directly with the FE offering the settings page.
 //   - spawn / FetchOTP errors: real failures. Surface error directly.
 //
 // The OTP byte slice is zeroed via defer before this method returns,
@@ -194,9 +289,12 @@ func (s *LauncherService) SpawnGame(account beanfun.Account) error {
 		return beanfun.ErrLoginRequired()
 	}
 
-	gameExe, err := resolveGameExe()
-	if err != nil {
-		return err
+	gameExe, warnings, gameErr := s.resolveCheckedGameExe()
+	if gameErr != nil {
+		return gameErr
+	}
+	for _, w := range warnings {
+		slog.Warn("SpawnGame: game check warning", "warning", w, "exe", gameExe)
 	}
 
 	if hwnd := findGameWindowFn(); hwnd != 0 {
@@ -301,9 +399,12 @@ func (s *LauncherService) SpawnGameClean() error {
 		return beanfun.ErrLoginRequired()
 	}
 
-	gameExe, err := resolveGameExe()
-	if err != nil {
-		return err
+	gameExe, warnings, gameErr := s.resolveCheckedGameExe()
+	if gameErr != nil {
+		return gameErr
+	}
+	for _, w := range warnings {
+		slog.Warn("SpawnGameClean: game check warning", "warning", w, "exe", gameExe)
 	}
 
 	if hwnd := findGameWindowFn(); hwnd != 0 {

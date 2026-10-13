@@ -1,12 +1,12 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useSetAtom } from "jotai";
-import { useState } from "react";
+import { useAtom, useSetAtom } from "jotai";
+import { useEffect, useRef, useState } from "react";
 
 import { type Account } from "@bindings/beanfun";
 import { AppShell } from "@/components/layout/AppShell";
 import { Hero } from "@/components/layout/Hero";
 import { Button } from "@/components/ui/button";
-import { friendlyError } from "@/lib/errors";
+import { friendlyError, isGamePathError } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 import { useAccountsQuery } from "@/queries/accounts";
 import { useGameStateQuery } from "@/queries/gameState";
@@ -16,6 +16,7 @@ import {
   useSpawnGameCleanMutation,
 } from "@/queries/launch";
 import { loggedInAtom } from "@/state/auth";
+import { settingsOpenAtom } from "@/state/settings";
 
 interface FallbackOTP {
   sid: string;
@@ -58,6 +59,7 @@ function statusPillFor(
 
 export function HomePage() {
   const setLoggedIn = useSetAtom(loggedInAtom);
+  const [settingsOpen, setSettingsOpen] = useAtom(settingsOpenAtom);
   const qc = useQueryClient();
   const accounts = useAccountsQuery();
   const gameState = useGameStateQuery();
@@ -66,6 +68,16 @@ export function HomePage() {
   const fetchOTP = useFetchOTPMutation();
   const [copiedSid, setCopiedSid] = useState<string | null>(null);
   const [fallbackOTP, setFallbackOTP] = useState<FallbackOTP | null>(null);
+
+  // Clears an errored mutation on settings close, but skips a still-pending one so its mutate()-scoped callbacks stay attached.
+  const wasSettingsOpenRef = useRef(settingsOpen);
+  useEffect(() => {
+    if (wasSettingsOpenRef.current && !settingsOpen) {
+      if (launchAccount.isError) launchAccount.reset();
+      if (spawnGameClean.isError) spawnGameClean.reset();
+    }
+    wasSettingsOpenRef.current = settingsOpen;
+  }, [settingsOpen, launchAccount, spawnGameClean]);
 
   const isGameRunning = gameState.data?.running ?? false;
   const lastUsedSid = gameState.data?.lastUsedSid ?? "";
@@ -96,6 +108,20 @@ export function HomePage() {
   function friendlyMutationError(err: unknown): string | undefined {
     if (!(err instanceof Error)) return undefined;
     return friendlyError(err);
+  }
+
+  function goToSettings() {
+    setSettingsOpen(true);
+  }
+
+  // Shared by both launch entry points: a missing game path can only be fixed on the settings page.
+  function renderGoToSettings(err: unknown) {
+    if (!isGamePathError(err)) return null;
+    return (
+      <Button variant="outline" size="sm" className="mt-2" onClick={goToSettings}>
+        前往設定
+      </Button>
+    );
   }
 
   function markCopied(sid: string) {
@@ -223,9 +249,12 @@ export function HomePage() {
         </div>
 
         {errorText && (
-          <p className="mt-2 break-words text-xs text-destructive">
-            {errorText}
-          </p>
+          <>
+            <p className="mt-2 break-words text-xs text-destructive">
+              {errorText}
+            </p>
+            {renderGoToSettings(launchAccount.error)}
+          </>
         )}
 
         {fallback && (
@@ -334,12 +363,23 @@ export function HomePage() {
           so the button stays operable without leaving the user with
           stale-UI dead time after a game closes. */}
       <section className="flex flex-1 flex-col gap-3 px-4 pb-4 pt-2">
-        <Button
-          disabled={spawnGameClean.isPending || gameState.isPending}
-          onClick={cleanSpawn}
-        >
-          {spawnGameClean.isPending ? "啟動中…" : "啟動(可切換帳號)"}
-        </Button>
+        <div className="flex flex-col gap-1">
+          <Button
+            disabled={spawnGameClean.isPending || gameState.isPending}
+            onClick={cleanSpawn}
+          >
+            {spawnGameClean.isPending ? "啟動中…" : "啟動(可切換帳號)"}
+          </Button>
+
+          {spawnGameClean.isError && (
+            <>
+              <p className="break-words text-xs text-destructive">
+                {friendlyError(spawnGameClean.error)}
+              </p>
+              {renderGoToSettings(spawnGameClean.error)}
+            </>
+          )}
+        </div>
 
         <p className="mt-1 text-xs font-medium text-muted-foreground">分帳</p>
         {renderAccounts()}

@@ -42,6 +42,19 @@ import * as beanfun$0 from "../beanfun/models.js";
 import * as $models from "./models.js";
 
 /**
+ * GamePath is the settings page's source for the game-path section: the raw
+ * setting, the registry's current detection regardless of the setting (for
+ * the input's placeholder), which one is actually in effect, and whether
+ * that effective path passes checkGameExe.
+ * @returns {$CancellablePromise<$models.GamePathInfo>}
+ */
+export function GamePath() {
+    return $Call.ByID(294520874).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType0($result);
+    }));
+}
+
+/**
  * GetGameState is the initial-state RPC the FE's useGameStateQuery
  * calls on mount, plus the refetchOnWindowFocus refresh. Subsequent
  * updates arrive via the gameStateChangedEvent push event; this
@@ -51,7 +64,7 @@ import * as $models from "./models.js";
  */
 export function GetGameState() {
     return $Call.ByID(4183131696).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType0($result);
+        return $$createType1($result);
     }));
 }
 
@@ -101,7 +114,7 @@ export function GetOTP(account) {
  */
 export function Launch(account) {
     return $Call.ByID(1857854220, account).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType1($result);
+        return $$createType2($result);
     }));
 }
 
@@ -132,8 +145,19 @@ export function Launch(account) {
  */
 export function LaunchAccount(account) {
     return $Call.ByID(1629860675, account).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType1($result);
+        return $$createType2($result);
     }));
+}
+
+/**
+ * SetGamePath validates and persists the settings-page path without
+ * requiring the file to exist yet, since the settings page's test button
+ * and the pre-launch guard are what surface a missing file.
+ * @param {string} p
+ * @returns {$CancellablePromise<void>}
+ */
+export function SetGamePath(p) {
+    return $Call.ByID(3694399324, p);
 }
 
 /**
@@ -157,8 +181,9 @@ export function LaunchAccount(account) {
  *     re-login.
  *   - errGameAlreadyRunning: defensive — FE should route to Launch
  *     when GameState.Running is true. Surface error directly.
- *   - resolveGameExe errors: registry value missing or override env
- *     var unset. Surface error directly.
+ *   - checkGameExe failures (KindGameExeMissing / KindGamePathInvalid):
+ *     no resolvable source, or the resolved path doesn't check out,
+ *     surfaced directly with the FE offering the settings page.
  *   - spawn / FetchOTP errors: real failures. Surface error directly.
  * 
  * The OTP byte slice is zeroed via defer before this method returns,
@@ -202,6 +227,21 @@ export function SpawnGameClean() {
     return $Call.ByID(320029797);
 }
 
+/**
+ * TestGamePath runs checkGameExe against p (or, when empty, the currently
+ * effective path) — the exact check Spawn* runs — so the settings page's
+ * test button reports precisely what a real launch would see.
+ * @param {string} p
+ * @returns {$CancellablePromise<$models.GameCheck>}
+ */
+export function TestGamePath(p) {
+    return $Call.ByID(3045884766, p).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType3($result);
+    }));
+}
+
 // Private type creation functions
-const $$createType0 = $models.GameState.createFrom;
-const $$createType1 = $models.LaunchResult.createFrom;
+const $$createType0 = $models.GamePathInfo.createFrom;
+const $$createType1 = $models.GameState.createFrom;
+const $$createType2 = $models.LaunchResult.createFrom;
+const $$createType3 = $models.GameCheck.createFrom;

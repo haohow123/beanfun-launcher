@@ -28,11 +28,13 @@ func TestFile_SaveLoad_RoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	f := NewFile(path)
 
+	gameExe := filepath.Join(t.TempDir(), "MapleStory.exe")
 	want := Settings{
 		AlertSound: alertsound.Prefs{
 			Selected: alertsound.Sound{Kind: alertsound.KindBuiltin, Name: "Alarm01.wav"},
 			Custom:   []string{"/u/a.wav", "/u/b.wav"},
 		},
+		GameExePath: gameExe,
 	}
 	if err := f.Save(want); err != nil {
 		t.Fatalf("Save() = %v, want nil", err)
@@ -41,6 +43,87 @@ func TestFile_SaveLoad_RoundTrip(t *testing.T) {
 	got := f.Load()
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Load() = %+v, want %+v", got, want)
+	}
+}
+
+// TestFile_SaveLoadGameExePath_RoundTrip exercises LoadGameExePath /
+// SaveGameExePath directly (launcher.GamePathStore's interface), as
+// opposed to TestFile_SaveLoad_RoundTrip which goes through Settings as a
+// whole.
+func TestFile_SaveLoadGameExePath_RoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	f := NewFile(path)
+	want := filepath.Join(t.TempDir(), "MapleStory.exe")
+
+	if err := f.SaveGameExePath(want); err != nil {
+		t.Fatalf("SaveGameExePath() = %v, want nil", err)
+	}
+	if got := f.LoadGameExePath(); got != want {
+		t.Fatalf("LoadGameExePath() = %q, want %q", got, want)
+	}
+}
+
+// TestFile_SaveGameExePath_OtherSectionUntouched asserts SaveGameExePath
+// re-reads the on-disk document and only replaces GameExePath, mirroring
+// SavePrefs's contract for AlertSound.
+func TestFile_SaveGameExePath_OtherSectionUntouched(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	f := NewFile(path)
+	wantAlert := alertsound.Prefs{Selected: alertsound.Sound{Kind: alertsound.KindBuiltin, Name: "Alarm01.wav"}}
+	if err := f.Save(Settings{AlertSound: wantAlert}); err != nil {
+		t.Fatalf("Save() = %v, want nil", err)
+	}
+
+	gameExe := filepath.Join(t.TempDir(), "MapleStory.exe")
+	if err := f.SaveGameExePath(gameExe); err != nil {
+		t.Fatalf("SaveGameExePath() = %v, want nil", err)
+	}
+
+	got := f.Load()
+	if !reflect.DeepEqual(got.AlertSound, wantAlert) {
+		t.Fatalf("Load().AlertSound = %+v, want %+v (untouched by SaveGameExePath)", got.AlertSound, wantAlert)
+	}
+	if got.GameExePath != gameExe {
+		t.Fatalf("Load().GameExePath = %q, want %q", got.GameExePath, gameExe)
+	}
+}
+
+// TestFile_Load_InvalidGameExePath_Retained asserts a persisted relative
+// path (which fails localpath.Check on every platform) is kept on load, not
+// silently dropped — checkGameExe is what surfaces the problem downstream.
+func TestFile_Load_InvalidGameExePath_Retained(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	// alertSound.selected.kind must be valid ("none" here) so isValidKind
+	// doesn't short-circuit to Defaults() before the GameExePath check
+	// below ever runs.
+	const doc = `{"alertSound":{"selected":{"kind":"none"}},"gameExePath":"relative/MapleStory.exe"}`
+	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+		t.Fatalf("WriteFile() = %v", err)
+	}
+	f := NewFile(path)
+
+	got := f.Load()
+	if got.GameExePath != "relative/MapleStory.exe" {
+		t.Fatalf("Load().GameExePath = %q, want unchanged %q", got.GameExePath, "relative/MapleStory.exe")
+	}
+	if got.AlertSound.Selected.Kind != alertsound.KindNone {
+		t.Fatalf("Load().AlertSound.Selected.Kind = %q, want %q (sanity: this path shouldn't have fallen through to Defaults())", got.AlertSound.Selected.Kind, alertsound.KindNone)
+	}
+}
+
+// TestFile_Load_GameExePath_Trimmed asserts surrounding whitespace is
+// stripped on load, same as SetGamePath does on save.
+func TestFile_Load_GameExePath_Trimmed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	const doc = `{"alertSound":{"selected":{"kind":"none"}},"gameExePath":"  C:\\Game\\MapleStory.exe  "}`
+	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+		t.Fatalf("WriteFile() = %v", err)
+	}
+	f := NewFile(path)
+
+	got := f.Load()
+	if want := `C:\Game\MapleStory.exe`; got.GameExePath != want {
+		t.Fatalf("Load().GameExePath = %q, want %q", got.GameExePath, want)
 	}
 }
 
@@ -67,6 +150,36 @@ func TestFile_Load_UnknownKind(t *testing.T) {
 	got := f.Load()
 	if want := Defaults(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Load() = %+v, want %+v", got, want)
+	}
+}
+
+// TestFile_Load_UnknownKind_KeepsGameExePath asserts an invalid AlertSound
+// kind only resets AlertSound, not the whole document — GameExePath (set
+// independently from the settings page's game-path section) must survive.
+func TestFile_Load_UnknownKind_KeepsGameExePath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	const doc = `{"alertSound":{"selected":{"kind":"bogus"}},"gameExePath":"C:\\Game\\MapleStory.exe"}`
+	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+		t.Fatalf("WriteFile() = %v", err)
+	}
+	f := NewFile(path)
+
+	got := f.Load()
+	if want := Defaults().AlertSound; !reflect.DeepEqual(got.AlertSound, want) {
+		t.Fatalf("Load().AlertSound = %+v, want defaults %+v", got.AlertSound, want)
+	}
+	const wantPath = `C:\Game\MapleStory.exe`
+	if got.GameExePath != wantPath {
+		t.Fatalf("Load().GameExePath = %q, want retained %q", got.GameExePath, wantPath)
+	}
+
+	// A subsequent SavePrefs round trip must not drop GameExePath either —
+	// it reads loadLocked() before overwriting AlertSound.
+	if err := f.SavePrefs(got.AlertSound); err != nil {
+		t.Fatalf("SavePrefs() = %v, want nil", err)
+	}
+	if reloaded := f.Load(); reloaded.GameExePath != wantPath {
+		t.Fatalf("after SavePrefs, Load().GameExePath = %q, want retained %q", reloaded.GameExePath, wantPath)
 	}
 }
 

@@ -8,6 +8,9 @@ export {
 };
 
 export {
+    GameCheck,
+    GamePathInfo,
+    GamePathSource,
     GameState,
     LaunchResult
 } from "./models.js";

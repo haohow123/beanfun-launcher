@@ -1,14 +1,14 @@
 //go:build windows
 
-package alertsound
+package localpath
 
 import (
 	"golang.org/x/sys/windows"
 )
 
 func init() {
-	isRemoteDriveFn = isRemoteDrive
-	checkLocalPathFn = checkWindowsPath
+	IsRemoteDriveFn = isRemoteDrive
+	CheckFn = CheckWindowsPath
 }
 
 // p must already match driveAbsolute.

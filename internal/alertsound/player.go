@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"github.com/haohow123/beanfun-launcher/internal/localpath"
 )
 
 // alias selects SND_ALIAS instead of SND_FILENAME.
@@ -37,10 +39,10 @@ func resolve(s Sound) (target string, alias bool, err error) {
 		}
 		return filepath.Join(dir, s.Name), false, nil
 	case KindCustom:
-		if err := checkLocalPath(s.Path); err != nil {
+		if err := localpath.Check(s.Path); err != nil {
 			return "", false, err
 		}
-		if err := rejectLink(s.Path); err != nil {
+		if err := localpath.RejectLink(s.Path); err != nil {
 			return "", false, err
 		}
 		return s.Path, false, nil

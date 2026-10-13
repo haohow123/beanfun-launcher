@@ -7,6 +7,145 @@
 import { Create as $Create } from "@wailsio/runtime";
 
 /**
+ * GameCheck is the result of checking a candidate game executable path,
+ * shared by the settings page's test button and the pre-launch guard in
+ * SpawnGame / SpawnGameClean.
+ */
+export class GameCheck {
+    /**
+     * Creates a new GameCheck instance.
+     * @param {Partial<GameCheck>} [$$source = {}] - The source object to create the GameCheck.
+     */
+    constructor($$source = {}) {
+        if (!("path" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["path"] = "";
+        }
+        if (!("ok" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["ok"] = false;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * @member
+             * @type {string | undefined}
+             */
+            this["problem"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * @member
+             * @type {string[] | undefined}
+             */
+            this["warnings"] = undefined;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new GameCheck instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {GameCheck}
+     */
+    static createFrom($$source = {}) {
+        const $$createField3_0 = $$createType0;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("warnings" in $$parsedSource) {
+            $$parsedSource["warnings"] = $$createField3_0($$parsedSource["warnings"]);
+        }
+        return new GameCheck(/** @type {Partial<GameCheck>} */($$parsedSource));
+    }
+}
+
+/**
+ * GamePathInfo is the settings page's snapshot: the raw setting, the registry's detection, the effective path, and whether it passes checkGameExe.
+ */
+export class GamePathInfo {
+    /**
+     * Creates a new GamePathInfo instance.
+     * @param {Partial<GamePathInfo>} [$$source = {}] - The source object to create the GamePathInfo.
+     */
+    constructor($$source = {}) {
+        if (!("setting" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["setting"] = "";
+        }
+        if (!("detected" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["detected"] = "";
+        }
+        if (!("effective" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["effective"] = "";
+        }
+        if (!("source" in $$source)) {
+            /**
+             * @member
+             * @type {GamePathSource}
+             */
+            this["source"] = GamePathSource.$zero;
+        }
+        if (!("check" in $$source)) {
+            /**
+             * @member
+             * @type {GameCheck}
+             */
+            this["check"] = (new GameCheck());
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new GamePathInfo instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {GamePathInfo}
+     */
+    static createFrom($$source = {}) {
+        const $$createField4_0 = $$createType1;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("check" in $$parsedSource) {
+            $$parsedSource["check"] = $$createField4_0($$parsedSource["check"]);
+        }
+        return new GamePathInfo(/** @type {Partial<GamePathInfo>} */($$parsedSource));
+    }
+}
+
+/**
+ * GamePathSource identifies which of resolveGameExe's candidate sources
+ * produced the effective path, surfaced to the frontend via GamePathInfo.
+ * @readonly
+ * @enum {string}
+ */
+export const GamePathSource = {
+    /**
+     * The Go zero value for the underlying type of the enum.
+     */
+    $zero: "",
+
+    GamePathEnv: "env",
+    GamePathSetting: "setting",
+    GamePathRegistry: "registry",
+    GamePathNone: "none",
+};
+
+/**
  * GameState mirrors the FE's gameStateAtom shape. JSON-tagged for
  * Wails event marshalling + GetGameState's RPC return.
  * 
@@ -126,3 +265,7 @@ export class LaunchResult {
         return new LaunchResult(/** @type {Partial<LaunchResult>} */($$parsedSource));
     }
 }
+
+// Private type creation functions
+const $$createType0 = $Create.Array($Create.Any);
+const $$createType1 = GameCheck.createFrom;

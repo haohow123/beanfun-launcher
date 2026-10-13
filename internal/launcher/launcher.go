@@ -43,6 +43,7 @@ const (
 	KindUnknown LauncherErrorKind = iota
 	KindPlatformUnsupported
 	KindGameExeMissing
+	KindGamePathInvalid
 	KindSpawnFailed
 )
 
@@ -52,17 +53,33 @@ func ErrPlatformUnsupported() *LauncherError {
 	return &LauncherError{Kind: KindPlatformUnsupported, Msg: "game launch is only supported on Windows"}
 }
 
-// ErrGameExeMissing is returned when the game executable can't be
-// located via either source: the BEANFUN_GAME_EXE env var override
-// or the HKLM\SOFTWARE\Gamania\MAPLESTORY\Path registry value that
-// Beanfun's installer writes. The user typically resolves this by
-// reinstalling MapleStory (which repopulates the registry value)
-// or by setting BEANFUN_GAME_EXE manually.
+// ErrNoGamePath is returned when resolveGameExe found no candidate at all:
+// no BEANFUN_GAME_EXE override, no settings-page path, no registry hit.
+func ErrNoGamePath() *LauncherError {
+	return &LauncherError{Kind: KindGameExeMissing, Msg: problemNoGamePath}
+}
+
+// ErrGameExeMissing is returned when a resolved game path doesn't exist on
+// disk, with the source visible to the caller via GamePathInfo.Source.
 func ErrGameExeMissing() *LauncherError {
-	return &LauncherError{
-		Kind: KindGameExeMissing,
-		Msg:  `game executable not found (checked $BEANFUN_GAME_EXE and HKLM\SOFTWARE\Gamania\MAPLESTORY\Path)`,
-	}
+	return &LauncherError{Kind: KindGameExeMissing, Msg: problemExeMissing}
+}
+
+// ErrGamePathNotLocal is returned when the resolved game path fails the
+// local-path rule (a UNC share or mapped network drive).
+func ErrGamePathNotLocal() *LauncherError {
+	return &LauncherError{Kind: KindGamePathInvalid, Msg: problemNotLocalFile}
+}
+
+// ErrGamePathNotAFile is returned when the resolved game path is a
+// directory or a symlink rather than a regular file.
+func ErrGamePathNotAFile() *LauncherError {
+	return &LauncherError{Kind: KindGamePathInvalid, Msg: problemNotAFile}
+}
+
+// ErrGamePathNotExe is returned when the resolved game path's extension isn't .exe.
+func ErrGamePathNotExe() *LauncherError {
+	return &LauncherError{Kind: KindGamePathInvalid, Msg: problemNotExe}
 }
 
 // ErrSpawnFailed wraps a CreateProcessW failure with the syscall
