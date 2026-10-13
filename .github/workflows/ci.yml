@@ -132,3 +132,34 @@ jobs:
           GOARCH: amd64
           CGO_ENABLED: "0"
         run: go build -o /tmp/launcher.exe ./
+
+  go-test-windows:
+    name: Go test (Windows)
+    # The Linux jobs never vet, lint or run `//go:build windows` files; this job does.
+    needs: frontend
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Download frontend dist
+        uses: actions/download-artifact@v5
+        with:
+          name: frontend-dist
+          path: frontend/dist
+
+      - name: go vet
+        run: go vet . ./internal/...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.9.0
+          args: ./internal/...
+
+      - name: go test
+        # No -race: the race detector on Windows needs cgo and a C toolchain.
+        run: go test ./internal/...

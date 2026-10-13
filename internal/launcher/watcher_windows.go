@@ -32,7 +32,7 @@ func getWindowPID(hwnd uintptr) (uint32, error) {
 	var pid uint32
 	// Third return value from LazyProc.Call is the last Win32 error,
 	// captured eagerly before any intervening syscall can overwrite it.
-	procGetWindowThreadProcessId.Call(hwnd, uintptr(unsafe.Pointer(&pid)))
+	_, _, _ = procGetWindowThreadProcessId.Call(hwnd, uintptr(unsafe.Pointer(&pid)))
 	if pid == 0 {
 		// pid == 0 means the call failed (invalid HWND or the window's
 		// owning process has already exited). Treat it as an error so
@@ -61,7 +61,7 @@ func waitForProcessExit(ctx context.Context, pid uint32) error {
 	if err != nil {
 		return fmt.Errorf("OpenProcess(pid=%d): %w", pid, err)
 	}
-	defer windows.CloseHandle(h)
+	defer func() { _ = windows.CloseHandle(h) }()
 
 	for {
 		// Check for cancellation before each wait so a context that is

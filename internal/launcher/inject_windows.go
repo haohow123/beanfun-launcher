@@ -89,7 +89,7 @@ func injectCredentials(hwnd uintptr, account, otp []byte) error {
 	// fullscreen mode, etc.) — try the typing anyway; the window
 	// receives messages even without focus, but typing into the
 	// right control is more reliable when foregrounded.
-	procSetForegroundWindow.Call(hwnd)
+	_, _, _ = procSetForegroundWindow.Call(hwnd)
 	time.Sleep(100 * time.Millisecond)
 
 	if err := clearField(hwnd, clearAccountKeyCount); err != nil {
