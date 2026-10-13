@@ -8,7 +8,7 @@ Existing community launchers (e.g., pungin/Beanfun) work, but they require trust
 
 ## Tech stack
 
-- Wails v3 (alpha) — desktop shell, uses native WebView2 on Windows
+- Wails v3 (beta) — desktop shell, uses native WebView2 on Windows
 - Go — backend for HTTP calls to Beanfun API, game launching, Win32 DLL injection
 - React + TypeScript + Vite — frontend
 - Tailwind + shadcn/ui — UI library (to be added later)

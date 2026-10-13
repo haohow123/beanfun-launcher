@@ -45,7 +45,7 @@ See [`CLAUDE.md`](./CLAUDE.md) for the full project conventions and threat model
 
 ## Stack
 
-- [Wails v3](https://v3.wails.io) (alpha) — desktop shell, uses native WebView2 on Windows
+- [Wails v3](https://v3.wails.io) (beta) — desktop shell, uses native WebView2 on Windows
 - Go — backend (Beanfun API client, OS keyring, Win32 DLL injection for locale emulation)
 - React + TypeScript + Vite + Tailwind v4 + shadcn/ui — frontend
 - [Locale_Remulator](https://github.com/InWILL/Locale_Remulator) — pre-built C++ DLL for
