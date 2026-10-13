@@ -6,10 +6,6 @@
 // @ts-ignore: Unused imports
 import { Create as $Create } from "@wailsio/runtime";
 
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore: Unused imports
-import * as time$0 from "../../../../../time/models.js";
-
 /**
  * Status is the snapshot the frontend reads. Online is the current
  * determination; LastChecked / CheckedSince let the UI distinguish
@@ -32,17 +28,17 @@ export class Status {
         if (!("lastChecked" in $$source)) {
             /**
              * @member
-             * @type {time$0.Time}
+             * @type {string}
              */
-            this["lastChecked"] = null;
+            this["lastChecked"] = "0001-01-01T00:00:00.000Z";
         }
         if (!("checkedSince" in $$source)) {
             /**
              * when Online last flipped
              * @member
-             * @type {time$0.Time}
+             * @type {string}
              */
-            this["checkedSince"] = null;
+            this["checkedSince"] = "0001-01-01T00:00:00.000Z";
         }
 
         Object.assign(this, $$source);
