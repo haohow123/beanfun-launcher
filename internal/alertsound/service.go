@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"sync"
+
+	"github.com/haohow123/beanfun-launcher/internal/localpath"
 )
 
 var statFn = os.Stat
@@ -59,7 +61,7 @@ func sanitizePrefs(p Prefs) Prefs {
 	kept := make([]string, 0, len(p.Custom))
 	for _, path := range p.Custom {
 		clean := filepath.Clean(path)
-		if checkLocalPath(clean) != nil {
+		if localpath.Check(clean) != nil {
 			continue
 		}
 		if containsPathFold(kept, clean) {
@@ -85,7 +87,7 @@ func selectedValid(snd Sound, custom []string) bool {
 	case KindBuiltin:
 		return validBuiltinName(snd.Name)
 	case KindCustom:
-		return checkLocalPath(snd.Path) == nil && containsPathFold(custom, snd.Path)
+		return localpath.Check(snd.Path) == nil && containsPathFold(custom, snd.Path)
 	}
 	return false
 }
@@ -113,7 +115,7 @@ func (s *Service) Options() ([]Option, error) {
 		opts = append(opts, Option{
 			Sound:   Sound{Kind: KindCustom, Path: path},
 			Label:   filepath.Base(path),
-			Missing: checkLocalPath(path) != nil || rejectLink(path) != nil || !statOK(path),
+			Missing: localpath.Check(path) != nil || localpath.RejectLink(path) != nil || !statOK(path),
 			Group:   GroupCustom,
 		})
 	}
@@ -196,11 +198,11 @@ func (s *Service) checkSelectableLocked(snd Sound, builtinNames []string) (Sound
 
 // AddCustom validates path as a WAV, adds it to the custom list (deduping by absolute path), and selects it as the current sound.
 func (s *Service) AddCustom(path string) (Sound, error) {
-	if err := checkLocalPath(path); err != nil {
+	if err := localpath.Check(path); err != nil {
 		return Sound{}, err
 	}
 	clean := filepath.Clean(path)
-	if err := rejectLink(clean); err != nil {
+	if err := localpath.RejectLink(clean); err != nil {
 		return Sound{}, err
 	}
 	if err := validateWAVFn(clean); err != nil {
@@ -305,7 +307,7 @@ func playable(s Sound) bool {
 		}
 		return statOK(filepath.Join(dir, s.Name))
 	case KindCustom:
-		if checkLocalPath(s.Path) != nil || rejectLink(s.Path) != nil {
+		if localpath.Check(s.Path) != nil || localpath.RejectLink(s.Path) != nil {
 			return false
 		}
 		return statOK(s.Path)

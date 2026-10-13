@@ -6,7 +6,10 @@ personal data beyond what is strictly required to operate.
 ## What the app does
 
 - Logs in to Beanfun via QR code against Gamania's own servers.
-- Launches the MapleStory game executable on your local machine.
+- Launches the MapleStory game executable on your local machine. If you
+  set a custom path in Settings, you are trusting that executable: the
+  launcher hands it your account identifier and a one-time OTP as launch
+  arguments (code-signature verification is tracked separately, see #120).
 - Probes Gamania game-server IPs to display server-up status
   (TCP SYN + close, no application data sent).
 
@@ -21,11 +24,12 @@ personal data beyond what is strictly required to operate.
 - No auto-update mechanism that downloads code from external
   sources.
 - No reading of files outside what is needed to locate the game
-  executable (the `BEANFUN_GAME_EXE` environment variable or
-  Beanfun's published registry entry), listing the `.wav` files
-  in the Windows `Media` folder to offer them as alert sounds, or
-  reading the header of, and playing, WAV files you add yourself
-  as alert sounds.
+  executable (the `BEANFUN_GAME_EXE` environment variable,
+  Beanfun's published registry entry, or the path you set on the
+  settings page) and confirm a `Data` folder or `Data.wz` archive
+  sits next to it, listing the `.wav` files in the Windows `Media`
+  folder to offer them as alert sounds, or reading the header of,
+  and playing, WAV files you add yourself as alert sounds.
 
 ## Local data
 
@@ -39,9 +43,10 @@ personal data beyond what is strictly required to operate.
   is local — never uploaded, never shared.
 - **Settings file** at `~/Library/Application Support/beanfun-launcher/settings.json`
   (macOS) or `%APPDATA%\beanfun-launcher\settings.json` (Windows)
-  stores the chosen alert sound and the paths of WAV files you
-  added; the files themselves are never copied or modified. Local
-  only, no credentials.
+  stores the chosen alert sound, the paths of WAV files you added,
+  and the game executable path you set on the settings page; the
+  files themselves are never copied or modified. Local only, no
+  credentials.
 
 ## Open source
 

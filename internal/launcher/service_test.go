@@ -62,7 +62,7 @@ func TestLauncherService_Launch_NoSession(t *testing.T) {
 
 	mgr := bgtask.New()
 	login := beanfun.NewLoginService(mgr)
-	svc := NewLauncherService(login, mgr)
+	svc := NewLauncherService(login, mgr, nil)
 
 	_, err := svc.Launch(beanfun.Account{SID: "s", SSN: "1", SName: "n"})
 	var le *beanfun.LoginError
@@ -81,7 +81,7 @@ func TestLauncherService_Launch_GameExeMissing_NoSessionStillTakesPrecedence(t *
 
 	mgr := bgtask.New()
 	login := beanfun.NewLoginService(mgr)
-	svc := NewLauncherService(login, mgr)
+	svc := NewLauncherService(login, mgr, nil)
 
 	_, err := svc.Launch(beanfun.Account{SID: "s", SSN: "1", SName: "n"})
 	var le *beanfun.LoginError
@@ -98,7 +98,7 @@ func TestLauncherService_SpawnGame_NoSession(t *testing.T) {
 
 	mgr := bgtask.New()
 	login := beanfun.NewLoginService(mgr)
-	svc := NewLauncherService(login, mgr)
+	svc := NewLauncherService(login, mgr, nil)
 
 	err := svc.SpawnGame(beanfun.Account{SID: "s", SSN: "1", SName: "n"})
 	var le *beanfun.LoginError
@@ -115,7 +115,7 @@ func TestLauncherService_SpawnGame_GameExeMissing_NoSessionStillTakesPrecedence(
 
 	mgr := bgtask.New()
 	login := beanfun.NewLoginService(mgr)
-	svc := NewLauncherService(login, mgr)
+	svc := NewLauncherService(login, mgr, nil)
 
 	err := svc.SpawnGame(beanfun.Account{SID: "s", SSN: "1", SName: "n"})
 	var le *beanfun.LoginError
@@ -134,7 +134,7 @@ func TestLauncherService_LaunchAccount_NoSession(t *testing.T) {
 
 	mgr := bgtask.New()
 	login := beanfun.NewLoginService(mgr)
-	svc := NewLauncherService(login, mgr)
+	svc := NewLauncherService(login, mgr, nil)
 
 	_, err := svc.LaunchAccount(beanfun.Account{SID: "s", SSN: "1", SName: "n"})
 	var le *beanfun.LoginError
@@ -149,7 +149,7 @@ func TestLauncherService_GetGameState_NoWindow(t *testing.T) {
 	// reflect that as Running=false.
 	mgr := bgtask.New()
 	login := beanfun.NewLoginService(mgr)
-	svc := NewLauncherService(login, mgr)
+	svc := NewLauncherService(login, mgr, nil)
 
 	state := svc.GetGameState()
 	if state.Running {

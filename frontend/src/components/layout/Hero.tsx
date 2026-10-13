@@ -4,6 +4,7 @@ import { type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { useAlertSoundSelectedQuery } from "@/queries/alertSound";
+import { useGamePathQuery } from "@/queries/gamePath";
 import { useMapleStatusQuery } from "@/queries/mapleStatus";
 import { settingsOpenAtom } from "@/state/settings";
 
@@ -51,24 +52,37 @@ function statusVisualFor(
   return { dotClass: "bg-rose-400", label: "伺服器關閉中" };
 }
 
+// settingsWarningTitle joins whichever of the two settings-page problems apply, so the gear's
+// tooltip names every reason at once rather than only the first one found.
+function settingsWarningTitle(soundMissing: boolean, gamePathMissing: boolean): string | undefined {
+  const reasons: string[] = [];
+  if (gamePathMissing) reasons.push("找不到遊戲執行檔");
+  if (soundMissing) reasons.push("找不到提示音檔案");
+  if (reasons.length === 0) return undefined;
+  return reasons.join("、");
+}
+
 // Rendered by Hero itself rather than via `action`, so LoginPage gets it too.
 function SettingsButton() {
   const setSettingsOpen = useSetAtom(settingsOpenAtom);
   const selected = useAlertSoundSelectedQuery();
-  const missing = selected.data?.missing ?? false;
+  const gamePath = useGamePathQuery();
+  const soundMissing = selected.data?.missing ?? false;
+  const gamePathMissing = gamePath.data ? !gamePath.data.check.ok : false;
+  const warningTitle = settingsWarningTitle(soundMissing, gamePathMissing);
   return (
     <div className="relative">
       <Button
         variant="outline"
         size="icon-sm"
         className="bg-background/80 backdrop-blur"
-        aria-label="設定"
-        title={missing ? "找不到提示音檔案" : "設定"}
+        aria-label={warningTitle ? `設定（${warningTitle}）` : "設定"}
+        title={warningTitle ?? "設定"}
         onClick={() => setSettingsOpen(true)}
       >
         <Settings />
       </Button>
-      {missing && (
+      {warningTitle && (
         <TriangleAlert className="absolute -top-1 -right-1 size-3 fill-amber-400 text-amber-950" />
       )}
     </div>

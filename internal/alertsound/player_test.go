@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/haohow123/beanfun-launcher/internal/localpath"
 )
 
 // call records one playFn invocation.
@@ -87,17 +89,17 @@ func TestPlay(t *testing.T) {
 }
 
 // TestPlay_CustomUNC_WindowsRules exercises the real Windows UNC rejection
-// via checkWindowsPath, not IsAbs's accidental false-on-Unix.
+// via localpath.CheckWindowsPath, not IsAbs's accidental false-on-Unix.
 func TestPlay_CustomUNC_WindowsRules(t *testing.T) {
-	origCheck := checkLocalPathFn
-	checkLocalPathFn = checkWindowsPath
-	t.Cleanup(func() { checkLocalPathFn = origCheck })
+	origCheck := localpath.CheckFn
+	localpath.CheckFn = localpath.CheckWindowsPath
+	t.Cleanup(func() { localpath.CheckFn = origCheck })
 	withFakeRemoteDrive(t, false)
 
 	calls := withFakePlayer(t, "/media/dir")
 	err := Play(Sound{Kind: KindCustom, Path: `\\host\share\x.wav`})
-	if !errors.Is(err, errNotLocal) {
-		t.Fatalf("Play() = %v, want %v", err, errNotLocal)
+	if !errors.Is(err, localpath.ErrNotLocal) {
+		t.Fatalf("Play() = %v, want %v", err, localpath.ErrNotLocal)
 	}
 	if len(*calls) != 0 {
 		t.Fatalf("Play() called playFn %v, want no call", *calls)
@@ -119,8 +121,8 @@ func TestPlay_CustomSymlink_Rejected(t *testing.T) {
 	calls := withFakePlayer(t, "/media/dir")
 
 	err := Play(Sound{Kind: KindCustom, Path: link})
-	if !errors.Is(err, errNotLocal) {
-		t.Fatalf("Play() = %v, want %v", err, errNotLocal)
+	if !errors.Is(err, localpath.ErrNotLocal) {
+		t.Fatalf("Play() = %v, want %v", err, localpath.ErrNotLocal)
 	}
 	if len(*calls) != 0 {
 		t.Fatalf("Play() called playFn %v, want no call", *calls)

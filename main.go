@@ -58,7 +58,13 @@ func main() {
 			app.Event.Emit(beanfun.QRStateChangedEvent, st)
 		}
 	}
-	launcherSvc := launcher.NewLauncherService(loginSvc, mgr)
+	settingsPath, err := settings.DefaultPath()
+	if err != nil {
+		slog.Warn("settings: no config dir, using defaults in memory", "err", err)
+	}
+	settingsFile := settings.NewFile(settingsPath)
+
+	launcherSvc := launcher.NewLauncherService(loginSvc, mgr, settingsFile)
 
 	// notifSvc is kept registered purely for its Windows ServiceStartup
 	// side effect (AUMID + COM activator registration, IconUri write)
@@ -66,11 +72,7 @@ func main() {
 	// so alertsound.Play stays the only source of sound.
 	notifSvc := notifications.New()
 
-	settingsPath, err := settings.DefaultPath()
-	if err != nil {
-		slog.Warn("settings: no config dir, using defaults in memory", "err", err)
-	}
-	alertSvc := alertsound.NewService(settings.NewFile(settingsPath))
+	alertSvc := alertsound.NewService(settingsFile)
 
 	notifyServerOnline := func() {
 		alertSvc.PlaySelected()

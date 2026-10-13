@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/haohow123/beanfun-launcher/internal/alertsound"
@@ -25,7 +26,8 @@ const appDirName = "beanfun-launcher"
 const fileName = "settings.json"
 
 type Settings struct {
-	AlertSound alertsound.Prefs `json:"alertSound"`
+	AlertSound  alertsound.Prefs `json:"alertSound"`
+	GameExePath string           `json:"gameExePath,omitempty"`
 }
 
 // Defaults is the Settings used when no file exists or it can't be read.
@@ -65,7 +67,9 @@ func DefaultPath() (string, error) {
 }
 
 // Load reads the settings file, falling back to Defaults() when it doesn't
-// exist, can't be parsed, or names a Kind this binary doesn't understand.
+// exist or can't be parsed, or resetting just AlertSound (keeping
+// GameExePath) when the file names an AlertSound Kind this binary doesn't
+// understand.
 func (f *File) Load() Settings {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -89,9 +93,10 @@ func (f *File) loadLocked() Settings {
 		return Defaults()
 	}
 	if !isValidKind(s.AlertSound.Selected.Kind) {
-		slog.Warn("settings: unknown sound kind, using defaults", "path", f.path, "kind", s.AlertSound.Selected.Kind)
-		return Defaults()
+		slog.Warn("settings: unknown sound kind, resetting it to defaults", "path", f.path, "kind", s.AlertSound.Selected.Kind)
+		s.AlertSound = Defaults().AlertSound
 	}
+	s.GameExePath = strings.TrimSpace(s.GameExePath)
 	return s
 }
 
@@ -160,5 +165,20 @@ func (f *File) SavePrefs(p alertsound.Prefs) error {
 	defer f.mu.Unlock()
 	s := f.loadLocked()
 	s.AlertSound = p
+	return f.saveLocked(s)
+}
+
+// LoadGameExePath implements launcher.GamePathStore.
+func (f *File) LoadGameExePath() string {
+	return f.Load().GameExePath
+}
+
+// SaveGameExePath implements launcher.GamePathStore: it merges p into the
+// on-disk document so other Settings fields aren't clobbered.
+func (f *File) SaveGameExePath(p string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	s := f.loadLocked()
+	s.GameExePath = p
 	return f.saveLocked(s)
 }

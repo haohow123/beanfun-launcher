@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/haohow123/beanfun-launcher/internal/localpath"
 )
 
 // fakeStore is an in-memory PrefsStore for Service tests.
@@ -248,17 +250,17 @@ func TestService_AddCustom_Valid(t *testing.T) {
 
 func TestService_AddCustom_UNC(t *testing.T) {
 	withFakeCatalog(t, nil, nil)
-	origCheck := checkLocalPathFn
-	checkLocalPathFn = checkWindowsPath
-	t.Cleanup(func() { checkLocalPathFn = origCheck })
+	origCheck := localpath.CheckFn
+	localpath.CheckFn = localpath.CheckWindowsPath
+	t.Cleanup(func() { localpath.CheckFn = origCheck })
 	withFakeRemoteDrive(t, false)
 
 	store := &fakeStore{}
 	svc := NewService(store)
 
 	_, err := svc.AddCustom(`\\host\share\x.wav`)
-	if !errors.Is(err, errNotLocal) {
-		t.Fatalf("AddCustom() = %v, want %v", err, errNotLocal)
+	if !errors.Is(err, localpath.ErrNotLocal) {
+		t.Fatalf("AddCustom() = %v, want %v", err, localpath.ErrNotLocal)
 	}
 	if store.saved != 0 {
 		t.Fatalf("store.saved = %d, want 0", store.saved)
@@ -340,8 +342,8 @@ func TestService_AddCustom_RejectsSymlink(t *testing.T) {
 	}
 
 	_, err := svc.AddCustom(link)
-	if !errors.Is(err, errNotLocal) {
-		t.Fatalf("AddCustom() = %v, want %v", err, errNotLocal)
+	if !errors.Is(err, localpath.ErrNotLocal) {
+		t.Fatalf("AddCustom() = %v, want %v", err, localpath.ErrNotLocal)
 	}
 	if store.saved != 0 {
 		t.Fatalf("store.saved = %d, want 0", store.saved)
@@ -419,9 +421,9 @@ func TestService_CustomMissing(t *testing.T) {
 
 func TestNewService_SanitizesUNCFromPrefs(t *testing.T) {
 	withFakeCatalog(t, nil, nil)
-	origCheck := checkLocalPathFn
-	checkLocalPathFn = checkWindowsPath
-	t.Cleanup(func() { checkLocalPathFn = origCheck })
+	origCheck := localpath.CheckFn
+	localpath.CheckFn = localpath.CheckWindowsPath
+	t.Cleanup(func() { localpath.CheckFn = origCheck })
 	withFakeRemoteDrive(t, false)
 
 	const legit = `C:\Users\a\ding.wav`
@@ -625,17 +627,17 @@ func TestService_RemoveCustom_SaveError(t *testing.T) {
 	}
 }
 
-// TestService_AddCustom_CaseInsensitiveDuplicate swaps checkLocalPathFn,
-// validateWAVFn, and lstatFn so a Windows-style drive path can be exercised
-// (and deduped case-insensitively) without a matching file on disk.
+// TestService_AddCustom_CaseInsensitiveDuplicate swaps localpath.CheckFn,
+// validateWAVFn, and localpath.LstatFn so a Windows-style drive path can be
+// exercised (and deduped case-insensitively) without a matching file on disk.
 func TestService_AddCustom_CaseInsensitiveDuplicate(t *testing.T) {
 	withFakeCatalog(t, nil, nil)
-	origCheck := checkLocalPathFn
-	checkLocalPathFn = checkWindowsPath
+	origCheck := localpath.CheckFn
+	localpath.CheckFn = localpath.CheckWindowsPath
 	origValidate := validateWAVFn
 	validateWAVFn = func(string) error { return nil }
 	t.Cleanup(func() {
-		checkLocalPathFn = origCheck
+		localpath.CheckFn = origCheck
 		validateWAVFn = origValidate
 	})
 	withFakeRemoteDrive(t, false)
@@ -669,9 +671,9 @@ func TestService_AddCustom_CaseInsensitiveDuplicate(t *testing.T) {
 // custom-list lookup matches regardless of case, matching Windows path semantics.
 func TestService_Select_CustomCaseInsensitive(t *testing.T) {
 	withFakeCatalog(t, nil, nil)
-	origCheck := checkLocalPathFn
-	checkLocalPathFn = checkWindowsPath
-	t.Cleanup(func() { checkLocalPathFn = origCheck })
+	origCheck := localpath.CheckFn
+	localpath.CheckFn = localpath.CheckWindowsPath
+	t.Cleanup(func() { localpath.CheckFn = origCheck })
 	withFakeRemoteDrive(t, false)
 
 	store := &fakeStore{prefs: Prefs{Custom: []string{`C:\A.wav`}}}
@@ -686,12 +688,12 @@ func TestService_Select_CustomCaseInsensitive(t *testing.T) {
 // clears a selection that differs from the removed path only by case.
 func TestService_RemoveCustom_SelectedCaseInsensitive(t *testing.T) {
 	withFakeCatalog(t, nil, nil)
-	origCheck := checkLocalPathFn
-	checkLocalPathFn = checkWindowsPath
+	origCheck := localpath.CheckFn
+	localpath.CheckFn = localpath.CheckWindowsPath
 	origValidate := validateWAVFn
 	validateWAVFn = func(string) error { return nil }
 	t.Cleanup(func() {
-		checkLocalPathFn = origCheck
+		localpath.CheckFn = origCheck
 		validateWAVFn = origValidate
 	})
 	withFakeRemoteDrive(t, false)
@@ -747,15 +749,15 @@ func TestService_PlaySelected_DefaultFailureDoesNotRetry(t *testing.T) {
 
 // TestService_CustomBecomesRemoteAfterLoad asserts the local-drive check is
 // re-evaluated live (not just cached from sanitizePrefs at load time): once
-// isRemoteDriveFn starts reporting the drive as remote, Options/Selected mark
+// localpath.IsRemoteDriveFn starts reporting the drive as remote, Options/Selected mark
 // the entry Missing without ever calling statFn, and PlaySelected falls back
 // to the default sound.
 func TestService_CustomBecomesRemoteAfterLoad(t *testing.T) {
 	withFakeCatalog(t, nil, nil)
 	calls := withFakePlayer(t, "/media/dir")
-	origCheck := checkLocalPathFn
-	checkLocalPathFn = checkWindowsPath
-	t.Cleanup(func() { checkLocalPathFn = origCheck })
+	origCheck := localpath.CheckFn
+	localpath.CheckFn = localpath.CheckWindowsPath
+	t.Cleanup(func() { localpath.CheckFn = origCheck })
 	withFakeRemoteDrive(t, false)
 	withFakeLstat(t, func(string) (os.FileInfo, error) { return fakeFileInfo{}, nil })
 
@@ -775,7 +777,7 @@ func TestService_CustomBecomesRemoteAfterLoad(t *testing.T) {
 	svc := NewService(store)
 
 	// Simulate the drive turning into a mapped network drive after load.
-	isRemoteDriveFn = func(string) bool { return true }
+	localpath.IsRemoteDriveFn = func(string) bool { return true }
 
 	opts, err := svc.Options()
 	if err != nil {
