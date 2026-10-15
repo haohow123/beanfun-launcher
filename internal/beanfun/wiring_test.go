@@ -13,6 +13,8 @@ var mainWiringRequired = []string{
 	"beanfun.QRStateChangedEvent",
 	"application.Get()",
 	"loginSvc.OnQRStateChanged =",
+	"beanfun.SessionEndedEvent",
+	"loginSvc.OnSessionEnded =",
 }
 
 func TestMainEmitWiring(t *testing.T) {

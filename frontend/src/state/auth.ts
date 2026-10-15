@@ -10,3 +10,6 @@ import { atom } from "jotai";
  * Go LoginService. See docs/beanfun-login-protocol.md § Token storage.
  */
 export const loggedInAtom = atom(false);
+
+/** sessionEndReasonAtom is null unless the session ended without the user logging out. */
+export const sessionEndReasonAtom = atom<"expired" | null>(null);

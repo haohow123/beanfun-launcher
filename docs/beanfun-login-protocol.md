@@ -604,6 +604,17 @@ Adding LR is its own scope:
 
 Deferred to **Milestone 6.5**.
 
+## Keep-alive
+
+Measured 2026-10-15 on a QR-logged-in session.
+
+- **Endpoint**: `GET https://tw.beanfun.com/beanfun_block/generic_handlers/echo_token.ashx?webtoken=1`, sent with the session cookie jar.
+- **Reply shape**: always HTTP 200 with no redirect, `Content-Type: application/x-javascript`. The body is a JS call that carries a `ResultCode`: `1` while logged in, `0` once logged out. A logged-out reply may still carry a non-empty `MainAccountID` for the first poll, so the verdict is `ResultCode` alone.
+- **Classification**: `1` is alive, `0` is logged out (`KindSessionExpired`), anything else, including a missing `ResultCode`, is unknown (`KindHTTP`, retried after the short interval). The IP-lock redirect still maps to `KindIPBlocked`. See `Ping` in `internal/beanfun/client.go:176` and `echoTokenResultRE` at `:173`.
+- **Other signals**: `check_token.ashx` answers the same whether logged in or out when called without the session key, so it cannot be used. `game_start_step2.aspx` can return an error page with no `尚未登入` marker after a logout, so a failed OTP fetch calls `Ping` to confirm (`FetchOTP` in `internal/beanfun/otp.go`).
+- **Idle limit**: with keep-alive disabled, a session was still valid after 20 minutes idle. The failure point was not reached, so the interval is a conservative choice: 8 min while healthy, 10 s after a failed ping, 10 min while IP-blocked (`keepAliveInterval*` in `internal/beanfun/service.go`).
+- **On logout**: `keepAliveTick` ends the session and emits `beanfun:session-ended`, which returns the frontend to the login page.
+
 ## References
 
 The wire spec above was reverse-engineered with help from the
@@ -645,7 +656,7 @@ instead:
 
 | Topic | WPF file |
 |---|---|
-| Session keep-alive `Ping()` on `echo_token.ashx`, success = HTTP 2xx (`internal/beanfun/client.go`); the upstream launcher's `run_ping_loop` drives it every 60 s after login finalizes | `bfClient.cs` L193–212 |
+| Session keep-alive `Ping()` on `echo_token.ashx` (`internal/beanfun/client.go`); the upstream launcher's `run_ping_loop` pings every 60 s, ours every 8 min and reads `ResultCode` from the body (see § Keep-alive) | `bfClient.cs` L193–212 |
 | Credential injection sequence (`internal/launcher/inject_windows.go`), which we run without the SEA / TW pre-typing click; also the source of the lParam analysis behind sending `lParam=1` | `MainWindow.xaml.cs` L2158–2238 |
 | WCDES is DES NoPadding with trailing zero bytes appended by the sender (`internal/beanfun/otp_test.go` fixture) | — |
 

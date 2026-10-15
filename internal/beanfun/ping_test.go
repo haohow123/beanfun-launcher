@@ -4,76 +4,108 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 )
 
+// Reply shapes copied verbatim from the live endpoint.
+const (
+	echoLoggedIn        = `BeanFunBlock.EchoTokenResult({ResultCode:1, ResultDesc: "User is logged in.", MainAccountID : "X" });`
+	echoLoggedOut       = `BeanFunBlock.EchoTokenResult({ResultCode:0, ResultDesc: "User is logged out.", MainAccountID : "" });`
+	echoLoggedOutWithID = `BeanFunBlock.EchoTokenResult({ResultCode:0, ResultDesc: "User is logged out.", MainAccountID : "X" });`
+)
+
+func writeJS(w http.ResponseWriter, body string) {
+	w.Header().Set("Content-Type", "application/x-javascript; charset=utf-8")
+	_, _ = w.Write([]byte(body))
+}
+
 func TestBeanfunClient_Ping(t *testing.T) {
-	// Smoke: Ping hits portal echo_token.ashx with webtoken=1.
-	// Body is discarded; success is HTTP 2xx.
 	t.Parallel()
-	var hits int32
-	var sawQuery string
-	mux := http.NewServeMux()
-	mux.HandleFunc("/beanfun_block/generic_handlers/echo_token.ashx", func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&hits, 1)
-		sawQuery = r.URL.RawQuery
-		w.WriteHeader(http.StatusOK)
-	})
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
+	const echoPath = "/beanfun_block/generic_handlers/echo_token.ashx"
+	tests := []struct {
+		name     string
+		handler  http.HandlerFunc
+		closeSrv bool
+		wantKind LoginErrorKind
+		wantNil  bool
+	}{
+		{name: "logged in", handler: func(w http.ResponseWriter, _ *http.Request) { writeJS(w, echoLoggedIn) }, wantNil: true},
+		{name: "logged out", handler: func(w http.ResponseWriter, _ *http.Request) { writeJS(w, echoLoggedOut) }, wantKind: KindSessionExpired},
+		{name: "logged out first reply still carries the id", handler: func(w http.ResponseWriter, _ *http.Request) { writeJS(w, echoLoggedOutWithID) }, wantKind: KindSessionExpired},
+		{name: "unrelated 200 page is not a logout", handler: func(w http.ResponseWriter, _ *http.Request) { writeHTML(w, "<html>unrelated</html>") }, wantKind: KindHTTP},
+		{name: "ResultCode outside EchoTokenResult is not a logout", handler: func(w http.ResponseWriter, _ *http.Request) { writeHTML(w, "<script>var x={ResultCode:0}</script>") }, wantKind: KindHTTP},
+		{name: "unknown result code is not a logout", handler: func(w http.ResponseWriter, _ *http.Request) {
+			writeJS(w, `BeanFunBlock.EchoTokenResult({ResultCode:-1, ResultDesc: "x", MainAccountID : "" });`)
+		}, wantKind: KindHTTP},
+		{name: "server error", handler: func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) }, wantKind: KindHTTP},
+		{name: "ip blocked", handler: func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/TW/BlockIPMessage.htm", http.StatusFound)
+		}, wantKind: KindIPBlocked},
+		{name: "server closed", handler: func(http.ResponseWriter, *http.Request) {}, closeSrv: true, wantKind: KindHTTP},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var hits int32
+			var sawQuery atomic.Value
+			mux := http.NewServeMux()
+			mux.HandleFunc(echoPath, func(w http.ResponseWriter, r *http.Request) {
+				atomic.AddInt32(&hits, 1)
+				sawQuery.Store(r.URL.RawQuery)
+				tt.handler(w, r)
+			})
+			mux.HandleFunc("/TW/BlockIPMessage.htm", func(w http.ResponseWriter, _ *http.Request) {
+				writeHTML(w, "<html>locked</html>")
+			})
+			c, srv := newTestClient(t, mux)
+			if tt.closeSrv {
+				srv.Close()
+			}
 
-	c, err := NewBeanfunClientWithEndpoints(stubEndpoints(t, srv))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := c.Ping(context.Background()); err != nil {
-		t.Errorf("Ping err = %v, want nil", err)
-	}
-	if got := atomic.LoadInt32(&hits); got != 1 {
-		t.Errorf("hits = %d, want 1", got)
-	}
-	if sawQuery != "webtoken=1" {
-		t.Errorf("RawQuery = %q, want webtoken=1", sawQuery)
+			err := c.Ping(context.Background())
+			if tt.wantNil {
+				if err != nil {
+					t.Fatalf("Ping err = %v, want nil", err)
+				}
+			} else {
+				var le *LoginError
+				if !errors.As(err, &le) || le.Kind != tt.wantKind {
+					t.Fatalf("Ping err = %v, want kind %v", err, tt.wantKind)
+				}
+			}
+			if tt.closeSrv {
+				return
+			}
+			if got := atomic.LoadInt32(&hits); got != 1 {
+				t.Errorf("hits = %d, want 1", got)
+			}
+			if q, _ := sawQuery.Load().(string); q != "webtoken=1" {
+				t.Errorf("RawQuery = %q, want webtoken=1", q)
+			}
+		})
 	}
 }
 
-func TestBeanfunClient_Ping_HTTPError(t *testing.T) {
+// TestEchoTokenResultRE pins the pattern against the captured shapes plus the spacing variants it tolerates.
+func TestEchoTokenResultRE(t *testing.T) {
 	t.Parallel()
-	mux := http.NewServeMux()
-	mux.HandleFunc("/beanfun_block/generic_handlers/echo_token.ashx", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	})
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-
-	c, err := NewBeanfunClientWithEndpoints(stubEndpoints(t, srv))
-	if err != nil {
-		t.Fatal(err)
+	tests := []struct{ in, want string }{
+		{echoLoggedIn, "1"},
+		{echoLoggedOut, "0"},
+		{`EchoTokenResult({ResultCode : -1})`, "-1"},
+		{`EchoTokenResult({ResultCode:12})`, "12"},
+		{`<html>unrelated</html>`, ""},
+		{`<script>var x={ResultCode:0}</script>`, ""},
+		{`EchoTokenResult( { ResultCode : 1 })`, "1"},
 	}
-	if err := c.Ping(context.Background()); err == nil {
-		t.Error("Ping err = nil, want HTTP error")
-	}
-}
-
-// TestBeanfunClient_Ping_IPBlocked covers the response shape that used to
-// read as success: the block notice arrives as HTTP 200 after a redirect,
-// so only the path distinguishes it.
-func TestBeanfunClient_Ping_IPBlocked(t *testing.T) {
-	t.Parallel()
-	mux := http.NewServeMux()
-	mux.HandleFunc("/beanfun_block/generic_handlers/echo_token.ashx", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/TW/BlockIPMessage.htm", http.StatusFound)
-	})
-	mux.HandleFunc("/TW/BlockIPMessage.htm", func(w http.ResponseWriter, r *http.Request) {
-		writeHTML(w, "<html>locked</html>")
-	})
-	c, _ := newTestClient(t, mux)
-
-	err := c.Ping(context.Background())
-	var le *LoginError
-	if !errors.As(err, &le) || le.Kind != KindIPBlocked {
-		t.Fatalf("got %v, want KindIPBlocked", err)
+	for _, tt := range tests {
+		got := ""
+		if m := echoTokenResultRE.FindStringSubmatch(tt.in); m != nil {
+			got = m[1]
+		}
+		if got != tt.want {
+			t.Errorf("%q: got %q, want %q", tt.in, got, tt.want)
+		}
 	}
 }

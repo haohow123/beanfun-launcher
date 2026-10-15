@@ -66,26 +66,17 @@ type LoginService struct {
 	// OnQRStateChanged, if non-nil, receives every new QRState. Install once before the first
 	// StartQRLogin — it is read by the poll goroutine and assumed immutable from then on.
 	OnQRStateChanged func(QRState)
+
+	// OnSessionEnded, like OnQRStateChanged, must be installed before the first StartQRLogin.
+	OnSessionEnded func(SessionEnded)
 }
 
-// Cadence of the background ping that keeps the Beanfun portal
-// from reaping the session as idle: `echo_token.ashx` every 60 seconds.
-//
-// Adaptive on failure: a successful ping arms the next tick at
-// keepAliveIntervalOK (60s); a failed ping arms at
-// keepAliveIntervalFail (10s) so a transient blip doesn't burn
-// most of the 55-minute server-side reap window before we try
-// again. Once the next ping succeeds we drop back to 60s. An
-// IP-blocked ping backs off to keepAliveIntervalBlocked instead:
-// retrying sooner cannot refresh anything and only re-arms our own
-// cooldown, but giving up entirely would lose the session even
-// though beanfun clears the block in minutes.
+// Cadence of the keep-alive ping on echo_token.ashx: OK after success, Fail after an error, Blocked after an IP lock.
 const (
-	keepAliveIntervalOK   = 60 * time.Second
+	keepAliveIntervalOK   = 8 * time.Minute
 	keepAliveIntervalFail = 10 * time.Second
-	// keepAliveIntervalBlocked must stay longer than qrMintCooldown, so the cooldown lapses between
-	// two blocked pings instead of being pushed out forever.
-	keepAliveIntervalBlocked = 5 * time.Minute
+	// keepAliveIntervalBlocked must exceed both qrMintCooldown and keepAliveIntervalOK.
+	keepAliveIntervalBlocked = 10 * time.Minute
 	// keepAliveTaskName is the bgtask registry key for the keep-alive
 	// heartbeat. Re-registering under the same name supersedes the
 	// previous loop (used when a fresh QR login replaces an active
@@ -109,6 +100,14 @@ const (
 // QRStateChangedEvent is the Wails event carrying each new QRState; the frontend bridge in
 // frontend/src/queries/qrLogin.ts must use the same string.
 const QRStateChangedEvent = "beanfun:qr-state-changed"
+
+// SessionEndedEvent must match the constant in frontend/src/queries/session.ts.
+const SessionEndedEvent = "beanfun:session-ended"
+
+// SessionEnded is the payload of SessionEndedEvent.
+type SessionEnded struct {
+	Reason string `json:"reason"`
+}
 
 // NewLoginService returns a LoginService configured for production TW
 // endpoints. The HTTP client is minted lazily inside StartQRLogin.
@@ -291,10 +290,7 @@ func (s *LoginService) Snapshot() (*BeanfunClient, *Session) {
 	return s.client, s.session
 }
 
-// Reset stops the keep-alive heartbeat and drops the cached client +
-// session. Used when an authenticated request comes back as
-// ErrSessionExpired so the next Snapshot returns nil and the
-// launcher service rejects further calls with ErrLoginRequired.
+// Reset ends the session on an explicit user logout.
 func (s *LoginService) Reset() {
 	// Stop outside the s.mu critical section — see StartQRLogin
 	// comment for the same rationale.
@@ -302,11 +298,33 @@ func (s *LoginService) Reset() {
 	s.mgr.Stop(qrPollTaskName)
 
 	s.mu.Lock()
+	// Stop doesn't wait, so a QR tick already past it must find its generation stale and not install a session.
+	s.qrGeneration++
 	s.client = nil
 	s.session = nil
 	s.pendingQR = nil
 	s.qrState = QRState{Status: QRStatusExpired}
 	s.mu.Unlock()
+}
+
+// EndSessionIfCurrent clears the session only if it still belongs to client, so a stale caller can't log out a newer login.
+func (s *LoginService) EndSessionIfCurrent(client *BeanfunClient) bool {
+	s.mu.Lock()
+	if s.client != client {
+		s.mu.Unlock()
+		return false
+	}
+	s.mgr.Stop(keepAliveTaskName)
+	s.qrGeneration++
+	s.client = nil
+	s.session = nil
+	s.pendingQR = nil
+	s.qrState = QRState{Status: QRStatusExpired}
+	s.mu.Unlock()
+	if s.OnSessionEnded != nil {
+		s.OnSessionEnded(SessionEnded{Reason: "expired"})
+	}
+	return true
 }
 
 // startKeepAliveLocked registers the keep-alive heartbeat against
@@ -318,17 +336,10 @@ func (s *LoginService) Reset() {
 // advanceQRState's pollOutcomeApproved branch, which holds s.mu to
 // store the session atomically with starting the loop).
 //
-// Adaptive cadence: 60 s after each successful ping, 10 s after
-// each failure, 5 min while beanfun reports an IP block. The
-// shorter retry gives a transient network blip a chance to clear
-// before the server's ~55 min idle reaper kicks in, without
-// spamming the endpoint when things are fine; the long one waits
-// out a block without abandoning the session.
-//
 // Both success and failure log at INFO. Debug-only success
 // logging would leave users (and us) staring at hour-long logs
 // with no evidence the loop was alive; an alpha cycle is worth
-// the ~1 line/min of noise so a glance at launcher.log can confirm
+// the ~1 line per interval of noise so a glance at launcher.log can confirm
 // "keep-alive ticking" without instrumenting.
 func (s *LoginService) startKeepAliveLocked(client *BeanfunClient) {
 	slog.Info("keep-alive: heartbeat registered",
@@ -351,6 +362,11 @@ func (s *LoginService) keepAliveTick(ctx context.Context, client *BeanfunClient)
 	}
 
 	var le *LoginError
+	if errors.As(err, &le) && le.Kind == KindSessionExpired {
+		slog.Info("keep-alive: session logged out")
+		s.EndSessionIfCurrent(client)
+		return 0
+	}
 	if errors.As(err, &le) && le.Kind == KindIPBlocked {
 		// Backing off rather than giving up: the block clears on its own, and the session is worth
 		// keeping if it does.

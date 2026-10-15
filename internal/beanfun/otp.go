@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -29,6 +30,27 @@ type otpStep1 struct {
 // already be in the client's jar. See
 // docs/beanfun-login-protocol.md § 9.
 func (c *BeanfunClient) FetchOTP(ctx context.Context, sess *Session, acc Account) (OTPResult, error) {
+	res, err := c.fetchOTP(ctx, sess, acc)
+	if err == nil {
+		return res, nil
+	}
+	causeKind := KindUnknown
+	var le *LoginError
+	if errors.As(err, &le) {
+		causeKind = le.Kind
+	}
+	if causeKind == KindSessionExpired || causeKind == KindIPBlocked || ctx.Err() != nil {
+		return OTPResult{}, err
+	}
+	var pe *LoginError
+	if perr := c.Ping(ctx); errors.As(perr, &pe) && pe.Kind == KindSessionExpired {
+		slog.Info("FetchOTP: echo_token confirms logout", "cause_kind", int(causeKind))
+		return OTPResult{}, ErrSessionExpired()
+	}
+	return OTPResult{}, err
+}
+
+func (c *BeanfunClient) fetchOTP(ctx context.Context, sess *Session, acc Account) (OTPResult, error) {
 	if sess == nil {
 		return OTPResult{}, ErrLoginRequired()
 	}

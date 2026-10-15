@@ -34,7 +34,7 @@ func (f fakeLoginSnapshotter) Snapshot() (*beanfun.BeanfunClient, *beanfun.Sessi
 	return f.client, f.session
 }
 
-func (f fakeLoginSnapshotter) Reset() {}
+func (f fakeLoginSnapshotter) EndSessionIfCurrent(*beanfun.BeanfunClient) bool { return true }
 
 // withLoggedInSession returns a loginSnapshotter whose Snapshot() always
 // reports a non-nil client and session.

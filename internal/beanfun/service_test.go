@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -353,16 +354,29 @@ func TestKeepAliveTick(t *testing.T) {
 		wantLog      string
 		wantNoLog    string
 		wantCooldown bool
+		wantEnded    bool
 	}{
 		{
 			name: "ping ok",
 			install: func(mux *http.ServeMux) {
 				mux.HandleFunc(echoPath, func(w http.ResponseWriter, r *http.Request) {
-					w.WriteHeader(http.StatusOK)
+					writeJS(w, echoLoggedIn)
 				})
 			},
 			wantDelay: keepAliveIntervalOK,
 			wantLog:   "keep-alive: ping ok",
+		},
+		{
+			name: "logged out",
+			install: func(mux *http.ServeMux) {
+				mux.HandleFunc(echoPath, func(w http.ResponseWriter, r *http.Request) {
+					writeJS(w, echoLoggedOut)
+				})
+			},
+			wantDelay: 0,
+			wantLog:   "keep-alive: session logged out",
+			wantNoLog: "keep-alive: ping ok",
+			wantEnded: true,
 		},
 		{
 			name: "server error",
@@ -407,6 +421,10 @@ func TestKeepAliveTick(t *testing.T) {
 				t.Fatal(err)
 			}
 			s := NewLoginServiceWithEndpoints(endpoints, bgtask.New())
+			s.client = c
+			s.session = &Session{}
+			var ended []SessionEnded
+			s.OnSessionEnded = func(ev SessionEnded) { ended = append(ended, ev) }
 
 			got := s.keepAliveTick(context.Background(), c)
 
@@ -423,15 +441,89 @@ func TestKeepAliveTick(t *testing.T) {
 			if armed := s.mintCooldownRemaining() > 0; armed != tt.wantCooldown {
 				t.Errorf("cooldown armed = %v, want %v", armed, tt.wantCooldown)
 			}
+			if tt.wantEnded {
+				if len(ended) != 1 || ended[0].Reason != "expired" {
+					t.Errorf("OnSessionEnded calls = %+v, want one with reason expired", ended)
+				}
+				if cl, sess := s.Snapshot(); cl != nil || sess != nil {
+					t.Errorf("Snapshot = (%v, %v), want the session cleared", cl, sess)
+				}
+			} else {
+				if len(ended) != 0 {
+					t.Errorf("OnSessionEnded calls = %+v, want none", ended)
+				}
+				if cl, _ := s.Snapshot(); cl == nil {
+					t.Error("session was cleared on a tick that did not end it")
+				}
+			}
 		})
 	}
 }
 
-// TestKeepAliveIntervals pins the two properties the blocked cadence exists for. Comparing the
-// delay against the constant elsewhere is internal consistency — these are the absolute checks.
+// TestEndSessionIfCurrent_StaleClientIgnored: a tick from a superseded client must not log out the
+// login that replaced it.
+func TestEndSessionIfCurrent_StaleClientIgnored(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.NewServeMux())
+	t.Cleanup(srv.Close)
+	eps := stubEndpoints(t, srv)
+	s := NewLoginServiceWithEndpoints(eps, bgtask.New())
+	stale, err := NewBeanfunClientWithEndpoints(eps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := NewBeanfunClientWithEndpoints(eps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	s.client = current
+	s.session = &Session{}
+	s.startKeepAliveLocked(current)
+	s.mu.Unlock()
+	calls := 0
+	s.OnSessionEnded = func(SessionEnded) { calls++ }
+
+	if s.EndSessionIfCurrent(stale) {
+		t.Error("EndSessionIfCurrent(stale) = true, want false")
+	}
+	if cl, sess := s.Snapshot(); cl != current || sess == nil {
+		t.Errorf("Snapshot = (%v, %v), want the newer session kept", cl, sess)
+	}
+	if !slices.Contains(s.mgr.List(), keepAliveTaskName) {
+		t.Error("keep-alive was stopped by a stale caller")
+	}
+	if calls != 0 {
+		t.Errorf("OnSessionEnded called %d times, want 0", calls)
+	}
+	if !s.EndSessionIfCurrent(current) {
+		t.Error("EndSessionIfCurrent(current) = false, want true")
+	}
+	if slices.Contains(s.mgr.List(), keepAliveTaskName) {
+		t.Error("keep-alive still registered after ending the current session")
+	}
+}
+
+func TestSessionEndedEventLiteral(t *testing.T) {
+	if SessionEndedEvent != "beanfun:session-ended" {
+		t.Errorf("SessionEndedEvent = %q; the frontend listener hardcodes the old string", SessionEndedEvent)
+	}
+}
+
+// TestKeepAliveIntervals pins the absolute cadence and the ordering the blocked interval exists for.
 func TestKeepAliveIntervals(t *testing.T) {
-	if keepAliveIntervalBlocked != 5*time.Minute {
-		t.Errorf("keepAliveIntervalBlocked = %v, want 5m", keepAliveIntervalBlocked)
+	if keepAliveIntervalOK != 8*time.Minute {
+		t.Errorf("keepAliveIntervalOK = %v, want 8m", keepAliveIntervalOK)
+	}
+	if keepAliveIntervalFail != 10*time.Second {
+		t.Errorf("keepAliveIntervalFail = %v, want 10s", keepAliveIntervalFail)
+	}
+	if keepAliveIntervalBlocked != 10*time.Minute {
+		t.Errorf("keepAliveIntervalBlocked = %v, want 10m", keepAliveIntervalBlocked)
+	}
+	if keepAliveIntervalBlocked <= keepAliveIntervalOK {
+		t.Errorf("blocked interval %v must exceed the healthy interval %v",
+			keepAliveIntervalBlocked, keepAliveIntervalOK)
 	}
 	// Shorter than the cooldown and every blocked ping would push it out again, which is the bug
 	// this replaced.
@@ -569,6 +661,29 @@ func TestQRPollTick_StaleGenerationDiscarded(t *testing.T) {
 	}
 	if names := s.mgr.List(); len(names) != 0 {
 		t.Errorf("bgtask registry = %v, want empty (no keep-alive from a stale login)", names)
+	}
+}
+
+// TestReset_DiscardsInFlightQRApproval covers a QR tick that captured its generation before Reset
+// and finishes after it: the approval must be dropped instead of reviving the session.
+func TestReset_DiscardsInFlightQRApproval(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(serviceTestMux("Success", true))
+	t.Cleanup(srv.Close)
+	s, client, init := newTickFixture(t, srv)
+
+	s.mu.Lock()
+	gen := s.qrGeneration
+	s.mu.Unlock()
+	s.Reset()
+
+	s.qrPollTick(context.Background(), gen, client, init)
+
+	if _, sess := s.Snapshot(); sess != nil {
+		t.Error("a QR approval that finished after Reset installed a session")
+	}
+	if names := s.mgr.List(); len(names) != 0 {
+		t.Errorf("bgtask registry = %v, want empty (no keep-alive after Reset)", names)
 	}
 }
 

@@ -99,7 +99,7 @@ type GamePathStore interface {
 // loginSnapshotter is the minimal *beanfun.LoginService surface Spawn*/Launch/GetOTP need to fake a session in tests.
 type loginSnapshotter interface {
 	Snapshot() (*beanfun.BeanfunClient, *beanfun.Session)
-	Reset()
+	EndSessionIfCurrent(*beanfun.BeanfunClient) bool
 }
 
 // GamePathInfo is the settings page's snapshot: the raw setting, the registry's detection, the effective path, and whether it passes checkGameExe.
@@ -325,7 +325,7 @@ func (s *LauncherService) SpawnGame(account beanfun.Account) error {
 		if isSessionExpired(err) {
 			slog.Warn("SpawnGame: session expired, clearing local state",
 				"sid", beanfun.MaskSID(account.SID))
-			s.login.Reset()
+			s.login.EndSessionIfCurrent(client)
 			return beanfun.ErrLoginRequired()
 		}
 		slog.Error("SpawnGame: FetchOTP failed", "err", err, "sid", beanfun.MaskSID(account.SID))
@@ -527,7 +527,7 @@ func (s *LauncherService) Launch(account beanfun.Account) (LaunchResult, error) 
 		if isSessionExpired(err) {
 			slog.Warn("Launch: session expired, clearing local state",
 				"sid", beanfun.MaskSID(account.SID))
-			s.login.Reset()
+			s.login.EndSessionIfCurrent(client)
 			return LaunchResult{}, beanfun.ErrLoginRequired()
 		}
 		slog.Error("Launch: FetchOTP failed", "err", err, "sid", beanfun.MaskSID(account.SID))
@@ -642,7 +642,7 @@ func (s *LauncherService) GetOTP(account beanfun.Account) (string, error) {
 		if isSessionExpired(err) {
 			slog.Warn("GetOTP: session expired, clearing local state",
 				"sid", beanfun.MaskSID(account.SID))
-			s.login.Reset()
+			s.login.EndSessionIfCurrent(client)
 			return "", beanfun.ErrLoginRequired()
 		}
 		slog.Error("GetOTP: FetchOTP failed", "err", err, "sid", beanfun.MaskSID(account.SID))
