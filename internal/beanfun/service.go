@@ -302,6 +302,8 @@ func (s *LoginService) Reset() {
 	s.mgr.Stop(qrPollTaskName)
 
 	s.mu.Lock()
+	// Stop doesn't wait, so a QR tick already past it must find its generation stale and not install a session.
+	s.qrGeneration++
 	s.client = nil
 	s.session = nil
 	s.pendingQR = nil

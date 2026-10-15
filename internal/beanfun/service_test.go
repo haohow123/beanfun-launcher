@@ -572,6 +572,29 @@ func TestQRPollTick_StaleGenerationDiscarded(t *testing.T) {
 	}
 }
 
+// TestReset_DiscardsInFlightQRApproval covers a QR tick that captured its generation before Reset
+// and finishes after it: the approval must be dropped instead of reviving the session.
+func TestReset_DiscardsInFlightQRApproval(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(serviceTestMux("Success", true))
+	t.Cleanup(srv.Close)
+	s, client, init := newTickFixture(t, srv)
+
+	s.mu.Lock()
+	gen := s.qrGeneration
+	s.mu.Unlock()
+	s.Reset()
+
+	s.qrPollTick(context.Background(), gen, client, init)
+
+	if _, sess := s.Snapshot(); sess != nil {
+		t.Error("a QR approval that finished after Reset installed a session")
+	}
+	if names := s.mgr.List(); len(names) != 0 {
+		t.Errorf("bgtask registry = %v, want empty (no keep-alive after Reset)", names)
+	}
+}
+
 // TestQRErrorState_ScrubsCredentials pins the one thing on this path that could leak: a transport
 // error carries the full request URL, and that URL's query is where the session key lives.
 func TestQRErrorState_ScrubsCredentials(t *testing.T) {

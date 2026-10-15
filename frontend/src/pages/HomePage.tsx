@@ -1,5 +1,4 @@
-import { useQueryClient } from "@tanstack/react-query";
-import { useAtom, useSetAtom } from "jotai";
+import { useAtom } from "jotai";
 import { useEffect, useRef, useState } from "react";
 
 import { type Account } from "@bindings/beanfun";
@@ -15,7 +14,7 @@ import {
   useLaunchAccountMutation,
   useSpawnGameCleanMutation,
 } from "@/queries/launch";
-import { loggedInAtom } from "@/state/auth";
+import { useLogoutMutation } from "@/queries/session";
 import { settingsOpenAtom } from "@/state/settings";
 
 interface FallbackOTP {
@@ -58,9 +57,8 @@ function statusPillFor(
 }
 
 export function HomePage() {
-  const setLoggedIn = useSetAtom(loggedInAtom);
   const [settingsOpen, setSettingsOpen] = useAtom(settingsOpenAtom);
-  const qc = useQueryClient();
+  const logoutMutation = useLogoutMutation();
   const accounts = useAccountsQuery();
   const gameState = useGameStateQuery();
   const launchAccount = useLaunchAccountMutation();
@@ -83,8 +81,7 @@ export function HomePage() {
   const lastUsedSid = gameState.data?.lastUsedSid ?? "";
 
   function logout() {
-    qc.clear();
-    setLoggedIn(false);
+    logoutMutation.mutate();
   }
 
   function retry() {
@@ -348,6 +345,7 @@ export function HomePage() {
             size="sm"
             className="bg-background/80 backdrop-blur"
             onClick={logout}
+            disabled={logoutMutation.isPending}
           >
             登出
           </Button>
