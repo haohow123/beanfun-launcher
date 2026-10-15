@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -169,17 +170,9 @@ func (c *BeanfunClient) portalURL(path string) (*url.URL, error) {
 	return u, nil
 }
 
-// Ping hits the Beanfun portal's session keep-alive endpoint so the
-// server's idle timer is reset. It runs every 60 seconds once login
-// finalizes.
-//
-// Body is intentionally discarded — the request is only useful for
-// the server-side side effect, so the IP-block check reads the
-// redirect path rather than the body. Failures are returned and the
-// caller (LoginService.keepAliveTick) logs them at WARN and retries
-// sooner; a single failed tick doesn't mean the session is dead, and
-// the next real user action (FetchOTP etc.) detects expiry
-// definitively from the response body.
+var echoTokenResultRE = regexp.MustCompile(`EchoTokenResult\(\s*\{\s*ResultCode\s*:\s*(-?\d+)`)
+
+// Ping reads the logged-in verdict from echo_token.ashx's body, since the endpoint answers HTTP 200 either way.
 func (c *BeanfunClient) Ping(ctx context.Context) error {
 	u, err := c.portalURL("beanfun_block/generic_handlers/echo_token.ashx")
 	if err != nil {
@@ -197,12 +190,22 @@ func (c *BeanfunClient) Ping(ctx context.Context) error {
 	if err != nil {
 		return ErrHTTP(err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-	if isIPBlockedResponse(resp) {
-		return ErrIPBlocked()
+	body, err := c.boundedRead(resp)
+	if err != nil {
+		return err
 	}
 	if resp.StatusCode >= 400 {
 		return ErrHTTP(fmt.Errorf("echo_token.ashx returned HTTP %d", resp.StatusCode))
 	}
-	return nil
+	m := echoTokenResultRE.FindSubmatch(body)
+	if m == nil {
+		return ErrHTTP(fmt.Errorf("echo_token.ashx: unrecognised reply (len=%d)", len(body)))
+	}
+	switch string(m[1]) {
+	case "1":
+		return nil
+	case "0":
+		return ErrSessionExpired()
+	}
+	return ErrHTTP(fmt.Errorf("echo_token.ashx: unrecognised reply (len=%d)", len(body)))
 }

@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useSetAtom } from "jotai";
+import { useAtom, useSetAtom } from "jotai";
 import { useEffect } from "react";
 
 import { QRState, QRStatus } from "@bindings/beanfun";
@@ -13,23 +13,26 @@ import {
   useQRMintQuery,
   useQRStatusQuery,
 } from "@/queries/qrLogin";
-import { loggedInAtom } from "@/state/auth";
+import { loggedInAtom, sessionEndReasonAtom } from "@/state/auth";
 
 export function LoginPage() {
   const setLoggedIn = useSetAtom(loggedInAtom);
+  const [sessionEndReason, setSessionEndReason] = useAtom(sessionEndReasonAtom);
   const qc = useQueryClient();
   const qrMint = useQRMintQuery();
   const statusQuery = useQRStatusQuery(qrMint.isSuccess);
 
   useEffect(() => {
     if (statusQuery.data?.status === QRStatus.QRStatusApproved) {
+      setSessionEndReason(null);
       setLoggedIn(true);
     }
-  }, [statusQuery.data, setLoggedIn]);
+  }, [statusQuery.data, setLoggedIn, setSessionEndReason]);
 
   // Clears the stale Expired tile; the new state arrives by push once
   // StartQRLogin has registered the backend loop.
   function regenerate() {
+    setSessionEndReason(null);
     qc.setQueryData(
       qrStatusQueryKey,
       QRState.createFrom({ status: QRStatus.QRStatusPending }),
@@ -132,6 +135,9 @@ export function LoginPage() {
 
       <section className="flex flex-1 flex-col items-center gap-3 px-4 py-6">
         <h2 className="text-base font-semibold">登入 Beanfun</h2>
+        {sessionEndReason === "expired" && (
+          <p className="text-sm text-amber-600">登入已失效，請重新掃碼</p>
+        )}
         {renderQR()}
         {renderStatus()}
         <Button

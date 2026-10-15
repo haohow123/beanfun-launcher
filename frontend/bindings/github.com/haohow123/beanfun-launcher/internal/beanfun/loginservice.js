@@ -17,6 +17,15 @@ import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Cr
 import * as $models from "./models.js";
 
 /**
+ * EndSessionIfCurrent clears the session only if it still belongs to client, so a stale caller can't log out a newer login.
+ * @param {$models.BeanfunClient | null} client
+ * @returns {$CancellablePromise<boolean>}
+ */
+export function EndSessionIfCurrent(client) {
+    return $Call.ByID(3235674126, client);
+}
+
+/**
  * GetAccounts returns the list of game accounts under the active
  * session. Requires StartQRLogin and an approved poll to have completed
  * successfully (session != nil). See docs/beanfun-login-protocol.md § 8.
@@ -40,10 +49,7 @@ export function QRStatusNow() {
 }
 
 /**
- * Reset stops the keep-alive heartbeat and drops the cached client +
- * session. Used when an authenticated request comes back as
- * ErrSessionExpired so the next Snapshot returns nil and the
- * launcher service rejects further calls with ErrLoginRequired.
+ * Reset ends the session on an explicit user logout.
  * @returns {$CancellablePromise<void>}
  */
 export function Reset() {

@@ -58,6 +58,11 @@ func main() {
 			app.Event.Emit(beanfun.QRStateChangedEvent, st)
 		}
 	}
+	loginSvc.OnSessionEnded = func(ev beanfun.SessionEnded) {
+		if app := application.Get(); app != nil {
+			app.Event.Emit(beanfun.SessionEndedEvent, ev)
+		}
+	}
 	settingsPath, err := settings.DefaultPath()
 	if err != nil {
 		slog.Warn("settings: no config dir, using defaults in memory", "err", err)

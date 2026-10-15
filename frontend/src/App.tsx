@@ -6,6 +6,7 @@ import { SettingsPage } from "@/pages/SettingsPage";
 import { useGameStateEventBridge } from "@/queries/gameState";
 import { useMapleStatusEventBridge } from "@/queries/mapleStatus";
 import { useQRStateEventBridge } from "@/queries/qrLogin";
+import { useSessionEndedBridge } from "@/queries/session";
 import { loggedInAtom } from "@/state/auth";
 import { settingsOpenAtom } from "@/state/settings";
 
@@ -18,6 +19,7 @@ function App() {
   useGameStateEventBridge();
   useMapleStatusEventBridge();
   useQRStateEventBridge();
+  useSessionEndedBridge();
 
   const loggedIn = useAtomValue(loggedInAtom);
   const settingsOpen = useAtomValue(settingsOpenAtom);

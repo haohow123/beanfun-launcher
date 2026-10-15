@@ -14,7 +14,7 @@ import {
   useLaunchAccountMutation,
   useSpawnGameCleanMutation,
 } from "@/queries/launch";
-import { useLogoutMutation } from "@/queries/session";
+import { useLocalSignOut, useLogoutMutation } from "@/queries/session";
 import { settingsOpenAtom } from "@/state/settings";
 
 interface FallbackOTP {
@@ -59,6 +59,14 @@ function statusPillFor(
 export function HomePage() {
   const [settingsOpen, setSettingsOpen] = useAtom(settingsOpenAtom);
   const logoutMutation = useLogoutMutation();
+  const localSignOut = useLocalSignOut();
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
   const accounts = useAccountsQuery();
   const gameState = useGameStateQuery();
   const launchAccount = useLaunchAccountMutation();
@@ -88,12 +96,11 @@ export function HomePage() {
     accounts.refetch();
   }
 
-  // The backend folds session expiry into ErrLoginRequired (server
-  // returns 「尚未登入」, backend Reset()s its local state). Match
-  // that on the frontend by triggering the same path as 登出.
+  // The backend has already ended the session when it returns ErrLoginRequired, so only the local sign-out is left.
   function handleMutationError(err: unknown) {
+    if (!mountedRef.current) return;
     if (err instanceof Error && err.message.includes("login required")) {
-      logout();
+      localSignOut();
     }
   }
 

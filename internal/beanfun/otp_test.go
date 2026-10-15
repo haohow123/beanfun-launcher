@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -299,6 +300,91 @@ func TestBeanfunClient_FetchOTP_Step1SessionExpired(t *testing.T) {
 	var le *LoginError
 	if !errors.As(err, &le) || le.Kind != KindSessionExpired {
 		t.Errorf("got %v, want KindSessionExpired", err)
+	}
+}
+
+// TestBeanfunClient_FetchOTP_EchoTokenConfirmsLogout covers the logged-out error page that carries
+// no session-expired marker: only echo_token can tell it apart from a genuine OTP failure.
+func TestBeanfunClient_FetchOTP_EchoTokenConfirmsLogout(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		echoReply   string
+		wantExpired bool
+	}{
+		{"echo says logged out", echoLoggedOut, true},
+		{"echo says logged in", echoLoggedIn, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			mux := http.NewServeMux()
+			mux.HandleFunc("/beanfun_block/game_zone/game_start_step2.aspx", func(w http.ResponseWriter, _ *http.Request) {
+				writeHTML(w, `<html><head><title>Err Msg</title></head><body>error</body></html>`)
+			})
+			mux.HandleFunc("/beanfun_block/generic_handlers/echo_token.ashx", func(w http.ResponseWriter, _ *http.Request) {
+				writeJS(w, tt.echoReply)
+			})
+			c, _ := newTestClient(t, mux)
+
+			_, err := c.FetchOTP(context.Background(),
+				&Session{ServiceCode: "x", ServiceRegion: "y", WebToken: "z"},
+				Account{SID: "s", SSN: "1", SName: "n"})
+			var le *LoginError
+			if !errors.As(err, &le) {
+				t.Fatalf("got %v, want a LoginError", err)
+			}
+			if got := le.Kind == KindSessionExpired; got != tt.wantExpired {
+				t.Errorf("kind = %v, expired = %v, want %v", le.Kind, got, tt.wantExpired)
+			}
+			if !tt.wantExpired && le.Kind != KindOTPInit {
+				t.Errorf("kind = %v, want the original KindOTPInit", le.Kind)
+			}
+		})
+	}
+}
+
+// TestBeanfunClient_FetchOTP_ShortCircuitsEchoToken: a step-1 failure that already names its cause must not cost a second round trip to echo_token.
+func TestBeanfunClient_FetchOTP_ShortCircuitsEchoToken(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		step1    http.HandlerFunc
+		wantKind LoginErrorKind
+	}{
+		{"session expired", func(w http.ResponseWriter, _ *http.Request) {
+			writeHTML(w, `<div id="divMsg">尚未登入，請重新登入</div>`)
+		}, KindSessionExpired},
+		{"ip blocked", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/TW/BlockIPMessage.htm", http.StatusFound)
+		}, KindIPBlocked},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var echoHits int32
+			mux := http.NewServeMux()
+			mux.HandleFunc("/beanfun_block/game_zone/game_start_step2.aspx", tt.step1)
+			mux.HandleFunc("/TW/BlockIPMessage.htm", func(w http.ResponseWriter, _ *http.Request) {
+				writeHTML(w, "<html>locked</html>")
+			})
+			mux.HandleFunc("/beanfun_block/generic_handlers/echo_token.ashx", func(w http.ResponseWriter, _ *http.Request) {
+				atomic.AddInt32(&echoHits, 1)
+				writeJS(w, echoLoggedOut)
+			})
+			c, _ := newTestClient(t, mux)
+
+			_, err := c.FetchOTP(context.Background(),
+				&Session{ServiceCode: "x", ServiceRegion: "y", WebToken: "z"},
+				Account{SID: "s", SSN: "1", SName: "n"})
+			var le *LoginError
+			if !errors.As(err, &le) || le.Kind != tt.wantKind {
+				t.Fatalf("got %v, want Kind=%d", err, tt.wantKind)
+			}
+			if got := atomic.LoadInt32(&echoHits); got != 0 {
+				t.Errorf("echo_token hits = %d, want 0", got)
+			}
+		})
 	}
 }
 
