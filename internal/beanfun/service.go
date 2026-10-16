@@ -48,7 +48,7 @@ const maxLogins = 5
 
 // login is one signed-in Beanfun account with its own client, cookie jar and session.
 type login struct {
-	id, label, mainID string // mainID is never logged or sent to the frontend
+	id, label, mainID string // mainID goes to the local log only, never to the frontend
 	client            *BeanfunClient
 	session           *Session
 }
@@ -446,13 +446,13 @@ func (s *LoginService) keepAliveTick(ctx context.Context, id string, client *Bea
 	cancel()
 
 	if err == nil {
-		slog.Info("keep-alive: ping ok", "next_interval", keepAliveIntervalOK)
+		slog.Info("keep-alive: ping ok", "login", id, "next_interval", keepAliveIntervalOK)
 		return keepAliveIntervalOK
 	}
 
 	var le *LoginError
 	if errors.As(err, &le) && le.Kind == KindSessionExpired {
-		slog.Info("keep-alive: session logged out")
+		slog.Info("keep-alive: session logged out", "login", id)
 		s.endSessionIfCurrent(id, client)
 		return 0
 	}
@@ -460,13 +460,13 @@ func (s *LoginService) keepAliveTick(ctx context.Context, id string, client *Bea
 		// Backing off rather than giving up: the block clears on its own, and the session is worth
 		// keeping if it does.
 		slog.Warn("keep-alive: ip blocked, backing off",
-			"err", err, "next_interval", keepAliveIntervalBlocked)
+			"login", id, "err", err, "next_interval", keepAliveIntervalBlocked)
 		s.armCooldownIfBlocked(err)
 		return keepAliveIntervalBlocked
 	}
 
 	slog.Warn("keep-alive: ping failed (retrying sooner)",
-		"err", err, "next_interval", keepAliveIntervalFail)
+		"login", id, "err", err, "next_interval", keepAliveIntervalFail)
 	return keepAliveIntervalFail
 }
 
@@ -554,7 +554,7 @@ func (s *LoginService) advanceQRState(ctx context.Context, gen uint64, client *B
 			return qrErrorState(prev, ErrTooManyLogins()), true
 		}
 		s.notifyLoginsChanged(infos)
-		slog.Info("LoginService: login complete", "session", sess, "logins", len(infos))
+		slog.Info("LoginService: login complete", "session", sess, "main_account_id", mainID, "logins", len(infos))
 		return QRState{Status: QRStatusApproved}, true
 	default:
 		return QRState{Status: prev.Status, Error: "unknown poll outcome"}, false

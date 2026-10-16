@@ -377,8 +377,8 @@ func TestSessionEnded_JSONShape(t *testing.T) {
 	}
 }
 
-// TestMainIDNeverLeaves pins that the raw MainAccountID reaches neither the logs nor anything the frontend receives.
-func TestMainIDNeverLeaves(t *testing.T) {
+// TestMainIDLoggedButNotSentToFrontend pins that the raw MainAccountID is logged locally yet never reaches anything the frontend receives.
+func TestMainIDLoggedButNotSentToFrontend(t *testing.T) {
 	const secret = "SECRETMAINID1234"
 	logs := captureLogs(t)
 	s := multiLoginService(t, secret)
@@ -396,8 +396,10 @@ func TestMainIDNeverLeaves(t *testing.T) {
 	s.endSessionIfCurrent("1", c)
 	listed, _ := json.Marshal(s.ListLogins())
 
+	if !strings.Contains(logs.String(), `main_account_id=`+secret) {
+		t.Errorf("login complete log line lacks main_account_id=%s: %s", secret, logs.String())
+	}
 	for name, text := range map[string]string{
-		"logs":    logs.String(),
 		"emitted": strings.Join(emitted, "\n"),
 		"listed":  string(listed),
 	} {
