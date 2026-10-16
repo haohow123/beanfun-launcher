@@ -445,14 +445,14 @@ func TestKeepAliveTick(t *testing.T) {
 				if len(ended) != 1 || ended[0].Reason != "expired" {
 					t.Errorf("OnSessionEnded calls = %+v, want one with reason expired", ended)
 				}
-				if cl, sess := s.Snapshot(); cl != nil || sess != nil {
+				if cl, sess := s.snapshot(); cl != nil || sess != nil {
 					t.Errorf("Snapshot = (%v, %v), want the session cleared", cl, sess)
 				}
 			} else {
 				if len(ended) != 0 {
 					t.Errorf("OnSessionEnded calls = %+v, want none", ended)
 				}
-				if cl, _ := s.Snapshot(); cl == nil {
+				if cl, _ := s.snapshot(); cl == nil {
 					t.Error("session was cleared on a tick that did not end it")
 				}
 			}
@@ -484,10 +484,10 @@ func TestEndSessionIfCurrent_StaleClientIgnored(t *testing.T) {
 	calls := 0
 	s.OnSessionEnded = func(SessionEnded) { calls++ }
 
-	if s.EndSessionIfCurrent(stale) {
+	if s.endSessionIfCurrent(stale) {
 		t.Error("EndSessionIfCurrent(stale) = true, want false")
 	}
-	if cl, sess := s.Snapshot(); cl != current || sess == nil {
+	if cl, sess := s.snapshot(); cl != current || sess == nil {
 		t.Errorf("Snapshot = (%v, %v), want the newer session kept", cl, sess)
 	}
 	if !slices.Contains(s.mgr.List(), keepAliveTaskName) {
@@ -496,7 +496,7 @@ func TestEndSessionIfCurrent_StaleClientIgnored(t *testing.T) {
 	if calls != 0 {
 		t.Errorf("OnSessionEnded called %d times, want 0", calls)
 	}
-	if !s.EndSessionIfCurrent(current) {
+	if !s.endSessionIfCurrent(current) {
 		t.Error("EndSessionIfCurrent(current) = false, want true")
 	}
 	if slices.Contains(s.mgr.List(), keepAliveTaskName) {
@@ -679,7 +679,7 @@ func TestReset_DiscardsInFlightQRApproval(t *testing.T) {
 
 	s.qrPollTick(context.Background(), gen, client, init)
 
-	if _, sess := s.Snapshot(); sess != nil {
+	if _, sess := s.snapshot(); sess != nil {
 		t.Error("a QR approval that finished after Reset installed a session")
 	}
 	if names := s.mgr.List(); len(names) != 0 {
