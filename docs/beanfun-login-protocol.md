@@ -580,7 +580,8 @@ opened the game outside our launcher, M8's `Launch` (PostMessage
 WM_CHAR injection into the running window) survives as the fallback,
 routed via the FE's `useGameStateQuery`: button label flips to
 「帶入帳密」 when `running=true`, calling `LauncherService.Launch`
-instead of `SpawnGame`.
+instead of `SpawnGame`. Since #120 it only types into a window whose
+process passes the signer check in "Executable trust" below.
 
 ### Deferred: Locale_Remulator
 
@@ -603,6 +604,42 @@ Adding LR is its own scope:
 - 32-vs-64-bit DLL selection from `IsWow64Process2`.
 
 Deferred to **Milestone 6.5**.
+
+## Executable trust
+
+The SID and OTP go to whichever program sits at the configured path
+(argv spawn) or behind the matching window class (`Launch`), and both
+the path and the window are reachable by anything running as the same
+user. So before handing them over, the launcher checks the program's
+Authenticode signature.
+
+- **Signer rule**: `WinVerifyTrustEx` must succeed, and the signer
+  certificate's subject must carry `O=NEXON Korea Corporation` and
+  `SERIALNUMBER=110111-3320241`, both compared exactly. Measured
+  2026-10-16 on a TW install: `Status=Valid`, an EV code-signing
+  certificate issued to the game's developer, not to Gamania. The
+  thumbprint is not pinned, so a renewed NEXON certificate still
+  passes. See `signerMatches` in `internal/launcher/signature.go`.
+- **No network**: revocation checking is off and URL retrieval is
+  cache-only, so the check never contacts a CA (security principle 2)
+  and never stalls a launch on an unreachable OCSP or CRL server.
+- **No override**: a failed check blocks the hand-over with no
+  "trust this file" escape. An override could only live in
+  `settings.json`, and anything able to edit that file could mark
+  itself trusted. If NEXON ever changes the signing subject, the rule
+  needs a launcher release.
+- **Argv spawn**: the path is checked with the other game-path checks
+  before the OTP fetch, so a bad path fails fast, and checked again
+  after the OTP arrives, right before `ShellExecuteW`
+  (`SpawnGame` in `internal/launcher/service.go`).
+- **`Launch`**: the window's PID is resolved to an image path
+  (`OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)` and
+  `QueryFullProcessImageName`), and that file is checked before the
+  OTP is fetched. Right before typing, the PID behind the window is
+  read again and must match. A failure returns an error and never
+  hands the OTP to the UI for manual paste.
+- **Known limitation, not mitigated**: `Launch` verifies the file that currently sits at the window's process image path, not the image that is actually running. A program running as the same user can start from its own path, open a window of the game's class, rename itself, then copy the genuine signed exe back to the original path; the check passes and no timing race is needed. The PID re-check only detects a window changing owner, not this.
+- **Residual gap**: `WinVerifyTrust` and the signer-subject read each open the file separately, so the file can differ between the two. The same holds between the last check and `ShellExecuteW`, and between the PID re-check and `PostMessageW`.
 
 ## Keep-alive
 

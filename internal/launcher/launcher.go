@@ -65,6 +65,21 @@ func ErrGameExeMissing() *LauncherError {
 	return &LauncherError{Kind: KindGameExeMissing, Msg: problemExeMissing}
 }
 
+// ErrUntrustedGameWindow is returned when the window about to receive credentials does not belong to the signed game.
+func ErrUntrustedGameWindow() *LauncherError {
+	return &LauncherError{Kind: KindSpawnFailed, Msg: "game window is not the signed game"}
+}
+
+// ErrGameWindowUnreadable is returned when the game window's owning process cannot be inspected.
+func ErrGameWindowUnreadable() *LauncherError {
+	return &LauncherError{Kind: KindSpawnFailed, Msg: "cannot inspect the game window's process"}
+}
+
+// ErrGameExeUnsigned is returned when the game executable lacks a valid NEXON signature.
+func ErrGameExeUnsigned() *LauncherError {
+	return &LauncherError{Kind: KindGamePathInvalid, Msg: problemUnsigned}
+}
+
 // ErrGamePathNotLocal is returned when the resolved game path fails the
 // local-path rule (a UNC share or mapped network drive).
 func ErrGamePathNotLocal() *LauncherError {

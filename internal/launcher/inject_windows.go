@@ -13,6 +13,7 @@ import (
 func init() {
 	findGameWindowFn = findGameWindow
 	injectFn = injectCredentials
+	windowImagePathFn = windowImagePath
 }
 
 // Win32 procs we need but aren't exported by golang.org/x/sys/windows.
@@ -141,4 +142,24 @@ func postMessage(hwnd uintptr, msg uint32, wparam, lparam uintptr) error {
 		return fmt.Errorf("PostMessageW(hwnd=0x%X, msg=0x%X, wparam=0x%X): %w", hwnd, msg, wparam, callErr)
 	}
 	return nil
+}
+
+// windowImagePath resolves the process behind hwnd to its PID and full executable path.
+func windowImagePath(hwnd uintptr) (uint32, string, error) {
+	pid, err := getWindowPID(hwnd)
+	if err != nil {
+		return 0, "", err
+	}
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
+	if err != nil {
+		return 0, "", fmt.Errorf("OpenProcess(pid=%d): %w", pid, err)
+	}
+	defer func() { _ = windows.CloseHandle(h) }()
+
+	buf := make([]uint16, windows.MAX_LONG_PATH)
+	n := uint32(len(buf))
+	if err := windows.QueryFullProcessImageName(h, 0, &buf[0], &n); err != nil {
+		return 0, "", fmt.Errorf("QueryFullProcessImageName(pid=%d): %w", pid, err)
+	}
+	return pid, windows.UTF16ToString(buf[:n]), nil
 }

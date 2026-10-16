@@ -6,10 +6,11 @@ personal data beyond what is strictly required to operate.
 ## What the app does
 
 - Logs in to Beanfun via QR code against Gamania's own servers.
-- Launches the MapleStory game executable on your local machine. If you
-  set a custom path in Settings, you are trusting that executable: the
-  launcher hands it your account identifier and a one-time OTP as launch
-  arguments (code-signature verification is tracked separately, see #120).
+- Launches the MapleStory game executable on your local machine. Before
+  handing it your account identifier and a one-time OTP as launch
+  arguments, the launcher checks that the executable carries a valid
+  signature from NEXON Korea Corporation. The check runs entirely on your
+  machine and makes no network connection.
 - Probes Gamania game-server IPs to display server-up status
   (TCP SYN + close, no application data sent).
 
@@ -35,8 +36,12 @@ personal data beyond what is strictly required to operate.
 
 - **Session tokens** (SKey, WebToken) live only in process
   memory and are zeroed on Reset / logout. Never written to disk.
-- **OTP** credentials are zeroed after being injected into the
-  game's login form.
+- **OTP** credentials reach the game either as launch arguments
+  (when the launcher starts it) or by being typed into an already
+  open game window, and only after the game's NEXON signature has
+  been checked. The launcher's own copy is zeroed once it has been
+  handed over; the copy inside the game process lives as long as
+  the game does.
 - **Log file** under `~/Library/Caches/beanfun-launcher/` (macOS)
   or `%LOCALAPPDATA%\beanfun-launcher\` (Windows) records
   operational events with all token values redacted. The file
