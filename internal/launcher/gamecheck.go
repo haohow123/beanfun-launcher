@@ -26,6 +26,7 @@ const (
 	problemNotAFile     = "game path is not a file"
 	problemNotExe       = "game path is not an exe"
 	problemExeMissing   = "game executable not found"
+	problemUnsigned     = "game executable is not signed by NEXON"
 )
 
 // Warning codes appended to a passing GameCheck for soft issues that don't affect OK.
@@ -82,6 +83,12 @@ func checkGameExe(path string) GameCheck {
 		return check
 	}
 
+	if v := verifyGameSignatureFn(path); !v.OK {
+		slog.Warn("checkGameExe: signature rejected", "path", path, "reason", v.Reason, "org", v.Org, "serial", v.Serial)
+		check.Problem = problemUnsigned
+		return check
+	}
+
 	check.OK = true
 	if !strings.EqualFold(filepath.Base(path), gameExeName) {
 		check.Warnings = append(check.Warnings, warnUnexpectedName)
@@ -117,6 +124,8 @@ func errFromGameCheck(check GameCheck) *LauncherError {
 		return ErrGameExeMissing()
 	case problemNoGamePath:
 		return ErrNoGamePath()
+	case problemUnsigned:
+		return ErrGameExeUnsigned()
 	default:
 		slog.Warn("errFromGameCheck: unrecognized problem code, falling back to ErrNoGamePath", "problem", check.Problem)
 		return ErrNoGamePath()

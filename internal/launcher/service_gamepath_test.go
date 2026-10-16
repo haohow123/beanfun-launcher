@@ -58,6 +58,7 @@ func withCountingFindGameWindow(t *testing.T) *int {
 
 func withLocalGameExe(t *testing.T) string {
 	t.Helper()
+	withSignature(t, signatureOK)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "MapleStory.exe")
 	if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {

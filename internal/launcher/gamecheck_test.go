@@ -6,6 +6,33 @@ import (
 	"testing"
 )
 
+// withSignature swaps verifyGameSignatureFn for a fixed verdict, restoring the original via t.Cleanup.
+func withSignature(t *testing.T, verdict signatureVerdict) {
+	t.Helper()
+	orig := verifyGameSignatureFn
+	verifyGameSignatureFn = func(string) signatureVerdict { return verdict }
+	t.Cleanup(func() { verifyGameSignatureFn = orig })
+}
+
+var signatureOK = signatureVerdict{OK: true}
+
+func TestCheckGameExe_Unsigned(t *testing.T) {
+	withSignature(t, signatureVerdict{Reason: "unsigned"})
+	dir := t.TempDir()
+	path := filepath.Join(dir, "MapleStory.exe")
+	if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+		t.Fatalf("WriteFile() = %v", err)
+	}
+
+	got := checkGameExe(path)
+	if got.OK {
+		t.Fatalf("checkGameExe(unsigned) OK = true, want false")
+	}
+	if got.Problem != problemUnsigned {
+		t.Errorf("Problem = %q, want %q", got.Problem, problemUnsigned)
+	}
+}
+
 func TestCheckGameExe_NoPath(t *testing.T) {
 	got := checkGameExe("")
 	if got.OK {
@@ -115,6 +142,7 @@ func TestCheckGameExe_Symlink_RejectsBeforeStat(t *testing.T) {
 // TestCheckGameExe_NotExe pins the extension gate: anything but .exe
 // (case-insensitive) is a hard failure, checked before any disk access.
 func TestCheckGameExe_NotExe(t *testing.T) {
+	withSignature(t, signatureOK)
 	dir := t.TempDir()
 	tests := []struct {
 		file string
@@ -144,6 +172,7 @@ func TestCheckGameExe_NotExe(t *testing.T) {
 }
 
 func TestCheckGameExe_OK_NoWarnings(t *testing.T) {
+	withSignature(t, signatureOK)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "MapleStory.exe")
 	if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
@@ -163,6 +192,7 @@ func TestCheckGameExe_OK_NoWarnings(t *testing.T) {
 }
 
 func TestCheckGameExe_OK_WithDataWz(t *testing.T) {
+	withSignature(t, signatureOK)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "MapleStory.exe")
 	if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
@@ -179,6 +209,7 @@ func TestCheckGameExe_OK_WithDataWz(t *testing.T) {
 }
 
 func TestCheckGameExe_WarnUnexpectedName(t *testing.T) {
+	withSignature(t, signatureOK)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "SomeOtherGame.exe")
 	if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
@@ -201,6 +232,7 @@ func TestCheckGameExe_WarnUnexpectedName(t *testing.T) {
 // being case-insensitive, since Windows file systems are case-preserving
 // but not case-sensitive.
 func TestCheckGameExe_LowercaseName_NoWarning(t *testing.T) {
+	withSignature(t, signatureOK)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "maplestory.exe")
 	if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
@@ -220,6 +252,7 @@ func TestCheckGameExe_LowercaseName_NoWarning(t *testing.T) {
 }
 
 func TestCheckGameExe_WarnNoGameData(t *testing.T) {
+	withSignature(t, signatureOK)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "MapleStory.exe")
 	if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
@@ -255,6 +288,7 @@ func TestErrFromGameCheck(t *testing.T) {
 		{problem: "not a local file", wantKind: KindGamePathInvalid, wantMsg: "not a local file"},
 		{problem: "game path is not a file", wantKind: KindGamePathInvalid, wantMsg: "game path is not a file"},
 		{problem: "game path is not an exe", wantKind: KindGamePathInvalid, wantMsg: "game path is not an exe"},
+		{problem: "game executable is not signed by NEXON", wantKind: KindGamePathInvalid, wantMsg: "game executable is not signed by NEXON"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.problem, func(t *testing.T) {

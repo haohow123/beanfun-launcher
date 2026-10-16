@@ -65,6 +65,11 @@ func ErrGameExeMissing() *LauncherError {
 	return &LauncherError{Kind: KindGameExeMissing, Msg: problemExeMissing}
 }
 
+// ErrGameExeUnsigned is returned when the game executable lacks a valid NEXON signature.
+func ErrGameExeUnsigned() *LauncherError {
+	return &LauncherError{Kind: KindGamePathInvalid, Msg: problemUnsigned}
+}
+
 // ErrGamePathNotLocal is returned when the resolved game path fails the
 // local-path rule (a UNC share or mapped network drive).
 func ErrGamePathNotLocal() *LauncherError {

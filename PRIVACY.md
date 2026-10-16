@@ -6,10 +6,11 @@ personal data beyond what is strictly required to operate.
 ## What the app does
 
 - Logs in to Beanfun via QR code against Gamania's own servers.
-- Launches the MapleStory game executable on your local machine. If you
-  set a custom path in Settings, you are trusting that executable: the
-  launcher hands it your account identifier and a one-time OTP as launch
-  arguments (code-signature verification is tracked separately, see #120).
+- Launches the MapleStory game executable on your local machine. Before
+  handing it your account identifier and a one-time OTP as launch
+  arguments, the launcher checks that the executable carries a valid
+  signature from NEXON Korea Corporation. The check runs entirely on your
+  machine and makes no network connection.
 - Probes Gamania game-server IPs to display server-up status
   (TCP SYN + close, no application data sent).
 

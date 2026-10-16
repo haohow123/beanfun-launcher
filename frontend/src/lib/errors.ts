@@ -17,6 +17,8 @@ const FRIENDLY: ReadonlyArray<readonly [string, string]> = [
   // internal/launcher/launcher.go ErrNoGamePath / ErrGameExeMissing
   ["no game path", "找不到遊戲執行檔，請到設定指定遊戲位置"],
   ["game executable not found", "找不到遊戲執行檔，請到設定指定遊戲位置"],
+  // internal/launcher/launcher.go ErrGameExeUnsigned
+  ["game executable is not signed by NEXON", "遊戲執行檔不是 NEXON 簽章的版本，已停止啟動"],
   // internal/launcher/launcher.go ErrGamePathNotAFile
   ["game path is not a file", "指定的遊戲位置不是檔案"],
   // internal/launcher/launcher.go ErrGamePathNotExe
@@ -48,6 +50,7 @@ const GAME_CHECK_PROBLEMS: Readonly<Record<string, string>> = {
   "not a local file": "只支援本機磁碟上的檔案",
   "game path is not a file": "指定的遊戲位置不是檔案",
   "game path is not an exe": "遊戲位置必須是 .exe 執行檔",
+  "game executable is not signed by NEXON": "這個檔案不是 NEXON 簽章的 MapleStory，請選擇正版的遊戲主程式",
 };
 
 /** friendlyGameCheckProblem maps a checkGameExe problem code to settings-page copy, or the raw code if unrecognised. */
@@ -63,7 +66,8 @@ export function isGamePathError(err: unknown): boolean {
     message.includes("game executable not found") ||
     message.includes("not a local file") ||
     message.includes("game path is not a file") ||
-    message.includes("game path is not an exe")
+    message.includes("game path is not an exe") ||
+    message.includes("game executable is not signed by NEXON")
   );
 }
 

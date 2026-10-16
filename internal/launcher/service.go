@@ -333,6 +333,11 @@ func (s *LauncherService) SpawnGame(account beanfun.Account) error {
 	}
 	defer beanfun.Zero(otp.Token)
 
+	if v := verifyGameSignatureFn(gameExe); !v.OK {
+		slog.Error("SpawnGame: signature rejected after OTP fetch", "path", gameExe, "reason", v.Reason)
+		return ErrGameExeUnsigned()
+	}
+
 	args := []string{
 		gameServerHost,
 		gameServerPort,
