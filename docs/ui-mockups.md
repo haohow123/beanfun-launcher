@@ -186,11 +186,11 @@ flowchart TB
             notice["(optional) amber banner<br/>'<label> 的登入已失效' + ✕"]
             subgraph g1 [LoginGroup — expanded]
                 direction TB
-                h1row["header row — flex items-center gap-2<br/>▾ chevron · label · N 個遊戲帳號 · [登出] right"]
+                h1row["header row — flex items-center gap-2<br/>▾ chevron · label · ✎ · N 個遊戲帳號 · [登出] right"]
                 cards1["Account cards (unchanged V3a cards)"]
             end
             subgraph g2 [LoginGroup — collapsed]
-                h2row["▸ chevron · label · N 個遊戲帳號 · [登出]"]
+                h2row["▸ chevron · label · ✎ · N 個遊戲帳號 · [登出]"]
             end
             add["row — flex items-center gap-2<br/>[＋ 新增 Beanfun 帳號] outline sm<br/>disabled at 5 logins, followed by a muted reason"]
         end
@@ -204,6 +204,12 @@ flowchart TB
   around `***`, or 「帳號 N」 when none is available. The raw value
   never reaches the frontend; it is written to the local launcher log
   at login so a group can be traced back to an account.
+- **Rename** (#132): the ✎ after the label turns it into an input of
+  at most 12 characters. Enter or leaving the field saves, Esc
+  cancels, and an empty name brings the default label back. The name
+  is kept in `settings.json` under the account's `MainAccountID`, so
+  the same account shows it on its next login. A login without a
+  `MainAccountID` keeps its name only until it logs out or expires.
 - **Default expansion**: every group starts expanded, because the
   masked label alone doesn't say which account a group is; the game
   accounts underneath do. A user's own toggle lives in memory only.
