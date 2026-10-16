@@ -19,7 +19,7 @@ func TestLoginService_BoundMethodSet(t *testing.T) {
 		got = append(got, typ.Method(i).Name)
 	}
 	slices.Sort(got)
-	want := []string{"GetAccounts", "ListLogins", "Logout", "QRStatusNow", "Reset", "StartQRLogin"}
+	want := []string{"CancelQRLogin", "GetAccounts", "ListLogins", "Logout", "QRStatusNow", "Reset", "StartQRLogin"}
 	if !slices.Equal(got, want) {
 		t.Errorf("exported methods = %v, want exactly %v", got, want)
 	}

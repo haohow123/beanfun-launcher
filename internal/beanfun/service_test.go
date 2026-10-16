@@ -678,6 +678,35 @@ func TestReset_DiscardsInFlightQRApproval(t *testing.T) {
 	}
 }
 
+// TestCancelQRLogin_DiscardsInFlightApprovalAndKeepsLogins covers the back button: an approval that
+// finishes after the cancel must not be installed, and the logins already present stay as they were.
+func TestCancelQRLogin_DiscardsInFlightApprovalAndKeepsLogins(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(serviceTestMux("Success", true))
+	t.Cleanup(srv.Close)
+	s, client, init := newTickFixture(t, srv)
+
+	existing, err := NewBeanfunClientWithEndpoints(stubEndpoints(t, srv))
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	s.mu.Lock()
+	gen := s.qrGeneration
+	s.installLoginLocked(existing, &Session{}, "")
+	s.mu.Unlock()
+	t.Cleanup(s.mgr.StopAll)
+
+	s.CancelQRLogin()
+	s.qrPollTick(context.Background(), gen, client, init)
+
+	if got, _ := s.snapshot("2"); got != nil {
+		t.Error("a QR approval that finished after CancelQRLogin installed a login")
+	}
+	if got, sess := s.snapshot("1"); got != existing || sess == nil {
+		t.Error("CancelQRLogin disturbed the existing login")
+	}
+}
+
 // TestQRErrorState_ScrubsCredentials pins the one thing on this path that could leak: a transport
 // error carries the full request URL, and that URL's query is where the session key lives.
 func TestQRErrorState_ScrubsCredentials(t *testing.T) {

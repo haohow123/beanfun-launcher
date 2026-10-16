@@ -17,6 +17,14 @@ import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Cr
 import * as $models from "./models.js";
 
 /**
+ * CancelQRLogin abandons the QR attempt in progress and leaves existing logins untouched.
+ * @returns {$CancellablePromise<void>}
+ */
+export function CancelQRLogin() {
+    return $Call.ByID(1344306129);
+}
+
+/**
  * GetAccounts returns the game accounts under the given login.
  * See docs/beanfun-login-protocol.md § 8.
  * @param {string} loginID
@@ -67,9 +75,7 @@ export function Reset() {
 }
 
 /**
- * StartQRLogin runs the init flow (getSessionKey → initQRLogin) and
- * returns the QR + deeplink for the frontend to render. A fresh
- * BeanfunClient (clean cookie jar) is minted on every call; existing logins are untouched.
+ * StartQRLogin mints a fresh client and returns its QR and deeplink, leaving existing logins untouched.
  * @returns {$CancellablePromise<$models.QRStart>}
  */
 export function StartQRLogin() {

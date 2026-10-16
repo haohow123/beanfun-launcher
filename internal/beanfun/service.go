@@ -69,10 +69,7 @@ type LoginService struct {
 	// pendingClient and pendingQR belong to the single in-flight QR attempt.
 	pendingClient *BeanfunClient
 	pendingQR     *qrLoginInit
-	// mgr owns the keep-alive heartbeat goroutines (one per login, registered under
-	// keepAliveTaskPrefix + id). Constructor injection so tests can plug a
-	// fresh manager; main.go shares a single instance across all
-	// services so app shutdown can StopAll() them in one go.
+	// mgr is shared with main.go so app shutdown can StopAll every heartbeat.
 	mgr *bgtask.Manager
 	// blockedUntil is when the IP-lock cooldown expires; the zero value
 	// means no cooldown is active.
@@ -90,7 +87,7 @@ type LoginService struct {
 	// OnSessionEnded, like OnQRStateChanged, must be installed before the first StartQRLogin.
 	OnSessionEnded func(SessionEnded)
 
-	// OnLoginsChanged receives the full login list after every change; install it before the first StartQRLogin.
+	// OnLoginsChanged receives the full login list after every change and must be installed before the first StartQRLogin.
 	OnLoginsChanged func([]LoginInfo)
 }
 
@@ -124,7 +121,7 @@ const QRStateChangedEvent = "beanfun:qr-state-changed"
 // SessionEndedEvent must match the constant in frontend/src/queries/session.ts.
 const SessionEndedEvent = "beanfun:session-ended"
 
-// LoginsChangedEvent carries the []LoginInfo after every change; the frontend listener must use the same string.
+// LoginsChangedEvent must match the constant in frontend/src/queries/logins.ts.
 const LoginsChangedEvent = "beanfun:logins-changed"
 
 // SessionEnded is the payload of SessionEndedEvent.
@@ -209,9 +206,7 @@ func isIPBlockedErr(err error) bool {
 	return errors.As(err, &le) && le.Kind == KindIPBlocked
 }
 
-// StartQRLogin runs the init flow (getSessionKey → initQRLogin) and
-// returns the QR + deeplink for the frontend to render. A fresh
-// BeanfunClient (clean cookie jar) is minted on every call; existing logins are untouched.
+// StartQRLogin mints a fresh client and returns its QR and deeplink, leaving existing logins untouched.
 func (s *LoginService) StartQRLogin() (QRStart, error) {
 	if remaining := s.mintCooldownRemaining(); remaining > 0 {
 		slog.Warn("StartQRLogin: refused, ip-block cooldown active", "remaining", remaining)
@@ -328,15 +323,7 @@ func labelFor(mainID string, n int) string {
 	return "帳號 " + strconv.Itoa(n)
 }
 
-// snapshot returns the client + session pointers of one login without a
-// copy. Used by sibling services (internal/launcher) that need to
-// drive post-login flows against the same cookie jar — the alternative
-// would be re-minting a client, which means re-logging-in.
-//
-// Both returned pointers are nil if loginID is unknown; callers
-// must nil-check before use. The pointer-sharing is safe because:
-//   - BeanfunClient.http (and its cookie jar) is itself thread-safe.
-//   - Session is never mutated after install.
+// snapshot returns one login's client and session, both nil when loginID is unknown.
 func (s *LoginService) snapshot(loginID string) (*BeanfunClient, *Session) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -361,6 +348,18 @@ func (s *LoginService) Reset() {
 	s.qrState = QRState{Status: QRStatusExpired}
 	s.mu.Unlock()
 	s.notifyLoginsChanged([]LoginInfo{})
+}
+
+// CancelQRLogin abandons the QR attempt in progress and leaves existing logins untouched.
+func (s *LoginService) CancelQRLogin() {
+	s.mu.Lock()
+	// Stop doesn't wait, so a QR tick already past it must find its generation stale and not install a session.
+	s.qrGeneration++
+	s.mgr.Stop(qrPollTaskName)
+	s.pendingClient = nil
+	s.pendingQR = nil
+	s.qrState = QRState{Status: QRStatusExpired}
+	s.mu.Unlock()
 }
 
 // Logout ends one login without a session-ended notice, since the user asked for it.
@@ -407,8 +406,7 @@ func (s *LoginService) endSessionIfCurrent(id string, client *BeanfunClient) boo
 	return true
 }
 
-// installLoginLocked stores an approved login, replacing the one with the same non-empty mainID and
-// keeping its id and label. It reports false when a new login would exceed maxLogins.
+// installLoginLocked stores an approved login, replacing the one with the same non-empty mainID, and reports false past maxLogins.
 func (s *LoginService) installLoginLocked(client *BeanfunClient, sess *Session, mainID string) bool {
 	if mainID != "" {
 		for i, old := range s.logins {
@@ -431,18 +429,7 @@ func (s *LoginService) installLoginLocked(client *BeanfunClient, sess *Session, 
 	return true
 }
 
-// startKeepAliveLocked registers the keep-alive heartbeat for one login
-// against s.mgr. Re-registering under the same id supersedes the previous loop.
-//
-// Must be called with s.mu held (matches the call site in
-// advanceQRState's pollOutcomeApproved branch, which holds s.mu to
-// store the login atomically with starting the loop).
-//
-// Both success and failure log at INFO. Debug-only success
-// logging would leave users (and us) staring at hour-long logs
-// with no evidence the loop was alive; an alpha cycle is worth
-// the ~1 line per interval of noise so a glance at launcher.log can confirm
-// "keep-alive ticking" without instrumenting.
+// startKeepAliveLocked registers one login's keep-alive heartbeat, superseding any earlier loop under the same id.
 func (s *LoginService) startKeepAliveLocked(id string, client *BeanfunClient) {
 	slog.Info("keep-alive: heartbeat registered", "login", id,
 		"interval_ok", keepAliveIntervalOK, "interval_fail", keepAliveIntervalFail)

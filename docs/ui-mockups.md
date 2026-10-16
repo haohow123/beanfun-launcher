@@ -167,13 +167,13 @@ shape.
 
 Several Beanfun logins can stay active at once (up to 5, each with up
 to 5 MapleStory sub-accounts), so the account list is grouped by
-login and each group collapses. The window stays 480 × 720 and the
+login and each group collapses. The window stays 480 × 640 and the
 body stays a single flex column: the groups are stacked sections, not
 side-by-side tiles, so the Bento switch to Grid does not apply here.
 
 ```mermaid
 flowchart TB
-    subgraph win [Wails window 480×720]
+    subgraph win [Wails window 480×640]
         direction TB
         subgraph hero [Hero — unchanged]
             direction LR
@@ -192,7 +192,7 @@ flowchart TB
             subgraph g2 [LoginGroup — collapsed]
                 h2row["▸ chevron · label · N 個遊戲帳號 · [登出]"]
             end
-            add["[＋ 新增 Beanfun 帳號] outline full-width<br/>disabled at 5 logins + muted reason"]
+            add["row — flex items-center gap-2<br/>[＋ 新增 Beanfun 帳號] outline sm<br/>disabled at 5 logins, followed by a muted reason"]
         end
     end
 ```

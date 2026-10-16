@@ -6,5 +6,5 @@ export const sessionEndNoticeAtom = atom<{ label: string } | null>(null);
 /** addingLoginAtom is true while the user is scanning a QR to add another login. */
 export const addingLoginAtom = atom(false);
 
-/** collapsedLoginsAtom holds the user's manual collapse choice per login id; absent means "use the default". */
+/** collapsedLoginsAtom holds each login's manual collapse choice, keyed by login id. */
 export const collapsedLoginsAtom = atom<Record<string, boolean>>({});

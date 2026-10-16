@@ -1,13 +1,14 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { useAtom, useAtomValue } from "jotai";
 
-import { type LoginInfo } from "@bindings/beanfun";
+import { LoginService, type LoginInfo } from "@bindings/beanfun";
 import { HomePage } from "@/pages/HomePage";
 import { LoginPage } from "@/pages/LoginPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { useGameStateEventBridge } from "@/queries/gameState";
 import { useLoginsChangedBridge, useLoginsQuery } from "@/queries/logins";
 import { useMapleStatusEventBridge } from "@/queries/mapleStatus";
-import { useQRStateEventBridge } from "@/queries/qrLogin";
+import { resetQRQueries, useQRStateEventBridge } from "@/queries/qrLogin";
 import { useSessionEndedBridge } from "@/queries/session";
 import { addingLoginAtom } from "@/state/auth";
 import { settingsOpenAtom } from "@/state/settings";
@@ -38,6 +39,17 @@ function App() {
   const logins = useLoginsQuery();
   const [adding, setAdding] = useAtom(addingLoginAtom);
   const settingsOpen = useAtomValue(settingsOpenAtom);
+  const qc = useQueryClient();
+
+  async function closeAdding() {
+    try {
+      await LoginService.CancelQRLogin();
+    } catch (err) {
+      console.error("login: CancelQRLogin failed", err);
+    }
+    setAdding(false);
+    resetQRQueries(qc);
+  }
 
   // A failed list read falls back to the login page rather than a blank screen.
   const list = logins.isError ? [] : logins.data;
@@ -47,7 +59,7 @@ function App() {
   return (
     <>
       <div hidden={settingsOpen}>
-        {routeFor(list, adding, () => setAdding(false))}
+        {routeFor(list, adding, closeAdding)}
       </div>
       {settingsOpen && <SettingsPage />}
     </>
