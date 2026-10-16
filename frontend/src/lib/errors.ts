@@ -16,6 +16,10 @@ const FRIENDLY: ReadonlyArray<readonly [string, string]> = [
   ["login required", "登入已失效，請重新掃碼"],
   // internal/beanfun/errors.go ErrTooManyLogins
   ["too many logins", "最多同時登入 5 個 Beanfun 帳號"],
+  // internal/beanfun/errors.go ErrLoginNameTooLong
+  ["login name too long", "名稱最多 12 個字"],
+  // internal/beanfun/errors.go ErrLoginNameSave
+  ["login name not saved", "名稱沒有存成功，請再試一次"],
   // internal/alertsound/wav.go errNotWAV
   ["not a WAV file", "只支援 WAV 檔"],
   // internal/alertsound/wav.go errPathTooLong

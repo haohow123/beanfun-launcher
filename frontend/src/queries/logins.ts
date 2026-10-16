@@ -13,6 +13,9 @@ export const loginsQueryKey = ["logins"] as const;
 // Must match maxLogins in internal/beanfun/service.go.
 export const MAX_LOGINS = 5;
 
+// Must match maxLoginNameRunes in internal/beanfun/service.go.
+export const MAX_LOGIN_NAME_LENGTH = 12;
+
 // Must match beanfun.LoginsChangedEvent in internal/beanfun/service.go.
 const LOGINS_CHANGED_EVENT = "beanfun:logins-changed";
 
@@ -44,6 +47,16 @@ export function useLogoutLoginMutation() {
       qc.removeQueries({ queryKey: accountsQueryKey(loginID) });
       qc.invalidateQueries({ queryKey: loginsQueryKey });
     },
+  });
+}
+
+/** useRenameLoginMutation names one login, and an empty name restores its default label. */
+export function useRenameLoginMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ loginId, name }: { loginId: string; name: string }) =>
+      LoginService.RenameLogin(loginId, name),
+    onSuccess: () => qc.invalidateQueries({ queryKey: loginsQueryKey }),
   });
 }
 
