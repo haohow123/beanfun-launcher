@@ -10,8 +10,6 @@ import { collapsedLoginsAtom } from "@/state/auth";
 
 interface LoginGroupProps {
   login: LoginInfo;
-  isFirst: boolean;
-  lastUsedSid: string;
   logoutPending: boolean;
   onLogout: (loginId: string) => void;
   renderCard: (loginId: string, acc: Account) => ReactNode;
@@ -19,8 +17,6 @@ interface LoginGroupProps {
 
 export function LoginGroup({
   login,
-  isFirst,
-  lastUsedSid,
   logoutPending,
   onLogout,
   renderCard,
@@ -28,12 +24,7 @@ export function LoginGroup({
   const accounts = useAccountsQuery(login.id);
   const [collapsedMap, setCollapsedMap] = useAtom(collapsedLoginsAtom);
 
-  const holdsLastUsed =
-    lastUsedSid !== "" &&
-    (accounts.data?.some((a) => a.sid === lastUsedSid) ?? false);
-  const defaultExpanded = isFirst || holdsLastUsed;
-  const manual = collapsedMap[login.id];
-  const expanded = manual === undefined ? defaultExpanded : !manual;
+  const expanded = !collapsedMap[login.id];
 
   function toggle() {
     setCollapsedMap((m) => ({ ...m, [login.id]: expanded }));

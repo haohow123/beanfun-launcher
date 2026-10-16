@@ -202,11 +202,11 @@ flowchart TB
 - **Group label** is the login's `MainAccountID` (from the
   `echo_token` reply) shown as the first two and last two characters
   around `***`, or 「帳號 N」 when none is available. The raw value
-  never reaches the frontend.
-- **Default expansion**: the first group and the group holding the
-  game account that is currently in the game (`lastUsedSid`); every
-  other group starts collapsed. A user's own toggle wins and lives in
-  memory only.
+  never reaches the frontend; it is written to the local launcher log
+  at login so a group can be traced back to an account.
+- **Default expansion**: every group starts expanded, because the
+  masked label alone doesn't say which account a group is; the game
+  accounts underneath do. A user's own toggle lives in memory only.
 - **Logout**: each header's 登出 ends that login only; the hero
   button becomes 全部登出.
 - **Session ended**: keep-alive ending one login removes only that

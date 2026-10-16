@@ -1,4 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
+import { Clipboard } from "@wailsio/runtime";
 import { useAtom, useSetAtom } from "jotai";
 import { useEffect, useRef, useState } from "react";
 
@@ -98,6 +99,7 @@ export function HomePage() {
   const spawnGameClean = useSpawnGameCleanMutation();
   const fetchOTP = useFetchOTPMutation();
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [copyFailedKey, setCopyFailedKey] = useState<string | null>(null);
   const [fallbackOTP, setFallbackOTP] = useState<FallbackOTP | null>(null);
 
   // Clears an errored mutation on settings close, but skips a still-pending one so its mutate()-scoped callbacks stay attached.
@@ -173,21 +175,39 @@ export function HomePage() {
     );
   }
 
-  // ClipboardItem + Promise<Blob> preserves transient user activation
-  // across the async OTP fetch — WebView2 invalidates activation on
-  // await, so plain `writeText` after fetch gets silently rejected.
-  function copyCredentials(loginId: string, acc: Account) {
-    const blobPromise = fetchOTP
-      .mutateAsync({ loginId, account: acc })
-      .then((otp) => new Blob([`${acc.sid}\n${otp}`], { type: "text/plain" }))
-      .catch((e) => {
-        handleMutationError(e, loginId);
-        throw e;
-      });
-    navigator.clipboard
-      .write([new ClipboardItem({ "text/plain": blobPromise })])
-      .then(() => markCopied(cardKey(loginId, acc.sid)))
-      .catch((e) => console.error("clipboard write failed:", e));
+  function markCopyFailed(key: string) {
+    setCopyFailedKey(key);
+    window.setTimeout(
+      () => setCopyFailedKey((k) => (k === key ? null : k)),
+      3000,
+    );
+  }
+
+  function clearCopyFailed(key: string) {
+    setCopyFailedKey((k) => (k === key ? null : k));
+  }
+
+  // navigator.clipboard needs a user activation the OTP await can outlive, and the macOS WebView rejects it outright.
+  async function writeClipboard(key: string, text: string) {
+    try {
+      await Clipboard.SetText(text);
+      markCopied(key);
+    } catch (e) {
+      console.error("clipboard write failed:", e);
+      markCopyFailed(key);
+    }
+  }
+
+  async function copyCredentials(loginId: string, acc: Account) {
+    clearCopyFailed(cardKey(loginId, acc.sid));
+    let otp: string;
+    try {
+      otp = await fetchOTP.mutateAsync({ loginId, account: acc });
+    } catch (e) {
+      handleMutationError(e, loginId);
+      return;
+    }
+    await writeClipboard(cardKey(loginId, acc.sid), `${acc.sid}\n${otp}`);
   }
 
   // playAccount is the single per-account action — intent only.
@@ -210,10 +230,9 @@ export function HomePage() {
   }
 
   function copyFallback(item: FallbackOTP) {
-    navigator.clipboard
-      .writeText(`${item.sid}\n${item.otp}`)
-      .then(() => markCopied(cardKey(item.loginId, item.sid)))
-      .catch((e) => console.error("clipboard write failed:", e));
+    const key = cardKey(item.loginId, item.sid);
+    clearCopyFailed(key);
+    void writeClipboard(key, `${item.sid}\n${item.otp}`);
   }
 
   function primaryStatusFor(loginId: string, acc: Account): PrimaryStatus {
@@ -244,6 +263,7 @@ export function HomePage() {
     acc: Account,
   ): "idle" | "pending" | "error" | "copied" {
     if (copiedKey === cardKey(loginId, acc.sid)) return "copied";
+    if (copyFailedKey === cardKey(loginId, acc.sid)) return "error";
     if (!isVariablesFor(fetchOTP.variables, loginId, acc)) return "idle";
     if (fetchOTP.isPending) return "pending";
     if (fetchOTP.isError) return "error";
@@ -411,12 +431,10 @@ export function HomePage() {
           </div>
         )}
 
-        {loginList.map((login, i) => (
+        {loginList.map((login) => (
           <LoginGroup
             key={login.id}
             login={login}
-            isFirst={i === 0}
-            lastUsedSid={lastUsedSid}
             logoutPending={logoutLogin.isPending || logoutAll.isPending}
             onLogout={logoutOne}
             renderCard={renderAccountCard}
