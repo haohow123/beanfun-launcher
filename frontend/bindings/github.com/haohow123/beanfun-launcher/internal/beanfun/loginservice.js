@@ -67,6 +67,16 @@ export function QRStatusNow() {
 }
 
 /**
+ * RenameLogin names one login and remembers the name for that Beanfun account's later sign-ins.
+ * @param {string} loginID
+ * @param {string} name
+ * @returns {$CancellablePromise<void>}
+ */
+export function RenameLogin(loginID, name) {
+    return $Call.ByID(3462648856, loginID, name);
+}
+
+/**
  * Reset logs out every login and abandons any QR attempt in progress.
  * @returns {$CancellablePromise<void>}
  */

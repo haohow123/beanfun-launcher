@@ -34,6 +34,8 @@ const (
 	KindLaunchDataDecode
 	KindIPBlocked
 	KindTooManyLogins
+	KindLoginNameTooLong
+	KindLoginNameSave
 )
 
 // LoginError is the typed error returned by every Beanfun login step.
@@ -133,6 +135,16 @@ func ErrLoginRequired() *LoginError {
 // ErrTooManyLogins is returned by StartQRLogin when maxLogins logins are already held.
 func ErrTooManyLogins() *LoginError {
 	return &LoginError{Kind: KindTooManyLogins, Msg: "too many logins"}
+}
+
+// ErrLoginNameTooLong is returned by RenameLogin for a name over maxLoginNameRunes.
+func ErrLoginNameTooLong() *LoginError {
+	return &LoginError{Kind: KindLoginNameTooLong, Msg: "login name too long"}
+}
+
+// ErrLoginNameSave is returned by RenameLogin when the name store fails, before anything is applied.
+func ErrLoginNameSave(cause error) *LoginError {
+	return &LoginError{Kind: KindLoginNameSave, Msg: "login name not saved", Cause: cause}
 }
 
 // ErrOTPInit covers the OTP flow's page fetch — a missing or unparseable m_objData handoff literal.

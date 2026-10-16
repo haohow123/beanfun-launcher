@@ -77,6 +77,14 @@ export class LoginInfo {
              */
             this["label"] = "";
         }
+        if (!("name" in $$source)) {
+            /**
+             * empty when Label is the default
+             * @member
+             * @type {string}
+             */
+            this["name"] = "";
+        }
 
         Object.assign(this, $$source);
     }

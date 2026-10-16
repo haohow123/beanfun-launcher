@@ -114,7 +114,7 @@ func addTestLogin(t *testing.T, s *LoginService, c *BeanfunClient, mainID string
 	t.Cleanup(s.mgr.StopAll)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !s.installLoginLocked(c, &Session{}, mainID) {
+	if !s.installLoginLocked(c, &Session{}, mainID, "") {
 		t.Fatalf("installLoginLocked refused login with mainID %q", mainID)
 	}
 }

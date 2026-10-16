@@ -74,6 +74,7 @@ func main() {
 		slog.Warn("settings: no config dir, using defaults in memory", "err", err)
 	}
 	settingsFile := settings.NewFile(settingsPath)
+	loginSvc.NameStore = settingsFile
 
 	launcher.SetEventEmitter(emit)
 	launcherSvc := launcher.NewLauncherService(beanfun.NewSessionAccess(loginSvc), mgr, settingsFile)

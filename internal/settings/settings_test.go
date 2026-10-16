@@ -234,3 +234,63 @@ func TestFile_Save_NoLeftoverTempFile(t *testing.T) {
 		}
 	}
 }
+
+func TestFile_LoginNames(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	f := NewFile(path)
+	if err := f.SaveGameExePath(`C:\MapleStory\MapleStory.exe`); err != nil {
+		t.Fatalf("SaveGameExePath() = %v", err)
+	}
+
+	if err := f.SaveLoginName("bfuserA", "主帳號"); err != nil {
+		t.Fatalf("SaveLoginName() = %v", err)
+	}
+	if err := f.SaveLoginName("bfuserB", "小號"); err != nil {
+		t.Fatalf("SaveLoginName() = %v", err)
+	}
+	if got := NewFile(path).LoadLoginName("bfuserA"); got != "主帳號" {
+		t.Fatalf("LoadLoginName(bfuserA) after reopen = %q, want 主帳號", got)
+	}
+
+	if err := f.SaveLoginName("bfuserA", ""); err != nil {
+		t.Fatalf("SaveLoginName(clear) = %v", err)
+	}
+	got := f.Load()
+	want := map[string]string{"bfuserB": "小號"}
+	if !reflect.DeepEqual(got.LoginNames, want) {
+		t.Fatalf("LoginNames after clearing A = %v, want %v", got.LoginNames, want)
+	}
+	if got.GameExePath != `C:\MapleStory\MapleStory.exe` {
+		t.Fatalf("GameExePath = %q, want it kept across login-name saves", got.GameExePath)
+	}
+
+	if err := f.SaveLoginName("bfuserB", ""); err != nil {
+		t.Fatalf("SaveLoginName(clear last) = %v", err)
+	}
+	if got := f.Load().LoginNames; got != nil {
+		t.Fatalf("LoginNames after clearing every entry = %v, want nil", got)
+	}
+}
+
+func TestFile_LoadLoginName_EmptyMainID(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(path, []byte(`{"loginNames":{"":"ghost"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := NewFile(path).LoadLoginName(""); got != "" {
+		t.Fatalf("LoadLoginName(\"\") = %q, want empty", got)
+	}
+}
+
+func TestFile_Load_DropsBlankLoginNames(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	doc := `{"loginNames":{"bfuserA":"  主帳號  ","bfuserB":"   ","":"ghost","  ":"x"}}`
+	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := NewFile(path).Load().LoginNames
+	want := map[string]string{"bfuserA": "主帳號"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("LoginNames = %v, want %v", got, want)
+	}
+}
