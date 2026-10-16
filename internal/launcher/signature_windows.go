@@ -102,10 +102,10 @@ func signerSubject(path string) (org, serial string, err error) {
 	if r == 0 {
 		return "", "", fmt.Errorf("CryptMsgGetParam size: %w", e)
 	}
-	// uint64 backing keeps the CERT_INFO struct 8-byte aligned.
 	if size == 0 {
 		return "", "", errors.New("CryptMsgGetParam: empty signer info")
 	}
+	// uint64 backing keeps the CERT_INFO struct 8-byte aligned.
 	buf := make([]uint64, (size+7)/8)
 	r, _, e = procCryptMsgGetParam.Call(uintptr(msg), cmsgSignerCertInfoParam, 0, uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&size)))
 	if r == 0 {
@@ -124,7 +124,7 @@ func signerSubject(path string) (org, serial string, err error) {
 	if org, err = certNameAttr(cert, oidOrganization); err != nil {
 		return "", "", err
 	}
-	// A missing SERIALNUMBER is not a read failure; signerMatches rejects the empty value.
+	// A missing SERIALNUMBER is left empty for signerMatches to reject, not reported as a read failure.
 	serial, _ = certNameAttr(cert, oidSerialNumber)
 	return org, serial, nil
 }
