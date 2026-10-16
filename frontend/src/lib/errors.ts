@@ -8,6 +8,8 @@ const FRIENDLY: ReadonlyArray<readonly [string, string]> = [
   ["already running", "遊戲已開啟，請稍候再試"],
   // internal/launcher/launcher.go ErrUntrustedGameWindow
   ["game window is not the signed game", "遊戲視窗不是 NEXON 簽章的程式，未送出帳密"],
+  // internal/launcher/launcher.go ErrGameWindowUnreadable
+  ["cannot inspect the game window's process", "無法確認遊戲視窗背後的程式（可能被防作弊阻擋），未送出帳密"],
   // internal/localpath/path.go ErrNotLocal
   ["not a local file", "只支援本機磁碟上的檔案"],
   // internal/alertsound/wav.go errNotWAV

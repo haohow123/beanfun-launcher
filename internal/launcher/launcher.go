@@ -70,6 +70,11 @@ func ErrUntrustedGameWindow() *LauncherError {
 	return &LauncherError{Kind: KindSpawnFailed, Msg: "game window is not the signed game"}
 }
 
+// ErrGameWindowUnreadable is returned when the game window's owning process cannot be inspected.
+func ErrGameWindowUnreadable() *LauncherError {
+	return &LauncherError{Kind: KindSpawnFailed, Msg: "cannot inspect the game window's process"}
+}
+
 // ErrGameExeUnsigned is returned when the game executable lacks a valid NEXON signature.
 func ErrGameExeUnsigned() *LauncherError {
 	return &LauncherError{Kind: KindGamePathInvalid, Msg: problemUnsigned}

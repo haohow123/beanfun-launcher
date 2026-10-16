@@ -34,6 +34,10 @@ func verifySignature(path string) signatureVerdict {
 		if errors.Is(err, syscall.Errno(windows.TRUST_E_NOSIGNATURE)) {
 			return signatureVerdict{Reason: "unsigned"}
 		}
+		var errno syscall.Errno
+		if errors.As(err, &errno) {
+			return signatureVerdict{Reason: fmt.Sprintf("invalid (0x%08X)", uint32(errno))}
+		}
 		return signatureVerdict{Reason: "invalid"}
 	}
 	org, serial, err := signerSubject(path)
@@ -99,6 +103,9 @@ func signerSubject(path string) (org, serial string, err error) {
 		return "", "", fmt.Errorf("CryptMsgGetParam size: %w", e)
 	}
 	// uint64 backing keeps the CERT_INFO struct 8-byte aligned.
+	if size == 0 {
+		return "", "", errors.New("CryptMsgGetParam: empty signer info")
+	}
 	buf := make([]uint64, (size+7)/8)
 	r, _, e = procCryptMsgGetParam.Call(uintptr(msg), cmsgSignerCertInfoParam, 0, uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&size)))
 	if r == 0 {
@@ -117,9 +124,8 @@ func signerSubject(path string) (org, serial string, err error) {
 	if org, err = certNameAttr(cert, oidOrganization); err != nil {
 		return "", "", err
 	}
-	if serial, err = certNameAttr(cert, oidSerialNumber); err != nil {
-		return "", "", err
-	}
+	// A missing SERIALNUMBER is not a read failure; signerMatches rejects the empty value.
+	serial, _ = certNameAttr(cert, oidSerialNumber)
 	return org, serial, nil
 }
 

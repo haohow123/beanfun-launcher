@@ -527,7 +527,7 @@ func (s *LauncherService) Launch(account beanfun.Account) (LaunchResult, error) 
 	pid, imagePath, err := windowImagePathFn(hwnd)
 	if err != nil {
 		slog.Error("Launch: cannot read the game window's executable", "err", err)
-		return LaunchResult{}, ErrUntrustedGameWindow()
+		return LaunchResult{}, ErrGameWindowUnreadable()
 	}
 	if v := verifyGameSignatureFn(imagePath); !v.OK {
 		slog.Error("Launch: game window's executable rejected", "path", imagePath, "reason", v.Reason)
@@ -550,7 +550,12 @@ func (s *LauncherService) Launch(account beanfun.Account) (LaunchResult, error) 
 	}
 	defer beanfun.Zero(otp.Token)
 
-	if nowPID, _, perr := windowImagePathFn(hwnd); perr != nil || nowPID != pid {
+	nowPID, _, perr := windowImagePathFn(hwnd)
+	if perr != nil {
+		slog.Error("Launch: cannot re-read the game window's executable", "err", perr)
+		return LaunchResult{}, ErrGameWindowUnreadable()
+	}
+	if nowPID != pid {
 		slog.Error("Launch: game window changed hands during OTP fetch")
 		return LaunchResult{}, ErrUntrustedGameWindow()
 	}

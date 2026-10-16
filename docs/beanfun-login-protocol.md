@@ -638,9 +638,8 @@ Authenticode signature.
   OTP is fetched. Right before typing, the PID behind the window is
   read again and must match. A failure returns an error and never
   hands the OTP to the UI for manual paste.
-- **Residual window**: between the last check and `ShellExecuteW`, and
-  between the PID re-check and `PostMessageW`, a few milliseconds
-  remain in which the file or window could change.
+- **Known limitation, not mitigated**: `Launch` verifies the file that currently sits at the window's process image path, not the image that is actually running. A program running as the same user can start from its own path, open a window of the game's class, rename itself, then copy the genuine signed exe back to the original path; the check passes and no timing race is needed. The PID re-check only detects a window changing owner, not this.
+- **Residual gap**: `WinVerifyTrust` and the signer-subject read each open the file separately, so the file can differ between the two. The same holds between the last check and `ShellExecuteW`, and between the PID re-check and `PostMessageW`.
 
 ## Keep-alive
 
