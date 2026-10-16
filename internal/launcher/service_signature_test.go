@@ -107,7 +107,7 @@ func TestLauncherService_SpawnGame_SignatureRejectedAfterOTP_NeverCallsSpawnFn(t
 	login := fakeLoginSnapshotter{client: otpServer(t), session: &beanfun.Session{ServiceCode: "610074", ServiceRegion: "T9", WebToken: "z"}}
 	svc := NewLauncherService(login, bgtask.New(), &fakeGamePathStore{path: exe})
 
-	err := svc.SpawnGame(beanfun.Account{SID: "T9abc123", SSN: "1", SName: "n"})
+	err := svc.SpawnGame("1", beanfun.Account{SID: "T9abc123", SSN: "1", SName: "n"})
 	var le *LauncherError
 	if !errors.As(err, &le) || le.Kind != KindGamePathInvalid || le.Msg != problemUnsigned {
 		t.Fatalf("got %v, want *LauncherError{KindGamePathInvalid, %q}", err, problemUnsigned)

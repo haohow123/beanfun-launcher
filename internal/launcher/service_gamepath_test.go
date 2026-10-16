@@ -28,13 +28,20 @@ func (f *fakeGamePathStore) SaveGameExePath(p string) error {
 type fakeLoginSnapshotter struct {
 	client  *beanfun.BeanfunClient
 	session *beanfun.Session
+	// byID, when set, overrides client per loginID.
+	byID map[string]*beanfun.BeanfunClient
 }
 
-func (f fakeLoginSnapshotter) Snapshot() (*beanfun.BeanfunClient, *beanfun.Session) {
+func (f fakeLoginSnapshotter) Snapshot(loginID string) (*beanfun.BeanfunClient, *beanfun.Session) {
+	if c, ok := f.byID[loginID]; ok {
+		return c, f.session
+	}
 	return f.client, f.session
 }
 
-func (f fakeLoginSnapshotter) EndSessionIfCurrent(*beanfun.BeanfunClient) bool { return true }
+func (f fakeLoginSnapshotter) EndSessionIfCurrent(string, *beanfun.BeanfunClient) bool { return true }
+
+func (f fakeLoginSnapshotter) HasLogin() bool { return f.client != nil || len(f.byID) > 0 }
 
 // withLoggedInSession returns a loginSnapshotter whose Snapshot() always
 // reports a non-nil client and session.
@@ -120,7 +127,7 @@ func TestLauncherService_SpawnGame_MissingGameExe_WithSession_NeverCallsSpawnFn(
 	svc := NewLauncherService(withLoggedInSession(), mgr, nil)
 	*findCalls = 0 // NewLauncherService's own startup probe doesn't count
 
-	err := svc.SpawnGame(beanfun.Account{SID: "s", SSN: "1", SName: "n"})
+	err := svc.SpawnGame("1", beanfun.Account{SID: "s", SSN: "1", SName: "n"})
 	var le *LauncherError
 	if !errors.As(err, &le) || le.Kind != KindGameExeMissing {
 		t.Fatalf("got %v, want *LauncherError{Kind: KindGameExeMissing}", err)

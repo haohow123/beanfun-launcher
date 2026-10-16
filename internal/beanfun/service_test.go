@@ -109,7 +109,7 @@ func stopLoopAndCapture(t *testing.T, s *LoginService) (*BeanfunClient, *qrLogin
 	s.mgr.Stop(qrPollTaskName)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.client, s.pendingQR, s.qrGeneration
+	return s.pendingClient, s.pendingQR, s.qrGeneration
 }
 
 func TestLoginService_StartQRLogin(t *testing.T) {
@@ -193,8 +193,8 @@ func TestLoginService_QRStatus_PollApprovedRunsFinalize(t *testing.T) {
 		t.Fatalf("got %q, want %q", got.Status, QRStatusApproved)
 	}
 	// Session must be stashed and carry the token from step 4.
+	_, sess := s.snapshot("1")
 	s.mu.Lock()
-	sess := s.session
 	pending := s.pendingQR
 	s.mu.Unlock()
 	if sess == nil {
@@ -421,12 +421,11 @@ func TestKeepAliveTick(t *testing.T) {
 				t.Fatal(err)
 			}
 			s := NewLoginServiceWithEndpoints(endpoints, bgtask.New())
-			s.client = c
-			s.session = &Session{}
+			addTestLogin(t, s, c, "")
 			var ended []SessionEnded
 			s.OnSessionEnded = func(ev SessionEnded) { ended = append(ended, ev) }
 
-			got := s.keepAliveTick(context.Background(), c)
+			got := s.keepAliveTick(context.Background(), "1", c)
 
 			if got != tt.wantDelay {
 				t.Errorf("delay = %v, want %v", got, tt.wantDelay)
@@ -442,17 +441,17 @@ func TestKeepAliveTick(t *testing.T) {
 				t.Errorf("cooldown armed = %v, want %v", armed, tt.wantCooldown)
 			}
 			if tt.wantEnded {
-				if len(ended) != 1 || ended[0].Reason != "expired" {
-					t.Errorf("OnSessionEnded calls = %+v, want one with reason expired", ended)
+				if len(ended) != 1 || ended[0].Reason != "expired" || ended[0].LoginID != "1" {
+					t.Errorf("OnSessionEnded calls = %+v, want one with reason expired for login 1", ended)
 				}
-				if cl, sess := s.snapshot(); cl != nil || sess != nil {
+				if cl, sess := s.snapshot("1"); cl != nil || sess != nil {
 					t.Errorf("Snapshot = (%v, %v), want the session cleared", cl, sess)
 				}
 			} else {
 				if len(ended) != 0 {
 					t.Errorf("OnSessionEnded calls = %+v, want none", ended)
 				}
-				if cl, _ := s.snapshot(); cl == nil {
+				if cl, _ := s.snapshot("1"); cl == nil {
 					t.Error("session was cleared on a tick that did not end it")
 				}
 			}
@@ -476,30 +475,26 @@ func TestEndSessionIfCurrent_StaleClientIgnored(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.mu.Lock()
-	s.client = current
-	s.session = &Session{}
-	s.startKeepAliveLocked(current)
-	s.mu.Unlock()
+	addTestLogin(t, s, current, "")
 	calls := 0
 	s.OnSessionEnded = func(SessionEnded) { calls++ }
 
-	if s.endSessionIfCurrent(stale) {
+	if s.endSessionIfCurrent("1", stale) {
 		t.Error("EndSessionIfCurrent(stale) = true, want false")
 	}
-	if cl, sess := s.snapshot(); cl != current || sess == nil {
+	if cl, sess := s.snapshot("1"); cl != current || sess == nil {
 		t.Errorf("Snapshot = (%v, %v), want the newer session kept", cl, sess)
 	}
-	if !slices.Contains(s.mgr.List(), keepAliveTaskName) {
+	if !slices.Contains(s.mgr.List(), keepAliveTaskPrefix+"1") {
 		t.Error("keep-alive was stopped by a stale caller")
 	}
 	if calls != 0 {
 		t.Errorf("OnSessionEnded called %d times, want 0", calls)
 	}
-	if !s.endSessionIfCurrent(current) {
+	if !s.endSessionIfCurrent("1", current) {
 		t.Error("EndSessionIfCurrent(current) = false, want true")
 	}
-	if slices.Contains(s.mgr.List(), keepAliveTaskName) {
+	if slices.Contains(s.mgr.List(), keepAliveTaskPrefix+"1") {
 		t.Error("keep-alive still registered after ending the current session")
 	}
 }
@@ -624,9 +619,7 @@ func TestQRPollTick_PendingThenApproved(t *testing.T) {
 	if st := s.cachedQRState(); st.Status != QRStatusApproved {
 		t.Errorf("after second tick status = %q, want %q", st.Status, QRStatusApproved)
 	}
-	s.mu.Lock()
-	sess := s.session
-	s.mu.Unlock()
+	_, sess := s.snapshot("1")
 	if sess == nil || sess.WebToken != "FULL_FLOW_TOKEN" {
 		t.Errorf("session = %v, want one carrying FULL_FLOW_TOKEN", sess)
 	}
@@ -650,9 +643,7 @@ func TestQRPollTick_StaleGenerationDiscarded(t *testing.T) {
 
 	s.qrPollTick(context.Background(), 4, client, init)
 
-	s.mu.Lock()
-	sess := s.session
-	s.mu.Unlock()
+	_, sess := s.snapshot("1")
 	if sess != nil {
 		t.Error("a superseded tick installed a session")
 	}
@@ -679,7 +670,7 @@ func TestReset_DiscardsInFlightQRApproval(t *testing.T) {
 
 	s.qrPollTick(context.Background(), gen, client, init)
 
-	if _, sess := s.snapshot(); sess != nil {
+	if _, sess := s.snapshot("1"); sess != nil {
 		t.Error("a QR approval that finished after Reset installed a session")
 	}
 	if names := s.mgr.List(); len(names) != 0 {

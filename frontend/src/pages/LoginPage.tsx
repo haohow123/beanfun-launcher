@@ -13,26 +13,28 @@ import {
   useQRMintQuery,
   useQRStatusQuery,
 } from "@/queries/qrLogin";
-import { loggedInAtom, sessionEndReasonAtom } from "@/state/auth";
+import { loginsQueryKey } from "@/queries/logins";
+import { addingLoginAtom, sessionEndNoticeAtom } from "@/state/auth";
 
-export function LoginPage() {
-  const setLoggedIn = useSetAtom(loggedInAtom);
-  const [sessionEndReason, setSessionEndReason] = useAtom(sessionEndReasonAtom);
+export function LoginPage({ onBack }: { onBack?: () => void }) {
+  const setAdding = useSetAtom(addingLoginAtom);
+  const [notice, setNotice] = useAtom(sessionEndNoticeAtom);
   const qc = useQueryClient();
   const qrMint = useQRMintQuery();
   const statusQuery = useQRStatusQuery(qrMint.isSuccess);
 
   useEffect(() => {
     if (statusQuery.data?.status === QRStatus.QRStatusApproved) {
-      setSessionEndReason(null);
-      setLoggedIn(true);
+      setNotice(null);
+      setAdding(false);
+      qc.invalidateQueries({ queryKey: loginsQueryKey });
     }
-  }, [statusQuery.data, setLoggedIn, setSessionEndReason]);
+  }, [statusQuery.data, setAdding, setNotice, qc]);
 
   // Clears the stale Expired tile; the new state arrives by push once
   // StartQRLogin has registered the backend loop.
   function regenerate() {
-    setSessionEndReason(null);
+    setNotice(null);
     qc.setQueryData(
       qrStatusQueryKey,
       QRState.createFrom({ status: QRStatus.QRStatusPending }),
@@ -134,9 +136,21 @@ export function LoginPage() {
       <Hero />
 
       <section className="flex flex-1 flex-col items-center gap-3 px-4 py-6">
+        {onBack && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="self-start"
+            onClick={onBack}
+          >
+            ← 返回
+          </Button>
+        )}
         <h2 className="text-base font-semibold">登入 Beanfun</h2>
-        {sessionEndReason === "expired" && (
-          <p className="text-sm text-amber-600">登入已失效，請重新掃碼</p>
+        {notice && (
+          <p className="text-sm text-amber-600">
+            {notice.label} 的登入已失效，請重新掃碼
+          </p>
         )}
         {renderQR()}
         {renderStatus()}

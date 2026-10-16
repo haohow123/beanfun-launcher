@@ -172,11 +172,25 @@ func (c *BeanfunClient) portalURL(path string) (*url.URL, error) {
 
 var echoTokenResultRE = regexp.MustCompile(`EchoTokenResult\(\s*\{\s*ResultCode\s*:\s*(-?\d+)`)
 
+var mainAccountIDRE = regexp.MustCompile(`MainAccountID\s*:\s*"([^"]*)"`)
+
 // Ping reads the logged-in verdict from echo_token.ashx's body, since the endpoint answers HTTP 200 either way.
 func (c *BeanfunClient) Ping(ctx context.Context) error {
-	u, err := c.portalURL("beanfun_block/generic_handlers/echo_token.ashx")
+	code, _, err := c.echoToken(ctx)
 	if err != nil {
 		return err
+	}
+	if code == "0" {
+		return ErrSessionExpired()
+	}
+	return nil
+}
+
+// echoToken returns echo_token.ashx's ResultCode ("1" logged in, "0" logged out) and MainAccountID.
+func (c *BeanfunClient) echoToken(ctx context.Context) (code, mainID string, err error) {
+	u, err := c.portalURL("beanfun_block/generic_handlers/echo_token.ashx")
+	if err != nil {
+		return "", "", err
 	}
 	q := u.Query()
 	q.Set("webtoken", "1")
@@ -184,28 +198,25 @@ func (c *BeanfunClient) Ping(ctx context.Context) error {
 
 	req, err := c.newRequest(ctx, "GET", u)
 	if err != nil {
-		return err
+		return "", "", err
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return ErrHTTP(err)
+		return "", "", ErrHTTP(err)
 	}
 	body, err := c.boundedRead(resp)
 	if err != nil {
-		return err
+		return "", "", err
 	}
 	if resp.StatusCode >= 400 {
-		return ErrHTTP(fmt.Errorf("echo_token.ashx returned HTTP %d", resp.StatusCode))
+		return "", "", ErrHTTP(fmt.Errorf("echo_token.ashx returned HTTP %d", resp.StatusCode))
 	}
 	m := echoTokenResultRE.FindSubmatch(body)
-	if m == nil {
-		return ErrHTTP(fmt.Errorf("echo_token.ashx: unrecognised reply (len=%d)", len(body)))
+	if m == nil || (string(m[1]) != "1" && string(m[1]) != "0") {
+		return "", "", ErrHTTP(fmt.Errorf("echo_token.ashx: unrecognised reply (len=%d)", len(body)))
 	}
-	switch string(m[1]) {
-	case "1":
-		return nil
-	case "0":
-		return ErrSessionExpired()
+	if id := mainAccountIDRE.FindSubmatch(body); id != nil {
+		mainID = string(id[1])
 	}
-	return ErrHTTP(fmt.Errorf("echo_token.ashx: unrecognised reply (len=%d)", len(body)))
+	return string(m[1]), mainID, nil
 }

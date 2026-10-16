@@ -1,23 +1,33 @@
-import { useAtom } from "jotai";
+import { useQueryClient } from "@tanstack/react-query";
+import { useAtom, useSetAtom } from "jotai";
 import { useEffect, useRef, useState } from "react";
 
 import { type Account } from "@bindings/beanfun";
 import { AppShell } from "@/components/layout/AppShell";
 import { Hero } from "@/components/layout/Hero";
+import { LoginGroup } from "@/components/LoginGroup";
 import { Button } from "@/components/ui/button";
 import { friendlyError, isGamePathError } from "@/lib/errors";
 import { cn } from "@/lib/utils";
-import { useAccountsQuery } from "@/queries/accounts";
 import { useGameStateQuery } from "@/queries/gameState";
 import {
   useFetchOTPMutation,
   useLaunchAccountMutation,
   useSpawnGameCleanMutation,
 } from "@/queries/launch";
-import { useLocalSignOut, useLogoutMutation } from "@/queries/session";
+import {
+  MAX_LOGINS,
+  loginsQueryKey,
+  useLoginsQuery,
+  useLogoutAllMutation,
+  useLogoutLoginMutation,
+} from "@/queries/logins";
+import { resetQRQueries } from "@/queries/qrLogin";
+import { addingLoginAtom, sessionEndNoticeAtom } from "@/state/auth";
 import { settingsOpenAtom } from "@/state/settings";
 
 interface FallbackOTP {
+  loginId: string;
   sid: string;
   otp: string;
 }
@@ -56,10 +66,26 @@ function statusPillFor(
   }
 }
 
+function cardKey(loginId: string, sid: string): string {
+  return `${loginId}:${sid}`;
+}
+
+function isVariablesFor(
+  v: { loginId: string; account: Account } | undefined,
+  loginId: string,
+  acc: Account,
+): boolean {
+  return v?.loginId === loginId && v.account.sid === acc.sid;
+}
+
 export function HomePage() {
   const [settingsOpen, setSettingsOpen] = useAtom(settingsOpenAtom);
-  const logoutMutation = useLogoutMutation();
-  const localSignOut = useLocalSignOut();
+  const qc = useQueryClient();
+  const logoutAll = useLogoutAllMutation();
+  const logoutLogin = useLogoutLoginMutation();
+  const logins = useLoginsQuery();
+  const setAdding = useSetAtom(addingLoginAtom);
+  const [notice, setNotice] = useAtom(sessionEndNoticeAtom);
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
@@ -67,12 +93,11 @@ export function HomePage() {
       mountedRef.current = false;
     };
   }, []);
-  const accounts = useAccountsQuery();
   const gameState = useGameStateQuery();
   const launchAccount = useLaunchAccountMutation();
   const spawnGameClean = useSpawnGameCleanMutation();
   const fetchOTP = useFetchOTPMutation();
-  const [copiedSid, setCopiedSid] = useState<string | null>(null);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [fallbackOTP, setFallbackOTP] = useState<FallbackOTP | null>(null);
 
   // Clears an errored mutation on settings close, but skips a still-pending one so its mutate()-scoped callbacks stay attached.
@@ -88,19 +113,31 @@ export function HomePage() {
   const isGameRunning = gameState.data?.running ?? false;
   const lastUsedSid = gameState.data?.lastUsedSid ?? "";
 
+  const loginList = logins.data ?? [];
+
   function logout() {
-    logoutMutation.mutate();
+    logoutAll.mutate();
   }
 
-  function retry() {
-    accounts.refetch();
+  function logoutOne(loginId: string) {
+    logoutLogin.mutate(loginId);
   }
 
-  // The backend has already ended the session when it returns ErrLoginRequired, so only the local sign-out is left.
-  function handleMutationError(err: unknown) {
+  function addLogin() {
+    resetQRQueries(qc);
+    setAdding(true);
+  }
+
+  function labelFor(loginId: string | undefined): string {
+    return loginList.find((l) => l.id === loginId)?.label ?? "此帳號";
+  }
+
+  // The backend has already ended that one login when it returns ErrLoginRequired, so only refresh the list and tell the user which one.
+  function handleMutationError(err: unknown, loginId?: string) {
     if (!mountedRef.current) return;
     if (err instanceof Error && err.message.includes("login required")) {
-      localSignOut();
+      setNotice({ label: labelFor(loginId) });
+      qc.invalidateQueries({ queryKey: loginsQueryKey });
     }
   }
 
@@ -128,10 +165,10 @@ export function HomePage() {
     );
   }
 
-  function markCopied(sid: string) {
-    setCopiedSid(sid);
+  function markCopied(key: string) {
+    setCopiedKey(key);
     window.setTimeout(
-      () => setCopiedSid((s) => (s === sid ? null : s)),
+      () => setCopiedKey((k) => (k === key ? null : k)),
       1500,
     );
   }
@@ -139,17 +176,17 @@ export function HomePage() {
   // ClipboardItem + Promise<Blob> preserves transient user activation
   // across the async OTP fetch — WebView2 invalidates activation on
   // await, so plain `writeText` after fetch gets silently rejected.
-  function copyCredentials(acc: Account) {
+  function copyCredentials(loginId: string, acc: Account) {
     const blobPromise = fetchOTP
-      .mutateAsync(acc)
+      .mutateAsync({ loginId, account: acc })
       .then((otp) => new Blob([`${acc.sid}\n${otp}`], { type: "text/plain" }))
       .catch((e) => {
-        handleMutationError(e);
+        handleMutationError(e, loginId);
         throw e;
       });
     navigator.clipboard
       .write([new ClipboardItem({ "text/plain": blobPromise })])
-      .then(() => markCopied(acc.sid))
+      .then(() => markCopied(cardKey(loginId, acc.sid)))
       .catch((e) => console.error("clipboard write failed:", e));
   }
 
@@ -157,27 +194,30 @@ export function HomePage() {
   // Backend's LaunchAccount picks spawn-vs-inject based on the
   // current game-window state and handles the small race window
   // internally; the FE never decides which mutation to fire.
-  function playAccount(acc: Account) {
+  function playAccount(loginId: string, acc: Account) {
     setFallbackOTP(null);
-    launchAccount.mutate(acc, {
-      onSuccess: (result) => {
-        if (result.autoFilled === false && result.otp) {
-          setFallbackOTP({ sid: acc.sid, otp: result.otp });
-        }
+    launchAccount.mutate(
+      { loginId, account: acc },
+      {
+        onSuccess: (result) => {
+          if (result.autoFilled === false && result.otp) {
+            setFallbackOTP({ loginId, sid: acc.sid, otp: result.otp });
+          }
+        },
+        onError: (e) => handleMutationError(e, loginId),
       },
-      onError: handleMutationError,
-    });
+    );
   }
 
   function copyFallback(item: FallbackOTP) {
     navigator.clipboard
       .writeText(`${item.sid}\n${item.otp}`)
-      .then(() => markCopied(item.sid))
+      .then(() => markCopied(cardKey(item.loginId, item.sid)))
       .catch((e) => console.error("clipboard write failed:", e));
   }
 
-  function primaryStatusFor(acc: Account): PrimaryStatus {
-    if (launchAccount.variables?.sid === acc.sid) {
+  function primaryStatusFor(loginId: string, acc: Account): PrimaryStatus {
+    if (isVariablesFor(launchAccount.variables, loginId, acc)) {
       if (launchAccount.isPending) return "launching";
       if (launchAccount.isError) return "error";
       if (
@@ -200,19 +240,23 @@ export function HomePage() {
   }
 
   function copyStatusFor(
+    loginId: string,
     acc: Account,
   ): "idle" | "pending" | "error" | "copied" {
-    if (copiedSid === acc.sid) return "copied";
-    if (fetchOTP.variables?.sid !== acc.sid) return "idle";
+    if (copiedKey === cardKey(loginId, acc.sid)) return "copied";
+    if (!isVariablesFor(fetchOTP.variables, loginId, acc)) return "idle";
     if (fetchOTP.isPending) return "pending";
     if (fetchOTP.isError) return "error";
     return "idle";
   }
 
-  function renderAccountCard(acc: Account) {
-    const primary = primaryStatusFor(acc);
-    const copyStatus = copyStatusFor(acc);
-    const fallback = fallbackOTP?.sid === acc.sid ? fallbackOTP : null;
+  function renderAccountCard(loginId: string, acc: Account) {
+    const primary = primaryStatusFor(loginId, acc);
+    const copyStatus = copyStatusFor(loginId, acc);
+    const fallback =
+      fallbackOTP?.loginId === loginId && fallbackOTP.sid === acc.sid
+        ? fallbackOTP
+        : null;
     const pill = statusPillFor(primary);
     const isThisAccountPending =
       primary === "launching" || copyStatus === "pending";
@@ -228,7 +272,7 @@ export function HomePage() {
 
     return (
       <li
-        key={acc.sid}
+        key={cardKey(loginId, acc.sid)}
         className="rounded-lg border p-3 transition-colors hover:bg-muted/40"
       >
         <div className="flex items-start justify-between gap-3">
@@ -271,7 +315,7 @@ export function HomePage() {
               size="sm"
               onClick={() => copyFallback(fallback)}
             >
-              {copiedSid === fallback.sid ? "✓" : "複製"}
+              {copiedKey === cardKey(fallback.loginId, fallback.sid) ? "✓" : "複製"}
             </Button>
           </div>
         )}
@@ -281,7 +325,7 @@ export function HomePage() {
             variant="outline"
             size="sm"
             disabled={isThisAccountPending}
-            onClick={() => copyCredentials(acc)}
+            onClick={() => copyCredentials(loginId, acc)}
           >
             {copyStatus === "pending"
               ? "產生中…"
@@ -294,7 +338,7 @@ export function HomePage() {
           <Button
             size="sm"
             disabled={playDisabled}
-            onClick={() => playAccount(acc)}
+            onClick={() => playAccount(loginId, acc)}
           >
             進入遊戲
           </Button>
@@ -303,43 +347,10 @@ export function HomePage() {
     );
   }
 
-  function renderAccounts() {
-    if (accounts.isPending) {
-      return <p className="text-sm text-muted-foreground">載入帳號中…</p>;
-    }
-    if (accounts.isError) {
-      return (
-        <div className="flex flex-col items-center gap-2">
-          <p className="text-sm text-destructive">
-            載入失敗:{friendlyError(accounts.error)}
-          </p>
-          <Button variant="outline" onClick={retry}>
-            重試
-          </Button>
-        </div>
-      );
-    }
-    if (accounts.data.length === 0) {
-      return (
-        <div className="flex flex-col items-center gap-2">
-          <p className="text-sm text-muted-foreground">找不到遊戲帳號</p>
-          <Button variant="outline" onClick={retry}>
-            重試
-          </Button>
-        </div>
-      );
-    }
-    return (
-      <ul className="flex flex-col gap-3">
-        {accounts.data.map(renderAccountCard)}
-      </ul>
-    );
-  }
-
   function cleanSpawn() {
     setFallbackOTP(null);
     spawnGameClean.mutate(undefined, {
-      onError: handleMutationError,
+      onError: (e) => handleMutationError(e),
     });
   }
 
@@ -352,9 +363,9 @@ export function HomePage() {
             size="sm"
             className="bg-background/80 backdrop-blur"
             onClick={logout}
-            disabled={logoutMutation.isPending}
+            disabled={logoutAll.isPending}
           >
-            登出
+            全部登出
           </Button>
         }
       />
@@ -386,8 +397,47 @@ export function HomePage() {
           )}
         </div>
 
-        <p className="mt-1 text-xs font-medium text-muted-foreground">分帳</p>
-        {renderAccounts()}
+        {notice && (
+          <div className="flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/15 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+            <span className="min-w-0 flex-1">{notice.label} 的登入已失效</span>
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-label="關閉通知"
+              onClick={() => setNotice(null)}
+            >
+              ✕
+            </Button>
+          </div>
+        )}
+
+        {loginList.map((login, i) => (
+          <LoginGroup
+            key={login.id}
+            login={login}
+            isFirst={i === 0}
+            lastUsedSid={lastUsedSid}
+            logoutPending={logoutLogin.isPending || logoutAll.isPending}
+            onLogout={logoutOne}
+            renderCard={renderAccountCard}
+          />
+        ))}
+
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={loginList.length >= MAX_LOGINS}
+            onClick={addLogin}
+          >
+            ＋ 新增 Beanfun 帳號
+          </Button>
+          {loginList.length >= MAX_LOGINS && (
+            <span className="text-xs text-muted-foreground">
+              最多同時登入 {MAX_LOGINS} 個 Beanfun 帳號
+            </span>
+          )}
+        </div>
       </section>
     </AppShell>
   );

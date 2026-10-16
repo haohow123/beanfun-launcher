@@ -55,6 +55,44 @@ export class Account {
 }
 
 /**
+ * LoginInfo is the frontend-safe view of a login.
+ */
+export class LoginInfo {
+    /**
+     * Creates a new LoginInfo instance.
+     * @param {Partial<LoginInfo>} [$$source = {}] - The source object to create the LoginInfo.
+     */
+    constructor($$source = {}) {
+        if (!("id" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["id"] = "";
+        }
+        if (!("label" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["label"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new LoginInfo instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {LoginInfo}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new LoginInfo(/** @type {Partial<LoginInfo>} */($$parsedSource));
+    }
+}
+
+/**
  * QRStart is the payload returned to the frontend when QR login begins.
  * BitmapBase64 is the QR PNG bytes encoded as base64 (no data: prefix).
  * Deeplink is the Beanfun mobile-app URL the QR encodes; surfaced so

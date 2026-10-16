@@ -98,8 +98,9 @@ type GamePathStore interface {
 
 // loginSnapshotter is the minimal *beanfun.LoginService surface Spawn*/Launch/GetOTP need to fake a session in tests.
 type loginSnapshotter interface {
-	Snapshot() (*beanfun.BeanfunClient, *beanfun.Session)
-	EndSessionIfCurrent(*beanfun.BeanfunClient) bool
+	Snapshot(loginID string) (*beanfun.BeanfunClient, *beanfun.Session)
+	EndSessionIfCurrent(loginID string, c *beanfun.BeanfunClient) bool
+	HasLogin() bool
 }
 
 // GamePathInfo is the settings page's snapshot: the raw setting, the registry's detection, the effective path, and whether it passes checkGameExe.
@@ -280,9 +281,9 @@ func (s *LauncherService) resolveCheckedGameExe() (gameExe string, warnings []st
 // OS-side argv copy in the spawned process's memory is unavoidable
 // (kernel copies before we can scrub) but bounded by the OTP's
 // single-use server-side ticket lifetime.
-func (s *LauncherService) SpawnGame(account beanfun.Account) error {
+func (s *LauncherService) SpawnGame(loginID string, account beanfun.Account) error {
 	s.mu.Lock()
-	client, session := s.login.Snapshot()
+	client, session := s.login.Snapshot(loginID)
 	s.mu.Unlock()
 
 	if client == nil || session == nil {
@@ -325,7 +326,7 @@ func (s *LauncherService) SpawnGame(account beanfun.Account) error {
 		if isSessionExpired(err) {
 			slog.Warn("SpawnGame: session expired, clearing local state",
 				"sid", beanfun.MaskSID(account.SID))
-			s.login.EndSessionIfCurrent(client)
+			s.login.EndSessionIfCurrent(loginID, client)
 			return beanfun.ErrLoginRequired()
 		}
 		slog.Error("SpawnGame: FetchOTP failed", "err", err, "sid", beanfun.MaskSID(account.SID))
@@ -396,11 +397,7 @@ func (s *LauncherService) SpawnGame(account beanfun.Account) error {
 // account chosen yet"; the per-account pill stays off until the
 // user invokes Launch.
 func (s *LauncherService) SpawnGameClean() error {
-	s.mu.Lock()
-	client, session := s.login.Snapshot()
-	s.mu.Unlock()
-
-	if client == nil || session == nil {
+	if !s.login.HasLogin() {
 		return beanfun.ErrLoginRequired()
 	}
 
@@ -502,9 +499,9 @@ type LaunchResult struct {
 //     OTP for manual paste.
 //
 // The OTP byte slice is zeroed before this method returns.
-func (s *LauncherService) Launch(account beanfun.Account) (LaunchResult, error) {
+func (s *LauncherService) Launch(loginID string, account beanfun.Account) (LaunchResult, error) {
 	s.mu.Lock()
-	client, session := s.login.Snapshot()
+	client, session := s.login.Snapshot(loginID)
 	s.mu.Unlock()
 
 	if client == nil || session == nil {
@@ -542,7 +539,7 @@ func (s *LauncherService) Launch(account beanfun.Account) (LaunchResult, error) 
 		if isSessionExpired(err) {
 			slog.Warn("Launch: session expired, clearing local state",
 				"sid", beanfun.MaskSID(account.SID))
-			s.login.EndSessionIfCurrent(client)
+			s.login.EndSessionIfCurrent(loginID, client)
 			return LaunchResult{}, beanfun.ErrLoginRequired()
 		}
 		slog.Error("Launch: FetchOTP failed", "err", err, "sid", beanfun.MaskSID(account.SID))
@@ -599,24 +596,24 @@ func (s *LauncherService) Launch(account beanfun.Account) (LaunchResult, error) 
 // but WM_CHAR failed) still surfaces the OTP for manual paste.
 // Spawn-path success returns AutoFilled=true semantically — argv-based
 // login is "auto filled" from the user's perspective.
-func (s *LauncherService) LaunchAccount(account beanfun.Account) (LaunchResult, error) {
+func (s *LauncherService) LaunchAccount(loginID string, account beanfun.Account) (LaunchResult, error) {
 	if hwnd := findGameWindowFn(); hwnd != 0 {
-		result, err := s.Launch(account)
+		result, err := s.Launch(loginID, account)
 		if err == nil && result.NoWindow {
 			slog.Info("LaunchAccount: window vanished mid-call, falling back to SpawnGame",
 				"sid", beanfun.MaskSID(account.SID))
-			if spawnErr := s.SpawnGame(account); spawnErr != nil {
+			if spawnErr := s.SpawnGame(loginID, account); spawnErr != nil {
 				return LaunchResult{}, spawnErr
 			}
 			return LaunchResult{AutoFilled: true}, nil
 		}
 		return result, err
 	}
-	err := s.SpawnGame(account)
+	err := s.SpawnGame(loginID, account)
 	if errors.Is(err, errGameAlreadyRunning) {
 		slog.Info("LaunchAccount: window appeared mid-call, falling back to Launch",
 			"sid", beanfun.MaskSID(account.SID))
-		return s.Launch(account)
+		return s.Launch(loginID, account)
 	}
 	if err != nil {
 		return LaunchResult{}, err
@@ -650,9 +647,9 @@ func isSessionExpired(err error) bool {
 // it from Go). Per Beanfun's design the OTP is single-use and
 // rotates on each call — keeping it in memory between fetch and
 // paste is acceptable given that single-use lifecycle.
-func (s *LauncherService) GetOTP(account beanfun.Account) (string, error) {
+func (s *LauncherService) GetOTP(loginID string, account beanfun.Account) (string, error) {
 	s.mu.Lock()
-	client, session := s.login.Snapshot()
+	client, session := s.login.Snapshot(loginID)
 	s.mu.Unlock()
 
 	if client == nil || session == nil {
@@ -667,7 +664,7 @@ func (s *LauncherService) GetOTP(account beanfun.Account) (string, error) {
 		if isSessionExpired(err) {
 			slog.Warn("GetOTP: session expired, clearing local state",
 				"sid", beanfun.MaskSID(account.SID))
-			s.login.EndSessionIfCurrent(client)
+			s.login.EndSessionIfCurrent(loginID, client)
 			return "", beanfun.ErrLoginRequired()
 		}
 		slog.Error("GetOTP: FetchOTP failed", "err", err, "sid", beanfun.MaskSID(account.SID))

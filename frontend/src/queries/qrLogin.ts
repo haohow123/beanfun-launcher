@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Events } from "@wailsio/runtime";
 import { useEffect } from "react";
 
@@ -6,6 +6,12 @@ import { LoginService, QRState } from "@bindings/beanfun";
 
 export const qrMintQueryKey = ["qrMint"] as const;
 export const qrStatusQueryKey = ["qrStatus"] as const;
+
+/** resetQRQueries drops the cached QR and its status so the next login page mints a fresh one instead of reusing an approved state. */
+export function resetQRQueries(qc: QueryClient) {
+  qc.removeQueries({ queryKey: qrMintQueryKey });
+  qc.removeQueries({ queryKey: qrStatusQueryKey });
+}
 
 // Must match beanfun.QRStateChangedEvent in internal/beanfun/service.go.
 const QR_STATE_CHANGED_EVENT = "beanfun:qr-state-changed";

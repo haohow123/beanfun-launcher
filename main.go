@@ -66,6 +66,9 @@ func main() {
 	loginSvc.OnSessionEnded = func(ev beanfun.SessionEnded) {
 		emit(beanfun.SessionEndedEvent, ev)
 	}
+	loginSvc.OnLoginsChanged = func(infos []beanfun.LoginInfo) {
+		emit(beanfun.LoginsChangedEvent, infos)
+	}
 	settingsPath, err := settings.DefaultPath()
 	if err != nil {
 		slog.Warn("settings: no config dir, using defaults in memory", "err", err)

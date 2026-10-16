@@ -14,6 +14,8 @@ var mainWiringRequired = []string{
 	"loginSvc.OnQRStateChanged =",
 	"emit(beanfun.SessionEndedEvent",
 	"loginSvc.OnSessionEnded =",
+	"emit(beanfun.LoginsChangedEvent",
+	"loginSvc.OnLoginsChanged =",
 	"readyApp.Load()",
 	"readyApp.Store(app)",
 }

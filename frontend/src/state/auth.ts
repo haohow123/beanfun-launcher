@@ -1,15 +1,10 @@
 import { atom } from "jotai";
 
-/**
- * loggedInAtom is the app-wide auth gate. Pages flip it via
- * useSetAtom; App.tsx reads it via useAtomValue to pick the route.
- *
- * Today this is a bare boolean — once we have real Session info to
- * expose (account name, web token expiry, etc.), this should become
- * an atom of `Session | null` and pull a SessionInfo DTO from the
- * Go LoginService. See docs/beanfun-login-protocol.md § Token storage.
- */
-export const loggedInAtom = atom(false);
+/** sessionEndNoticeAtom is set when a login ended without the user logging it out. */
+export const sessionEndNoticeAtom = atom<{ label: string } | null>(null);
 
-/** sessionEndReasonAtom is null unless the session ended without the user logging out. */
-export const sessionEndReasonAtom = atom<"expired" | null>(null);
+/** addingLoginAtom is true while the user is scanning a QR to add another login. */
+export const addingLoginAtom = atom(false);
+
+/** collapsedLoginsAtom holds the user's manual collapse choice per login id; absent means "use the default". */
+export const collapsedLoginsAtom = atom<Record<string, boolean>>({});
