@@ -273,7 +273,7 @@ func (s *LoginService) GetAccounts() ([]Account, error) {
 	return accounts, nil
 }
 
-// Snapshot returns the current client + session pointers without a
+// snapshot returns the current client + session pointers without a
 // copy. Used by sibling services (internal/launcher) that need to
 // drive post-login flows against the same cookie jar — the alternative
 // would be re-minting a client, which means re-logging-in.
@@ -284,7 +284,7 @@ func (s *LoginService) GetAccounts() ([]Account, error) {
 //   - Session is only mutated by LoginService under s.mu; readers
 //     observe a coherent snapshot of whichever Session was active at
 //     call time.
-func (s *LoginService) Snapshot() (*BeanfunClient, *Session) {
+func (s *LoginService) snapshot() (*BeanfunClient, *Session) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.client, s.session
@@ -307,8 +307,11 @@ func (s *LoginService) Reset() {
 	s.mu.Unlock()
 }
 
-// EndSessionIfCurrent clears the session only if it still belongs to client, so a stale caller can't log out a newer login.
-func (s *LoginService) EndSessionIfCurrent(client *BeanfunClient) bool {
+// endSessionIfCurrent clears the session only if it still belongs to client, so a stale caller can't log out a newer login.
+func (s *LoginService) endSessionIfCurrent(client *BeanfunClient) bool {
+	if client == nil {
+		return false
+	}
 	s.mu.Lock()
 	if s.client != client {
 		s.mu.Unlock()
@@ -364,7 +367,7 @@ func (s *LoginService) keepAliveTick(ctx context.Context, client *BeanfunClient)
 	var le *LoginError
 	if errors.As(err, &le) && le.Kind == KindSessionExpired {
 		slog.Info("keep-alive: session logged out")
-		s.EndSessionIfCurrent(client)
+		s.endSessionIfCurrent(client)
 		return 0
 	}
 	if errors.As(err, &le) && le.Kind == KindIPBlocked {

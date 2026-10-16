@@ -69,7 +69,7 @@ func main() {
 	}
 	settingsFile := settings.NewFile(settingsPath)
 
-	launcherSvc := launcher.NewLauncherService(loginSvc, mgr, settingsFile)
+	launcherSvc := launcher.NewLauncherService(beanfun.NewSessionAccess(loginSvc), mgr, settingsFile)
 
 	// notifSvc is kept registered purely for its Windows ServiceStartup
 	// side effect (AUMID + COM activator registration, IconUri write)

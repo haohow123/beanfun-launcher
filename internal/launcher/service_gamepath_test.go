@@ -73,7 +73,7 @@ func TestLauncherService_ResolveCheckedGameExe_Missing(t *testing.T) {
 
 	mgr := bgtask.New()
 	login := beanfun.NewLoginService(mgr)
-	svc := NewLauncherService(login, mgr, nil)
+	svc := NewLauncherService(beanfun.NewSessionAccess(login), mgr, nil)
 
 	gameExe, warnings, gameErr := svc.resolveCheckedGameExe()
 	if gameErr == nil {
@@ -97,7 +97,7 @@ func TestLauncherService_ResolveCheckedGameExe_OK(t *testing.T) {
 
 	mgr := bgtask.New()
 	login := beanfun.NewLoginService(mgr)
-	svc := NewLauncherService(login, mgr, &fakeGamePathStore{path: path})
+	svc := NewLauncherService(beanfun.NewSessionAccess(login), mgr, &fakeGamePathStore{path: path})
 
 	gameExe, _, gameErr := svc.resolveCheckedGameExe()
 	if gameErr != nil {
@@ -163,7 +163,7 @@ func TestLauncherService_GamePath(t *testing.T) {
 
 	mgr := bgtask.New()
 	login := beanfun.NewLoginService(mgr)
-	svc := NewLauncherService(login, mgr, &fakeGamePathStore{path: path})
+	svc := NewLauncherService(beanfun.NewSessionAccess(login), mgr, &fakeGamePathStore{path: path})
 
 	info := svc.GamePath()
 	if info.Setting != path {
@@ -190,7 +190,7 @@ func TestLauncherService_GamePath_InvalidSetting_NotLocal_NoFallbackToRegistry(t
 
 	mgr := bgtask.New()
 	login := beanfun.NewLoginService(mgr)
-	svc := NewLauncherService(login, mgr, &fakeGamePathStore{path: "relative/MapleStory.exe"})
+	svc := NewLauncherService(beanfun.NewSessionAccess(login), mgr, &fakeGamePathStore{path: "relative/MapleStory.exe"})
 
 	info := svc.GamePath()
 	if info.Source != GamePathSetting {
@@ -208,7 +208,7 @@ func TestLauncherService_SetGamePath_Clears(t *testing.T) {
 	store := &fakeGamePathStore{path: "stale"}
 	mgr := bgtask.New()
 	login := beanfun.NewLoginService(mgr)
-	svc := NewLauncherService(login, mgr, store)
+	svc := NewLauncherService(beanfun.NewSessionAccess(login), mgr, store)
 
 	if err := svc.SetGamePath(""); err != nil {
 		t.Fatalf("SetGamePath(\"\") = %v, want nil", err)
@@ -229,7 +229,7 @@ func TestLauncherService_SetGamePath_RejectsUNC(t *testing.T) {
 	store := &fakeGamePathStore{}
 	mgr := bgtask.New()
 	login := beanfun.NewLoginService(mgr)
-	svc := NewLauncherService(login, mgr, store)
+	svc := NewLauncherService(beanfun.NewSessionAccess(login), mgr, store)
 
 	err := svc.SetGamePath(`\\host\share\MapleStory.exe`)
 	if !errors.Is(err, localpath.ErrNotLocal) {
@@ -252,7 +252,7 @@ func TestLauncherService_SetGamePath_RejectsNonExe(t *testing.T) {
 	store := &fakeGamePathStore{}
 	mgr := bgtask.New()
 	login := beanfun.NewLoginService(mgr)
-	svc := NewLauncherService(login, mgr, store)
+	svc := NewLauncherService(beanfun.NewSessionAccess(login), mgr, store)
 
 	err := svc.SetGamePath(path)
 	var le *LauncherError
@@ -276,7 +276,7 @@ func TestLauncherService_SetGamePath_SavesCleaned(t *testing.T) {
 	store := &fakeGamePathStore{}
 	mgr := bgtask.New()
 	login := beanfun.NewLoginService(mgr)
-	svc := NewLauncherService(login, mgr, store)
+	svc := NewLauncherService(beanfun.NewSessionAccess(login), mgr, store)
 
 	if err := svc.SetGamePath(messy); err != nil {
 		t.Fatalf("SetGamePath() = %v, want nil", err)
@@ -294,7 +294,7 @@ func TestLauncherService_SetGamePath_TrimsWhitespace(t *testing.T) {
 	store := &fakeGamePathStore{}
 	mgr := bgtask.New()
 	login := beanfun.NewLoginService(mgr)
-	svc := NewLauncherService(login, mgr, store)
+	svc := NewLauncherService(beanfun.NewSessionAccess(login), mgr, store)
 
 	if err := svc.SetGamePath("  " + path + "  "); err != nil {
 		t.Fatalf("SetGamePath() = %v, want nil", err)
@@ -312,7 +312,7 @@ func TestLauncherService_SetGamePath_UnquotesExplorerPath(t *testing.T) {
 	store := &fakeGamePathStore{}
 	mgr := bgtask.New()
 	login := beanfun.NewLoginService(mgr)
-	svc := NewLauncherService(login, mgr, store)
+	svc := NewLauncherService(beanfun.NewSessionAccess(login), mgr, store)
 
 	if err := svc.SetGamePath(`  "` + path + `"  `); err != nil {
 		t.Fatalf("SetGamePath() = %v, want nil", err)
@@ -325,7 +325,7 @@ func TestLauncherService_SetGamePath_UnquotesExplorerPath(t *testing.T) {
 func TestLauncherService_TestGamePath_ExplicitPath(t *testing.T) {
 	mgr := bgtask.New()
 	login := beanfun.NewLoginService(mgr)
-	svc := NewLauncherService(login, mgr, nil)
+	svc := NewLauncherService(beanfun.NewSessionAccess(login), mgr, nil)
 
 	check := svc.TestGamePath("relative/MapleStory.exe")
 	if check.OK {
@@ -343,7 +343,7 @@ func TestLauncherService_TestGamePath_TrimsWhitespace(t *testing.T) {
 	path := withLocalGameExe(t)
 	mgr := bgtask.New()
 	login := beanfun.NewLoginService(mgr)
-	svc := NewLauncherService(login, mgr, nil)
+	svc := NewLauncherService(beanfun.NewSessionAccess(login), mgr, nil)
 
 	check := svc.TestGamePath("  " + path + "  ")
 	if !check.OK || check.Path != path {
@@ -357,7 +357,7 @@ func TestLauncherService_TestGamePath_UnquotesExplorerPath(t *testing.T) {
 	path := withLocalGameExe(t)
 	mgr := bgtask.New()
 	login := beanfun.NewLoginService(mgr)
-	svc := NewLauncherService(login, mgr, nil)
+	svc := NewLauncherService(beanfun.NewSessionAccess(login), mgr, nil)
 
 	check := svc.TestGamePath(`"` + path + `"`)
 	if !check.OK || check.Path != path {
@@ -372,7 +372,7 @@ func TestLauncherService_TestGamePath_EmptyUsesEffective(t *testing.T) {
 
 	mgr := bgtask.New()
 	login := beanfun.NewLoginService(mgr)
-	svc := NewLauncherService(login, mgr, &fakeGamePathStore{path: path})
+	svc := NewLauncherService(beanfun.NewSessionAccess(login), mgr, &fakeGamePathStore{path: path})
 
 	check := svc.TestGamePath("")
 	if !check.OK || check.Path != path {

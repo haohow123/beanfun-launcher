@@ -17,15 +17,6 @@ import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Cr
 import * as $models from "./models.js";
 
 /**
- * EndSessionIfCurrent clears the session only if it still belongs to client, so a stale caller can't log out a newer login.
- * @param {$models.BeanfunClient | null} client
- * @returns {$CancellablePromise<boolean>}
- */
-export function EndSessionIfCurrent(client) {
-    return $Call.ByID(3235674126, client);
-}
-
-/**
  * GetAccounts returns the list of game accounts under the active
  * session. Requires StartQRLogin and an approved poll to have completed
  * successfully (session != nil). See docs/beanfun-login-protocol.md § 8.
@@ -57,28 +48,6 @@ export function Reset() {
 }
 
 /**
- * Snapshot returns the current client + session pointers without a
- * copy. Used by sibling services (internal/launcher) that need to
- * drive post-login flows against the same cookie jar — the alternative
- * would be re-minting a client, which means re-logging-in.
- * 
- * Both returned pointers may be nil if no session is active; callers
- * must nil-check before use. The pointer-sharing is safe because:
- *   - BeanfunClient.http (and its cookie jar) is itself thread-safe.
- *   - Session is only mutated by LoginService under s.mu; readers
- *     observe a coherent snapshot of whichever Session was active at
- *     call time.
- * @returns {$CancellablePromise<[$models.BeanfunClient | null, $models.Session | null]>}
- */
-export function Snapshot() {
-    return $Call.ByID(917524005).then(/** @type {($result: any) => any} */(($result) => {
-        $result[0] = $$createType4($result[0]);
-        $result[1] = $$createType6($result[1]);
-        return $result;
-    }));
-}
-
-/**
  * StartQRLogin runs the init flow (getSessionKey → initQRLogin) and
  * returns the QR + deeplink for the frontend to render. A fresh
  * BeanfunClient (clean cookie jar) is minted on every call.
@@ -86,7 +55,7 @@ export function Snapshot() {
  */
 export function StartQRLogin() {
     return $Call.ByID(3663858381).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType7($result);
+        return $$createType3($result);
     }));
 }
 
@@ -94,8 +63,4 @@ export function StartQRLogin() {
 const $$createType0 = $models.Account.createFrom;
 const $$createType1 = $Create.Array($$createType0);
 const $$createType2 = $models.QRState.createFrom;
-const $$createType3 = $models.BeanfunClient.createFrom;
-const $$createType4 = $Create.Nullable($$createType3);
-const $$createType5 = $models.Session.createFrom;
-const $$createType6 = $Create.Nullable($$createType5);
-const $$createType7 = $models.QRStart.createFrom;
+const $$createType3 = $models.QRStart.createFrom;
