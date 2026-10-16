@@ -50,6 +50,7 @@ func TestLauncherService_SessionExpired_EndsOnlyTheSnapshotClient(t *testing.T) 
 	withFakeRegistry(t, "", false)
 	withFakeSpawn(t)
 	exe := withLocalGameExe(t)
+	withWindowImage(t, func(uintptr) (uint32, string, error) { return 7, "MapleStory.exe", nil })
 	orig := findGameWindowFn
 	t.Cleanup(func() { findGameWindowFn = orig })
 

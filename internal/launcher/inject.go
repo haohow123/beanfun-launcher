@@ -13,3 +13,7 @@ var findGameWindowFn func() uintptr
 // Launch returns; injectFn must consume them synchronously
 // (no goroutines).
 var injectFn func(hwnd uintptr, account, otp []byte) error
+
+// windowImagePathFn returns the owning process ID and executable path of the
+// process behind hwnd.
+var windowImagePathFn func(hwnd uintptr) (pid uint32, path string, err error)

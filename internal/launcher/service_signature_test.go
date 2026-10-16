@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/haohow123/beanfun-launcher/internal/beanfun"
@@ -51,6 +52,12 @@ func launchBlob(t *testing.T) string {
 // otpServer serves the two routes a successful FetchOTP touches.
 func otpServer(t *testing.T) *beanfun.BeanfunClient {
 	t.Helper()
+	return countingOTPServer(t, new(atomic.Int32))
+}
+
+// countingOTPServer is otpServer that also counts every request it receives.
+func countingOTPServer(t *testing.T, hits *atomic.Int32) *beanfun.BeanfunClient {
+	t.Helper()
 	const otpKey = "ABCD1234"
 	blob := launchBlob(t)
 	mux := http.NewServeMux()
@@ -62,7 +69,10 @@ func otpServer(t *testing.T) *beanfun.BeanfunClient {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprintf(w, `{"result":1,"data":"%s%s","message":null}`, otpKey, desECBHex(t, otpKey, "OTP56789"))
 	})
-	srv := httptest.NewServer(mux)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		mux.ServeHTTP(w, r)
+	}))
 	t.Cleanup(srv.Close)
 	base, err := url.Parse(srv.URL + "/")
 	if err != nil {

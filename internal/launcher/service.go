@@ -524,6 +524,16 @@ func (s *LauncherService) Launch(account beanfun.Account) (LaunchResult, error) 
 		return LaunchResult{NoWindow: true}, nil
 	}
 
+	pid, imagePath, err := windowImagePathFn(hwnd)
+	if err != nil {
+		slog.Error("Launch: cannot read the game window's executable", "err", err)
+		return LaunchResult{}, ErrUntrustedGameWindow()
+	}
+	if v := verifyGameSignatureFn(imagePath); !v.OK {
+		slog.Error("Launch: game window's executable rejected", "path", imagePath, "reason", v.Reason)
+		return LaunchResult{}, ErrUntrustedGameWindow()
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -539,6 +549,11 @@ func (s *LauncherService) Launch(account beanfun.Account) (LaunchResult, error) 
 		return LaunchResult{}, err
 	}
 	defer beanfun.Zero(otp.Token)
+
+	if nowPID, _, perr := windowImagePathFn(hwnd); perr != nil || nowPID != pid {
+		slog.Error("Launch: game window changed hands during OTP fetch")
+		return LaunchResult{}, ErrUntrustedGameWindow()
+	}
 
 	if ierr := injectFn(hwnd, []byte(account.SID), otp.Token); ierr != nil {
 		slog.Error("Launch: inject failed, falling back to manual paste",

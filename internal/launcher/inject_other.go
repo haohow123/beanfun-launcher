@@ -9,4 +9,5 @@ func init() {
 	injectFn = func(_ uintptr, _, _ []byte) error {
 		return errors.New("window injection not supported on this platform")
 	}
+	windowImagePathFn = func(uintptr) (uint32, string, error) { return 0, "", ErrPlatformUnsupported() }
 }

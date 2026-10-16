@@ -6,6 +6,8 @@ const FRIENDLY: ReadonlyArray<readonly [string, string]> = [
   ["ip temporarily blocked", "beanfun 暫時鎖定此 IP，請稍後再試"],
   // internal/launcher/service.go errGameAlreadyRunning
   ["already running", "遊戲已開啟，請稍候再試"],
+  // internal/launcher/launcher.go ErrUntrustedGameWindow
+  ["game window is not the signed game", "遊戲視窗不是 NEXON 簽章的程式，未送出帳密"],
   // internal/localpath/path.go ErrNotLocal
   ["not a local file", "只支援本機磁碟上的檔案"],
   // internal/alertsound/wav.go errNotWAV
