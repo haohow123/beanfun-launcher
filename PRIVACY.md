@@ -35,7 +35,10 @@ personal data beyond what is strictly required to operate.
 ## Local data
 
 - **Session tokens** (SKey, WebToken) live only in process
-  memory and are zeroed on Reset / logout. Never written to disk.
+  memory, one set per logged-in Beanfun account, and are dropped
+  when that account logs out or its session expires. Never written
+  to disk, so every account must scan its QR code again after the
+  launcher restarts.
 - **OTP** credentials reach the game either as launch arguments
   (when the launcher starts it) or by being typed into an already
   open game window, and only after the game's NEXON signature has

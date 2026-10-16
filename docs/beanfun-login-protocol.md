@@ -329,10 +329,16 @@ the portal to route subsequent requests differently and sometimes
 land on a final URL with no session key at all; fresh jar per attempt
 is the simplest fix.
 
+Since #122 several logins can be active at once. Each approved QR
+attempt becomes its own login with its own client and jar, and the
+in-progress attempt uses a separate pending client, so adding an
+account never touches the jars of logins that already exist.
+
 ## Token storage
 
-`bfWebToken` and the outer session key are session bearers. They are
-stashed in `LoginService.session *Session` in process memory only:
+`bfWebToken` and the outer session key are session bearers. Each
+login keeps its own `*Session` in `LoginService.logins`, in process
+memory only:
 
 - Never persisted (no disk write, no OS keyring — at least not yet)
 - Never logged literally — `Session.String()` redacts both fields
