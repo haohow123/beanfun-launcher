@@ -36,8 +36,12 @@ personal data beyond what is strictly required to operate.
 
 - **Session tokens** (SKey, WebToken) live only in process
   memory and are zeroed on Reset / logout. Never written to disk.
-- **OTP** credentials are zeroed after being injected into the
-  game's login form.
+- **OTP** credentials reach the game either as launch arguments
+  (when the launcher starts it) or by being typed into an already
+  open game window, and only after the game's NEXON signature has
+  been checked. The launcher's own copy is zeroed once it has been
+  handed over; the copy inside the game process lives as long as
+  the game does.
 - **Log file** under `~/Library/Caches/beanfun-launcher/` (macOS)
   or `%LOCALAPPDATA%\beanfun-launcher\` (Windows) records
   operational events with all token values redacted. The file
