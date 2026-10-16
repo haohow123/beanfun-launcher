@@ -11,7 +11,8 @@ import (
 // package, so a source scan is the only thing that catches the wiring being dropped.
 var mainWiringRequired = []string{
 	"maple.StatusChangedEvent",
-	"application.Get()",
+	"emit(maple.StatusChangedEvent",
+	"readyApp.Store(app)",
 	"notifyServerOnline, emitStatusChanged)",
 }
 

@@ -16,22 +16,15 @@ var windowPIDFn func(hwnd uintptr) (uint32, error)
 // OpenProcess + WaitForSingleObject) and watcher_other.go (stub).
 var waitForProcessExitFn func(ctx context.Context, pid uint32) error
 
-// eventEmitFn forwards events to the live Wails application. Default
-// is a no-op so the always-compiled watcher.go stays free of the
-// github.com/wailsapp/wails/v3/pkg/application import — that package
-// has Linux CGO dependencies on libgtk-3-dev + libwebkit2gtk that CI
-// (ubuntu-24.04, no apt installs) can't satisfy. CI scopes `go vet`
-// and `go test` to `./internal/...` to avoid main.go's Wails import
-// for this exact reason; if we leak Wails into internal/launcher the
-// whole CI lane breaks. Windows binds the real emit via init() in
-// watcher_emit_windows.go; non-Windows stays no-op (the watcher
-// never runs there anyway — SpawnGame returns ErrPlatformUnsupported
-// before restartWatcher is reached). Tests override directly to
-// capture emits.
+// eventEmitFn stays a no-op until main installs the app's emitter, which keeps Wails out of internal/launcher.
 var eventEmitFn = func(name string, data any) {
-	// no-op default
 	_ = name
 	_ = data
+}
+
+// SetEventEmitter must run before NewLauncherService, which can start the exit watcher for a game that is already open.
+func SetEventEmitter(fn func(name string, data any)) {
+	eventEmitFn = fn
 }
 
 // Tunables for runGameWatcher. Tests override gameWindowAppearTimeout
