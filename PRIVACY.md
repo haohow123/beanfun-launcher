@@ -47,14 +47,18 @@ personal data beyond what is strictly required to operate.
   the game does.
 - **Log file** under `~/Library/Caches/beanfun-launcher/` (macOS)
   or `%LOCALAPPDATA%\beanfun-launcher\` (Windows) records
-  operational events with all token values redacted. The file
-  is local — never uploaded, never shared.
+  operational events with all token values redacted. Each sign-in
+  records the Beanfun account ID (`MainAccountID`, which Beanfun
+  returns after sign-in) so a login can be traced back to its
+  account. The file is local — never uploaded,
+  never shared.
 - **Settings file** at `~/Library/Application Support/beanfun-launcher/settings.json`
   (macOS) or `%APPDATA%\beanfun-launcher\settings.json` (Windows)
   stores the chosen alert sound, the paths of WAV files you added,
-  and the game executable path you set on the settings page; the
-  files themselves are never copied or modified. Local only, no
-  credentials.
+  the game executable path you set on the settings page, and the
+  names you gave login groups, each keyed by that account's Beanfun
+  account ID; the files themselves are never copied or modified.
+  Local only, no credentials.
 
 ## Open source
 

@@ -692,7 +692,7 @@ func TestCancelQRLogin_DiscardsInFlightApprovalAndKeepsLogins(t *testing.T) {
 	}
 	s.mu.Lock()
 	gen := s.qrGeneration
-	s.installLoginLocked(existing, &Session{}, "")
+	s.installLoginLocked(existing, &Session{}, "", "")
 	s.mu.Unlock()
 	t.Cleanup(s.mgr.StopAll)
 

@@ -1,5 +1,5 @@
-// Package settings persists non-credential user preferences (currently the
-// chosen alert sound) to a JSON file under the OS's per-user config dir.
+// Package settings persists non-credential user preferences (alert sound,
+// game path, login group names) to a JSON file under the OS's per-user config dir.
 package settings
 
 import (
@@ -26,8 +26,9 @@ const appDirName = "beanfun-launcher"
 const fileName = "settings.json"
 
 type Settings struct {
-	AlertSound  alertsound.Prefs `json:"alertSound"`
-	GameExePath string           `json:"gameExePath,omitempty"`
+	AlertSound  alertsound.Prefs  `json:"alertSound"`
+	GameExePath string            `json:"gameExePath,omitempty"`
+	LoginNames  map[string]string `json:"loginNames,omitempty"`
 }
 
 // Defaults is the Settings used when no file exists or it can't be read.
@@ -97,7 +98,22 @@ func (f *File) loadLocked() Settings {
 		s.AlertSound = Defaults().AlertSound
 	}
 	s.GameExePath = strings.TrimSpace(s.GameExePath)
+	s.LoginNames = cleanLoginNames(s.LoginNames)
 	return s
+}
+
+func cleanLoginNames(names map[string]string) map[string]string {
+	clean := make(map[string]string, len(names))
+	for id, name := range names {
+		id, name = strings.TrimSpace(id), strings.TrimSpace(name)
+		if id != "" && name != "" {
+			clean[id] = name
+		}
+	}
+	if len(clean) == 0 {
+		return nil
+	}
+	return clean
 }
 
 func (f *File) Save(s Settings) error {
@@ -180,5 +196,26 @@ func (f *File) SaveGameExePath(p string) error {
 	defer f.mu.Unlock()
 	s := f.loadLocked()
 	s.GameExePath = p
+	return f.saveLocked(s)
+}
+
+// LoadLoginName implements beanfun.LoginNameStore.
+func (f *File) LoadLoginName(mainID string) string {
+	if mainID == "" {
+		return ""
+	}
+	return f.Load().LoginNames[mainID]
+}
+
+// SaveLoginName implements beanfun.LoginNameStore without touching the other Settings fields.
+func (f *File) SaveLoginName(mainID, name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	s := f.loadLocked()
+	if s.LoginNames == nil {
+		s.LoginNames = map[string]string{}
+	}
+	s.LoginNames[mainID] = name
+	s.LoginNames = cleanLoginNames(s.LoginNames)
 	return f.saveLocked(s)
 }

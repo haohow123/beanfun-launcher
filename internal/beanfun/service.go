@@ -9,8 +9,10 @@ import (
 	"log/slog"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/haohow123/beanfun-launcher/internal/bgtask"
 )
@@ -46,17 +48,36 @@ type QRState struct {
 // maxLogins caps how many Beanfun logins can be held at once.
 const maxLogins = 5
 
+// maxLoginNameRunes caps a user-chosen login name.
+const maxLoginNameRunes = 12
+
 // login is one signed-in Beanfun account with its own client, cookie jar and session.
 type login struct {
-	id, label, mainID string // mainID goes to the local log only, never to the frontend
+	id, label, mainID string // mainID never goes to the frontend
+	name              string // user-chosen, empty when the default label applies
 	client            *BeanfunClient
 	session           *Session
+}
+
+func (l *login) displayLabel() string {
+	if l.name != "" {
+		return l.name
+	}
+	return l.label
 }
 
 // LoginInfo is the frontend-safe view of a login.
 type LoginInfo struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
+	Name  string `json:"name"` // empty when Label is the default
+}
+
+// LoginNameStore keeps user-chosen login names keyed by MainAccountID.
+type LoginNameStore interface {
+	LoadLoginName(mainID string) string
+	// SaveLoginName with an empty name deletes the entry.
+	SaveLoginName(mainID, name string) error
 }
 
 // LoginService is the Wails-bound login facade. The frontend calls
@@ -89,6 +110,9 @@ type LoginService struct {
 
 	// OnLoginsChanged receives the full login list after every change and must be installed before the first StartQRLogin.
 	OnLoginsChanged func([]LoginInfo)
+
+	// NameStore, if non-nil, remembers login names across restarts; install it before the first StartQRLogin.
+	NameStore LoginNameStore
 }
 
 // Cadence of the keep-alive ping on echo_token.ashx: OK after success, Fail after an error, Blocked after an IP lock.
@@ -296,7 +320,7 @@ func (s *LoginService) ListLogins() []LoginInfo {
 func (s *LoginService) loginInfosLocked() []LoginInfo {
 	infos := make([]LoginInfo, 0, len(s.logins))
 	for _, l := range s.logins {
-		infos = append(infos, LoginInfo{ID: l.id, Label: l.label})
+		infos = append(infos, LoginInfo{ID: l.id, Label: l.displayLabel(), Name: l.name})
 	}
 	return infos
 }
@@ -377,6 +401,46 @@ func (s *LoginService) Logout(loginID string) {
 	s.notifyLoginsChanged(infos)
 }
 
+// RenameLogin names one login and remembers the name for that Beanfun account's later sign-ins.
+func (s *LoginService) RenameLogin(loginID, name string) error {
+	name = strings.TrimSpace(name)
+	if utf8.RuneCountInString(name) > maxLoginNameRunes {
+		return ErrLoginNameTooLong()
+	}
+	s.mu.Lock()
+	i := s.findLoginLocked(loginID)
+	if i < 0 {
+		s.mu.Unlock()
+		return ErrLoginRequired()
+	}
+	mainID := s.logins[i].mainID
+	s.mu.Unlock()
+
+	if mainID != "" && s.NameStore != nil {
+		if err := s.NameStore.SaveLoginName(mainID, name); err != nil {
+			slog.Warn("RenameLogin: save failed", "login", loginID, "err", err)
+			return ErrLoginNameSave(err)
+		}
+	}
+
+	s.mu.Lock()
+	if i := s.findLoginLocked(loginID); i >= 0 {
+		s.logins[i].name = name
+	}
+	infos := s.loginInfosLocked()
+	s.mu.Unlock()
+	s.notifyLoginsChanged(infos)
+	return nil
+}
+
+// savedName reads mainID's remembered name from disk, so callers must not hold s.mu.
+func (s *LoginService) savedName(mainID string) string {
+	if mainID == "" || s.NameStore == nil {
+		return ""
+	}
+	return s.NameStore.LoadLoginName(mainID)
+}
+
 func (s *LoginService) notifyLoginsChanged(infos []LoginInfo) {
 	if s.OnLoginsChanged != nil {
 		s.OnLoginsChanged(infos)
@@ -400,21 +464,21 @@ func (s *LoginService) endSessionIfCurrent(id string, client *BeanfunClient) boo
 	infos := s.loginInfosLocked()
 	s.mu.Unlock()
 	if s.OnSessionEnded != nil {
-		s.OnSessionEnded(SessionEnded{Reason: "expired", LoginID: ended.id, Label: ended.label})
+		s.OnSessionEnded(SessionEnded{Reason: "expired", LoginID: ended.id, Label: ended.displayLabel()})
 	}
 	s.notifyLoginsChanged(infos)
 	return true
 }
 
-// installLoginLocked stores an approved login, replacing the one with the same non-empty mainID, and reports false past maxLogins.
-func (s *LoginService) installLoginLocked(client *BeanfunClient, sess *Session, mainID string) bool {
+// installLoginLocked stores an approved login named name, replacing the one with the same non-empty mainID, and reports false past maxLogins.
+func (s *LoginService) installLoginLocked(client *BeanfunClient, sess *Session, mainID, name string) bool {
 	if mainID != "" {
 		for i, old := range s.logins {
 			if old.mainID != mainID {
 				continue
 			}
 			s.mgr.Stop(keepAliveTaskPrefix + old.id)
-			s.logins[i] = &login{id: old.id, label: old.label, mainID: mainID, client: client, session: sess}
+			s.logins[i] = &login{id: old.id, label: old.label, mainID: mainID, name: old.name, client: client, session: sess}
 			s.startKeepAliveLocked(old.id, client)
 			return true
 		}
@@ -424,7 +488,7 @@ func (s *LoginService) installLoginLocked(client *BeanfunClient, sess *Session, 
 	}
 	s.nextID++
 	id := strconv.Itoa(s.nextID)
-	s.logins = append(s.logins, &login{id: id, label: labelFor(mainID, s.nextID), mainID: mainID, client: client, session: sess})
+	s.logins = append(s.logins, &login{id: id, label: labelFor(mainID, s.nextID), mainID: mainID, name: name, client: client, session: sess})
 	s.startKeepAliveLocked(id, client)
 	return true
 }
@@ -534,11 +598,12 @@ func (s *LoginService) advanceQRState(ctx context.Context, gen uint64, client *B
 		if echoErr != nil {
 			slog.Warn("qr-poll: echo_token after finalize failed", "err", echoErr)
 		}
+		name := s.savedName(mainID)
 		s.mu.Lock()
 		stale := gen != s.qrGeneration
 		installed := false
 		if !stale {
-			installed = s.installLoginLocked(client, sess, mainID)
+			installed = s.installLoginLocked(client, sess, mainID, name)
 			if installed {
 				s.pendingClient = nil
 				s.pendingQR = nil
