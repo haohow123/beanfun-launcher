@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 
 	"github.com/haohow123/beanfun-launcher/internal/alertsound"
 	"github.com/haohow123/beanfun-launcher/internal/beanfun"
@@ -50,18 +51,20 @@ func main() {
 	// per-name on re-registration. See internal/bgtask docs.
 	mgr := bgtask.New()
 
-	loginSvc := beanfun.NewLoginService(mgr)
-	// application.Get() is resolved at emit time because loginSvc is built before application.New
-	// and the poll can produce a state before the app exists.
-	loginSvc.OnQRStateChanged = func(st beanfun.QRState) {
-		if app := application.Get(); app != nil {
-			app.Event.Emit(beanfun.QRStateChangedEvent, st)
+	// Wails publishes its global app before New has built the event processor, so emits wait until New returns.
+	var readyApp atomic.Pointer[application.App]
+	emit := func(name string, data any) {
+		if app := readyApp.Load(); app != nil {
+			app.Event.Emit(name, data)
 		}
 	}
+
+	loginSvc := beanfun.NewLoginService(mgr)
+	loginSvc.OnQRStateChanged = func(st beanfun.QRState) {
+		emit(beanfun.QRStateChangedEvent, st)
+	}
 	loginSvc.OnSessionEnded = func(ev beanfun.SessionEnded) {
-		if app := application.Get(); app != nil {
-			app.Event.Emit(beanfun.SessionEndedEvent, ev)
-		}
+		emit(beanfun.SessionEndedEvent, ev)
 	}
 	settingsPath, err := settings.DefaultPath()
 	if err != nil {
@@ -69,6 +72,7 @@ func main() {
 	}
 	settingsFile := settings.NewFile(settingsPath)
 
+	launcher.SetEventEmitter(emit)
 	launcherSvc := launcher.NewLauncherService(beanfun.NewSessionAccess(loginSvc), mgr, settingsFile)
 
 	// notifSvc is kept registered purely for its Windows ServiceStartup
@@ -86,12 +90,8 @@ func main() {
 		}
 	}
 
-	// application.Get() is resolved at emit time because mapleSvc is built before application.New
-	// and the heartbeat's first probe can complete before the app exists.
 	emitStatusChanged := func(s maple.Status) {
-		if app := application.Get(); app != nil {
-			app.Event.Emit(maple.StatusChangedEvent, s)
-		}
+		emit(maple.StatusChangedEvent, s)
 	}
 
 	// MapleService starts its status-probe heartbeat immediately
@@ -120,6 +120,7 @@ func main() {
 		// the error to a stdout that -H windowsgui detaches; this keeps it.
 		ErrorHandler: diag.WebviewError,
 	})
+	readyApp.Store(app)
 
 	win := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:         "Beanfun Launcher",
