@@ -16,11 +16,12 @@ run the app to follow a UI PR.
 Status pill + primary CTA on a flat row; no avatar block.
 
 Earlier iterations briefly experimented with per-account coloured
-avatars but the unit was wrong: every `(sname, sid)` row belongs to
-the same Beanfun user (game-side sub-accounts), so giving each one
-a distinct identity colour was misleading. Stripped back to plain
-typography for the row; user-level / game-level branding will land
-on the card *header* if/when we surface them.
+avatars but the unit was wrong: the `(sname, sid)` rows are game-side
+sub-accounts of a Beanfun login, so giving each one a distinct
+identity colour was misleading. Stripped back to plain typography for
+the row. Since #122 several Beanfun logins can be active at once; the
+Beanfun-level identity lives on the group header (see Pass 5), not on
+the card.
 
 ```mermaid
 flowchart TB
@@ -159,3 +160,59 @@ LoginPage's QR card is dropped in favour of a centred QR + prompt
 text sitting under the hero, matching HomePage's flat-section
 shape.
 
+
+---
+
+## HomePage — one group per Beanfun login (Pass 5, #122)
+
+Several Beanfun logins can stay active at once (up to 5, each with up
+to 5 MapleStory sub-accounts), so the account list is grouped by
+login and each group collapses. The window stays 480 × 640 and the
+body stays a single flex column: the groups are stacked sections, not
+side-by-side tiles, so the Bento switch to Grid does not apply here.
+
+```mermaid
+flowchart TB
+    subgraph win [Wails window 480×640]
+        direction TB
+        subgraph hero [Hero — unchanged]
+            direction LR
+            gameblock["h1 + ● 伺服器狀態"]
+            logoutall["[全部登出] outline sm, glassy"]
+        end
+        subgraph body [Body — flex-col gap-3 px-4 pb-4]
+            direction TB
+            spawn["[ 啟動(可切換帳號) ] full-width"]
+            notice["(optional) amber banner<br/>'<label> 的登入已失效' + ✕"]
+            subgraph g1 [LoginGroup — expanded]
+                direction TB
+                h1row["header row — flex items-center gap-2<br/>▾ chevron · label · N 個遊戲帳號 · [登出] right"]
+                cards1["Account cards (unchanged V3a cards)"]
+            end
+            subgraph g2 [LoginGroup — collapsed]
+                h2row["▸ chevron · label · N 個遊戲帳號 · [登出]"]
+            end
+            add["row — flex items-center gap-2<br/>[＋ 新增 Beanfun 帳號] outline sm<br/>disabled at 5 logins, followed by a muted reason"]
+        end
+    end
+```
+
+### Notable details
+
+- **Group label** is the login's `MainAccountID` (from the
+  `echo_token` reply) shown as the first two and last two characters
+  around `***`, or 「帳號 N」 when none is available. The raw value
+  never reaches the frontend; it is written to the local launcher log
+  at login so a group can be traced back to an account.
+- **Default expansion**: every group starts expanded, because the
+  masked label alone doesn't say which account a group is; the game
+  accounts underneath do. A user's own toggle lives in memory only.
+- **Logout**: each header's 登出 ends that login only; the hero
+  button becomes 全部登出.
+- **Session ended**: keep-alive ending one login removes only that
+  group and shows the amber banner; when the last login ends, the app
+  returns to LoginPage with 「<label> 的登入已失效，請重新掃碼」.
+- **Add account** opens LoginPage over the home screen with a
+  「← 返回」 link; a successful scan adds a group instead of replacing
+  the current login. Scanning an account that is already logged in
+  replaces that group in place.

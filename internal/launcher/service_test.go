@@ -64,7 +64,7 @@ func TestLauncherService_Launch_NoSession(t *testing.T) {
 	login := beanfun.NewLoginService(mgr)
 	svc := NewLauncherService(beanfun.NewSessionAccess(login), mgr, nil)
 
-	_, err := svc.Launch(beanfun.Account{SID: "s", SSN: "1", SName: "n"})
+	_, err := svc.Launch("1", beanfun.Account{SID: "s", SSN: "1", SName: "n"})
 	var le *beanfun.LoginError
 	if !errors.As(err, &le) || le.Kind != beanfun.KindLoginRequired {
 		t.Errorf("got %v, want beanfun.KindLoginRequired", err)
@@ -83,7 +83,7 @@ func TestLauncherService_Launch_GameExeMissing_NoSessionStillTakesPrecedence(t *
 	login := beanfun.NewLoginService(mgr)
 	svc := NewLauncherService(beanfun.NewSessionAccess(login), mgr, nil)
 
-	_, err := svc.Launch(beanfun.Account{SID: "s", SSN: "1", SName: "n"})
+	_, err := svc.Launch("1", beanfun.Account{SID: "s", SSN: "1", SName: "n"})
 	var le *beanfun.LoginError
 	if !errors.As(err, &le) || le.Kind != beanfun.KindLoginRequired {
 		t.Errorf("got %v, want beanfun.KindLoginRequired (check order: session before env var)", err)
@@ -100,7 +100,7 @@ func TestLauncherService_SpawnGame_NoSession(t *testing.T) {
 	login := beanfun.NewLoginService(mgr)
 	svc := NewLauncherService(beanfun.NewSessionAccess(login), mgr, nil)
 
-	err := svc.SpawnGame(beanfun.Account{SID: "s", SSN: "1", SName: "n"})
+	err := svc.SpawnGame("1", beanfun.Account{SID: "s", SSN: "1", SName: "n"})
 	var le *beanfun.LoginError
 	if !errors.As(err, &le) || le.Kind != beanfun.KindLoginRequired {
 		t.Errorf("got %v, want beanfun.KindLoginRequired", err)
@@ -117,7 +117,7 @@ func TestLauncherService_SpawnGame_GameExeMissing_NoSessionStillTakesPrecedence(
 	login := beanfun.NewLoginService(mgr)
 	svc := NewLauncherService(beanfun.NewSessionAccess(login), mgr, nil)
 
-	err := svc.SpawnGame(beanfun.Account{SID: "s", SSN: "1", SName: "n"})
+	err := svc.SpawnGame("1", beanfun.Account{SID: "s", SSN: "1", SName: "n"})
 	var le *beanfun.LoginError
 	if !errors.As(err, &le) || le.Kind != beanfun.KindLoginRequired {
 		t.Errorf("got %v, want beanfun.KindLoginRequired (check order: session before env var)", err)
@@ -136,7 +136,7 @@ func TestLauncherService_LaunchAccount_NoSession(t *testing.T) {
 	login := beanfun.NewLoginService(mgr)
 	svc := NewLauncherService(beanfun.NewSessionAccess(login), mgr, nil)
 
-	_, err := svc.LaunchAccount(beanfun.Account{SID: "s", SSN: "1", SName: "n"})
+	_, err := svc.LaunchAccount("1", beanfun.Account{SID: "s", SSN: "1", SName: "n"})
 	var le *beanfun.LoginError
 	if !errors.As(err, &le) || le.Kind != beanfun.KindLoginRequired {
 		t.Errorf("got %v, want beanfun.KindLoginRequired", err)

@@ -329,10 +329,16 @@ the portal to route subsequent requests differently and sometimes
 land on a final URL with no session key at all; fresh jar per attempt
 is the simplest fix.
 
+Since #122 several logins can be active at once. Each approved QR
+attempt becomes its own login with its own client and jar, and the
+in-progress attempt uses a separate pending client, so adding an
+account never touches the jars of logins that already exist.
+
 ## Token storage
 
-`bfWebToken` and the outer session key are session bearers. They are
-stashed in `LoginService.session *Session` in process memory only:
+`bfWebToken` and the outer session key are session bearers. Each
+login keeps its own `*Session` in `LoginService.logins`, in process
+memory only:
 
 - Never persisted (no disk write, no OS keyring — at least not yet)
 - Never logged literally — `Session.String()` redacts both fields
@@ -647,10 +653,10 @@ Measured 2026-10-15 on a QR-logged-in session.
 
 - **Endpoint**: `GET https://tw.beanfun.com/beanfun_block/generic_handlers/echo_token.ashx?webtoken=1`, sent with the session cookie jar.
 - **Reply shape**: always HTTP 200 with no redirect, `Content-Type: application/x-javascript`. The body is a JS call that carries a `ResultCode`: `1` while logged in, `0` once logged out. A logged-out reply may still carry a non-empty `MainAccountID` for the first poll, so the verdict is `ResultCode` alone.
-- **Classification**: `1` is alive, `0` is logged out (`KindSessionExpired`), anything else, including a missing `ResultCode`, is unknown (`KindHTTP`, retried after the short interval). The IP-lock redirect still maps to `KindIPBlocked`. See `Ping` in `internal/beanfun/client.go:176` and `echoTokenResultRE` at `:173`.
+- **Classification**: `1` is alive, `0` is logged out (`KindSessionExpired`), anything else, including a missing `ResultCode`, is unknown (`KindHTTP`, retried after the short interval). The IP-lock redirect still maps to `KindIPBlocked`. See `Ping` in `internal/beanfun/client.go:178` and `echoTokenResultRE` at `:173`.
 - **Other signals**: `check_token.ashx` answers the same whether logged in or out when called without the session key, so it cannot be used. `game_start_step2.aspx` can return an error page with no `尚未登入` marker after a logout, so a failed OTP fetch calls `Ping` to confirm (`FetchOTP` in `internal/beanfun/otp.go`).
 - **Idle limit**: with keep-alive disabled, a session was still valid after 20 minutes idle. The failure point was not reached, so the interval is a conservative choice: 8 min while healthy, 10 s after a failed ping, 10 min while IP-blocked (`keepAliveInterval*` in `internal/beanfun/service.go`).
-- **On logout**: `keepAliveTick` ends the session and emits `beanfun:session-ended`, which returns the frontend to the login page.
+- **On logout**: `keepAliveTick` ends only that login and emits `beanfun:session-ended`; the frontend returns to the login page only when the last login ends.
 
 ## References
 

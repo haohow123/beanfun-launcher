@@ -279,7 +279,7 @@ func TestLoginService_GetAccounts_NoSession(t *testing.T) {
 	srv := httptest.NewServer(http.NewServeMux())
 	t.Cleanup(srv.Close)
 	s := NewLoginServiceWithEndpoints(stubEndpoints(t, srv), bgtask.New())
-	_, err := s.GetAccounts()
+	_, err := s.GetAccounts("1")
 	var le *LoginError
 	if !errors.As(err, &le) || le.Kind != KindLoginRequired {
 		t.Errorf("got %v, want KindLoginRequired", err)
@@ -306,7 +306,7 @@ func TestLoginService_GetAccounts_HappyPath(t *testing.T) {
 	// registered, so the assertion below does not depend on timing.
 	client, init, gen := stopLoopAndCapture(t, s)
 	s.qrPollTick(context.Background(), gen, client, init)
-	got, err := s.GetAccounts()
+	got, err := s.GetAccounts("1")
 	if err != nil {
 		t.Fatalf("GetAccounts: %v", err)
 	}

@@ -85,11 +85,12 @@ export function GetGameState() {
  * it from Go). Per Beanfun's design the OTP is single-use and
  * rotates on each call — keeping it in memory between fetch and
  * paste is acceptable given that single-use lifecycle.
+ * @param {string} loginID
  * @param {beanfun$0.Account} account
  * @returns {$CancellablePromise<string>}
  */
-export function GetOTP(account) {
-    return $Call.ByID(2873082354, account);
+export function GetOTP(loginID, account) {
+    return $Call.ByID(2873082354, loginID, account);
 }
 
 /**
@@ -109,11 +110,12 @@ export function GetOTP(account) {
  *     OTP for manual paste.
  * 
  * The OTP byte slice is zeroed before this method returns.
+ * @param {string} loginID
  * @param {beanfun$0.Account} account
  * @returns {$CancellablePromise<$models.LaunchResult>}
  */
-export function Launch(account) {
-    return $Call.ByID(1857854220, account).then(/** @type {($result: any) => any} */(($result) => {
+export function Launch(loginID, account) {
+    return $Call.ByID(1857854220, loginID, account).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType2($result);
     }));
 }
@@ -140,11 +142,12 @@ export function Launch(account) {
  * but WM_CHAR failed) still surfaces the OTP for manual paste.
  * Spawn-path success returns AutoFilled=true semantically — argv-based
  * login is "auto filled" from the user's perspective.
+ * @param {string} loginID
  * @param {beanfun$0.Account} account
  * @returns {$CancellablePromise<$models.LaunchResult>}
  */
-export function LaunchAccount(account) {
-    return $Call.ByID(1629860675, account).then(/** @type {($result: any) => any} */(($result) => {
+export function LaunchAccount(loginID, account) {
+    return $Call.ByID(1629860675, loginID, account).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType2($result);
     }));
 }
@@ -191,11 +194,12 @@ export function SetGamePath(p) {
  * OS-side argv copy in the spawned process's memory is unavoidable
  * (kernel copies before we can scrub) but bounded by the OTP's
  * single-use server-side ticket lifetime.
+ * @param {string} loginID
  * @param {beanfun$0.Account} account
  * @returns {$CancellablePromise<void>}
  */
-export function SpawnGame(account) {
-    return $Call.ByID(4030112748, account);
+export function SpawnGame(loginID, account) {
+    return $Call.ByID(4030112748, loginID, account);
 }
 
 /**

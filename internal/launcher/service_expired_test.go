@@ -20,13 +20,13 @@ type swappableLogin struct {
 	cleared bool
 }
 
-func (l *swappableLogin) Snapshot() (*beanfun.BeanfunClient, *beanfun.Session) {
+func (l *swappableLogin) Snapshot(string) (*beanfun.BeanfunClient, *beanfun.Session) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.current, &beanfun.Session{ServiceCode: "x", ServiceRegion: "y", WebToken: "z"}
 }
 
-func (l *swappableLogin) EndSessionIfCurrent(c *beanfun.BeanfunClient) bool {
+func (l *swappableLogin) EndSessionIfCurrent(_ string, c *beanfun.BeanfunClient) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.ended = append(l.ended, c)
@@ -37,6 +37,8 @@ func (l *swappableLogin) EndSessionIfCurrent(c *beanfun.BeanfunClient) bool {
 	l.cleared = true
 	return true
 }
+
+func (l *swappableLogin) HasLogin() bool { return true }
 
 func (l *swappableLogin) swap(c *beanfun.BeanfunClient) {
 	l.mu.Lock()
@@ -55,10 +57,10 @@ func TestLauncherService_SessionExpired_EndsOnlyTheSnapshotClient(t *testing.T) 
 	t.Cleanup(func() { findGameWindowFn = orig })
 
 	calls := map[string]func(*LauncherService, beanfun.Account) error{
-		"GetOTP": func(s *LauncherService, a beanfun.Account) error { _, err := s.GetOTP(a); return err },
-		"Launch": func(s *LauncherService, a beanfun.Account) error { _, err := s.Launch(a); return err },
+		"GetOTP": func(s *LauncherService, a beanfun.Account) error { _, err := s.GetOTP("1", a); return err },
+		"Launch": func(s *LauncherService, a beanfun.Account) error { _, err := s.Launch("1", a); return err },
 		"SpawnGame": func(s *LauncherService, a beanfun.Account) error {
-			return s.SpawnGame(a)
+			return s.SpawnGame("1", a)
 		},
 	}
 	for name, call := range calls {

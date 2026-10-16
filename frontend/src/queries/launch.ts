@@ -9,6 +9,12 @@ export const spawnGameCleanMutationKey = ["spawn-game-clean"] as const;
 export const launchMutationKey = ["launch"] as const;
 export const fetchOTPMutationKey = ["fetch-otp"] as const;
 
+// Every per-account mutation names the login whose client must fetch the OTP.
+export interface LaunchVars {
+  loginId: string;
+  account: Account;
+}
+
 /**
  * useLaunchAccountMutation calls LauncherService.LaunchAccount — the
  * single per-account "play this account now" façade. Backend decides
@@ -26,7 +32,7 @@ export const fetchOTPMutationKey = ["fetch-otp"] as const;
 export function useLaunchAccountMutation() {
   return useMutation({
     mutationKey: launchAccountMutationKey,
-    mutationFn: (account: Account) => LauncherService.LaunchAccount(account),
+    mutationFn: ({ loginId, account }: LaunchVars) => LauncherService.LaunchAccount(loginId, account),
   });
 }
 
@@ -44,7 +50,7 @@ export function useLaunchAccountMutation() {
 export function useSpawnGameMutation() {
   return useMutation({
     mutationKey: spawnGameMutationKey,
-    mutationFn: (account: Account) => LauncherService.SpawnGame(account),
+    mutationFn: ({ loginId, account }: LaunchVars) => LauncherService.SpawnGame(loginId, account),
   });
 }
 
@@ -86,7 +92,7 @@ export function useSpawnGameCleanMutation() {
 export function useLaunchGameMutation() {
   return useMutation({
     mutationKey: launchMutationKey,
-    mutationFn: (account: Account) => LauncherService.Launch(account),
+    mutationFn: ({ loginId, account }: LaunchVars) => LauncherService.Launch(loginId, account),
   });
 }
 
@@ -101,6 +107,6 @@ export function useLaunchGameMutation() {
 export function useFetchOTPMutation() {
   return useMutation({
     mutationKey: fetchOTPMutationKey,
-    mutationFn: (account: Account) => LauncherService.GetOTP(account),
+    mutationFn: ({ loginId, account }: LaunchVars) => LauncherService.GetOTP(loginId, account),
   });
 }

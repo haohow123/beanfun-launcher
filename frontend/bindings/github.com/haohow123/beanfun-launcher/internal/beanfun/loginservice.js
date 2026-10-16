@@ -17,15 +17,42 @@ import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Cr
 import * as $models from "./models.js";
 
 /**
- * GetAccounts returns the list of game accounts under the active
- * session. Requires StartQRLogin and an approved poll to have completed
- * successfully (session != nil). See docs/beanfun-login-protocol.md § 8.
+ * CancelQRLogin abandons the QR attempt in progress and leaves existing logins untouched.
+ * @returns {$CancellablePromise<void>}
+ */
+export function CancelQRLogin() {
+    return $Call.ByID(1344306129);
+}
+
+/**
+ * GetAccounts returns the game accounts under the given login.
+ * See docs/beanfun-login-protocol.md § 8.
+ * @param {string} loginID
  * @returns {$CancellablePromise<$models.Account[]>}
  */
-export function GetAccounts() {
-    return $Call.ByID(3665416331).then(/** @type {($result: any) => any} */(($result) => {
+export function GetAccounts(loginID) {
+    return $Call.ByID(3665416331, loginID).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType1($result);
     }));
+}
+
+/**
+ * ListLogins returns the current logins in login order.
+ * @returns {$CancellablePromise<$models.LoginInfo[]>}
+ */
+export function ListLogins() {
+    return $Call.ByID(1071866471).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType3($result);
+    }));
+}
+
+/**
+ * Logout ends one login without a session-ended notice, since the user asked for it.
+ * @param {string} loginID
+ * @returns {$CancellablePromise<void>}
+ */
+export function Logout(loginID) {
+    return $Call.ByID(3359219171, loginID);
 }
 
 /**
@@ -35,12 +62,12 @@ export function GetAccounts() {
  */
 export function QRStatusNow() {
     return $Call.ByID(1485315940).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType2($result);
+        return $$createType4($result);
     }));
 }
 
 /**
- * Reset ends the session on an explicit user logout.
+ * Reset logs out every login and abandons any QR attempt in progress.
  * @returns {$CancellablePromise<void>}
  */
 export function Reset() {
@@ -48,19 +75,19 @@ export function Reset() {
 }
 
 /**
- * StartQRLogin runs the init flow (getSessionKey → initQRLogin) and
- * returns the QR + deeplink for the frontend to render. A fresh
- * BeanfunClient (clean cookie jar) is minted on every call.
+ * StartQRLogin mints a fresh client and returns its QR and deeplink, leaving existing logins untouched.
  * @returns {$CancellablePromise<$models.QRStart>}
  */
 export function StartQRLogin() {
     return $Call.ByID(3663858381).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType3($result);
+        return $$createType5($result);
     }));
 }
 
 // Private type creation functions
 const $$createType0 = $models.Account.createFrom;
 const $$createType1 = $Create.Array($$createType0);
-const $$createType2 = $models.QRState.createFrom;
-const $$createType3 = $models.QRStart.createFrom;
+const $$createType2 = $models.LoginInfo.createFrom;
+const $$createType3 = $Create.Array($$createType2);
+const $$createType4 = $models.QRState.createFrom;
+const $$createType5 = $models.QRStart.createFrom;

@@ -19,7 +19,7 @@ func TestLoginService_BoundMethodSet(t *testing.T) {
 		got = append(got, typ.Method(i).Name)
 	}
 	slices.Sort(got)
-	want := []string{"GetAccounts", "QRStatusNow", "Reset", "StartQRLogin"}
+	want := []string{"CancelQRLogin", "GetAccounts", "ListLogins", "Logout", "QRStatusNow", "Reset", "StartQRLogin"}
 	if !slices.Equal(got, want) {
 		t.Errorf("exported methods = %v, want exactly %v", got, want)
 	}
@@ -32,7 +32,7 @@ func TestEndSessionIfCurrent_NilClientIsNoOp(t *testing.T) {
 	s.OnSessionEnded = func(SessionEnded) { calls++ }
 	before := s.qrGeneration
 
-	if s.endSessionIfCurrent(nil) {
+	if s.endSessionIfCurrent("1", nil) {
 		t.Error("endSessionIfCurrent(nil) = true, want false")
 	}
 	if s.qrGeneration != before {
@@ -53,25 +53,31 @@ func TestSessionAccess_DelegatesToService(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sess := &Session{}
-	s.mu.Lock()
-	s.client = client
-	s.session = sess
-	s.mu.Unlock()
+	addTestLogin(t, s, client, "")
+	_, sess := s.snapshot("1")
 	ended := 0
 	s.OnSessionEnded = func(SessionEnded) { ended++ }
 	acc := NewSessionAccess(s)
 
-	if cl, se := acc.Snapshot(); cl != client || se != sess {
+	if cl, se := acc.Snapshot("1"); cl != client || se != sess || se == nil {
 		t.Errorf("Snapshot = (%v, %v), want the service's client and session", cl, se)
 	}
-	if !acc.EndSessionIfCurrent(client) {
+	if cl, se := acc.Snapshot("2"); cl != nil || se != nil {
+		t.Errorf("Snapshot(unknown) = (%v, %v), want nil", cl, se)
+	}
+	if !acc.HasLogin() {
+		t.Error("HasLogin = false with one login")
+	}
+	if !acc.EndSessionIfCurrent("1", client) {
 		t.Error("EndSessionIfCurrent(current) = false, want true")
 	}
 	if ended != 1 {
 		t.Errorf("OnSessionEnded called %d times, want 1", ended)
 	}
-	if cl, se := s.snapshot(); cl != nil || se != nil {
+	if cl, se := s.snapshot("1"); cl != nil || se != nil {
 		t.Errorf("snapshot after end = (%v, %v), want cleared", cl, se)
+	}
+	if acc.HasLogin() {
+		t.Error("HasLogin = true after the only login ended")
 	}
 }

@@ -9,6 +9,7 @@ export {
 
 export {
     Account,
+    LoginInfo,
     QRStart,
     QRState,
     QRStatus

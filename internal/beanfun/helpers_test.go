@@ -107,3 +107,14 @@ func captureLogs(t *testing.T) *bytes.Buffer {
 	t.Cleanup(func() { slog.SetDefault(prev) })
 	return buf
 }
+
+// addTestLogin installs a login directly, as an approval would, and stops its keep-alive at cleanup.
+func addTestLogin(t *testing.T, s *LoginService, c *BeanfunClient, mainID string) {
+	t.Helper()
+	t.Cleanup(s.mgr.StopAll)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.installLoginLocked(c, &Session{}, mainID) {
+		t.Fatalf("installLoginLocked refused login with mainID %q", mainID)
+	}
+}

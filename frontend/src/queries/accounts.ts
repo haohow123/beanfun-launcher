@@ -2,11 +2,14 @@ import { useQuery } from "@tanstack/react-query";
 
 import { LoginService } from "@bindings/beanfun";
 
-export const accountsQueryKey = ["accounts"] as const;
+export const accountsQueryPrefix = ["accounts"] as const;
 
-export function useAccountsQuery() {
+export const accountsQueryKey = (loginID: string) =>
+  [...accountsQueryPrefix, loginID] as const;
+
+export function useAccountsQuery(loginID: string) {
   return useQuery({
-    queryKey: accountsQueryKey,
-    queryFn: () => LoginService.GetAccounts(),
+    queryKey: accountsQueryKey(loginID),
+    queryFn: () => LoginService.GetAccounts(loginID),
   });
 }

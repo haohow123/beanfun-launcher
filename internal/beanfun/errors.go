@@ -33,6 +33,7 @@ const (
 	// frontend receives.
 	KindLaunchDataDecode
 	KindIPBlocked
+	KindTooManyLogins
 )
 
 // LoginError is the typed error returned by every Beanfun login step.
@@ -127,6 +128,11 @@ func ErrMissingWebToken() *LoginError {
 // route back to the login page.
 func ErrLoginRequired() *LoginError {
 	return &LoginError{Kind: KindLoginRequired, Msg: "login required: no active session"}
+}
+
+// ErrTooManyLogins is returned by StartQRLogin when maxLogins logins are already held.
+func ErrTooManyLogins() *LoginError {
+	return &LoginError{Kind: KindTooManyLogins, Msg: "too many logins"}
 }
 
 // ErrOTPInit covers the OTP flow's page fetch — a missing or unparseable m_objData handoff literal.

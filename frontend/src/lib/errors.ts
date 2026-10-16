@@ -12,6 +12,10 @@ const FRIENDLY: ReadonlyArray<readonly [string, string]> = [
   ["cannot inspect the game window's process", "無法確認遊戲視窗背後的程式（可能被防作弊阻擋），未送出帳密"],
   // internal/localpath/path.go ErrNotLocal
   ["not a local file", "只支援本機磁碟上的檔案"],
+  // internal/beanfun/errors.go ErrLoginRequired
+  ["login required", "登入已失效，請重新掃碼"],
+  // internal/beanfun/errors.go ErrTooManyLogins
+  ["too many logins", "最多同時登入 5 個 Beanfun 帳號"],
   // internal/alertsound/wav.go errNotWAV
   ["not a WAV file", "只支援 WAV 檔"],
   // internal/alertsound/wav.go errPathTooLong

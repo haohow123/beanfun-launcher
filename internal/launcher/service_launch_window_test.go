@@ -62,7 +62,7 @@ func TestLauncherService_Launch_UntrustedSignature_NeverFetchesOTPOrInjects(t *t
 	h := newLaunchHarness(t, func(uintptr) (uint32, string, error) { return 7, "evil.exe", nil })
 	withSignature(t, signatureVerdict{Reason: "unsigned"})
 
-	res, err := h.svc.Launch(testAccount)
+	res, err := h.svc.Launch("1", testAccount)
 	requireUntrusted(t, res, err)
 	if h.otpHits.Load() != 0 {
 		t.Errorf("OTP server hit %d times, want 0", h.otpHits.Load())
@@ -86,7 +86,7 @@ func requireUnreadable(t *testing.T, res LaunchResult, err error) {
 func TestLauncherService_Launch_UnreadableWindowImage_Rejected(t *testing.T) {
 	h := newLaunchHarness(t, func(uintptr) (uint32, string, error) { return 0, "", errors.New("access denied") })
 
-	res, err := h.svc.Launch(testAccount)
+	res, err := h.svc.Launch("1", testAccount)
 	requireUnreadable(t, res, err)
 	if h.otpHits.Load() != 0 || h.injects != 0 {
 		t.Errorf("otp hits = %d, injects = %d, want 0, 0", h.otpHits.Load(), h.injects)
@@ -103,7 +103,7 @@ func TestLauncherService_Launch_SecondImageReadFails_NoInjectNoOTP(t *testing.T)
 		return 7, "MapleStory.exe", nil
 	})
 
-	res, err := h.svc.Launch(testAccount)
+	res, err := h.svc.Launch("1", testAccount)
 	requireUnreadable(t, res, err)
 	if h.otpHits.Load() == 0 {
 		t.Error("OTP never fetched, so the second read was not what stopped the inject")
@@ -135,7 +135,7 @@ func TestLauncherService_Launch_VerifiesTheWindowImagePath(t *testing.T) {
 			}
 			t.Cleanup(func() { verifyGameSignatureFn = orig })
 
-			res, err := h.svc.Launch(testAccount)
+			res, err := h.svc.Launch("1", testAccount)
 			if tc.wantOK {
 				if err != nil || !res.AutoFilled || h.injects != 1 {
 					t.Fatalf("Launch = %+v, %v, injects %d; want AutoFilled with 1 inject", res, err, h.injects)
@@ -157,7 +157,7 @@ func TestLauncherService_Launch_WindowPIDChangesDuringOTP_NoInjectNoOTP(t *testi
 		return uint32(calls), "MapleStory.exe", nil
 	})
 
-	res, err := h.svc.Launch(testAccount)
+	res, err := h.svc.Launch("1", testAccount)
 	requireUntrusted(t, res, err)
 	if h.otpHits.Load() == 0 {
 		t.Error("OTP never fetched, so the PID re-check was not what stopped the inject")
@@ -170,7 +170,7 @@ func TestLauncherService_Launch_WindowPIDChangesDuringOTP_NoInjectNoOTP(t *testi
 func TestLauncherService_Launch_TrustedWindow_Injects(t *testing.T) {
 	h := newLaunchHarness(t, func(uintptr) (uint32, string, error) { return 7, "MapleStory.exe", nil })
 
-	res, err := h.svc.Launch(testAccount)
+	res, err := h.svc.Launch("1", testAccount)
 	if err != nil || !res.AutoFilled {
 		t.Fatalf("Launch = %+v, %v; want AutoFilled", res, err)
 	}
@@ -184,9 +184,34 @@ func TestLauncherService_LaunchAccount_UntrustedWindow_NoSpawnFallback(t *testin
 	h := newLaunchHarness(t, func(uintptr) (uint32, string, error) { return 7, "evil.exe", nil })
 	withSignature(t, signatureVerdict{Reason: "unsigned"})
 
-	res, err := h.svc.LaunchAccount(testAccount)
+	res, err := h.svc.LaunchAccount("1", testAccount)
 	requireUntrusted(t, res, err)
 	if fake.called {
 		t.Error("spawnFn called = true, want false")
+	}
+}
+
+func TestLauncherService_Launch_UsesTheNamedLoginsClient(t *testing.T) {
+	var hits1, hits2 atomic.Int32
+	c1 := countingOTPServer(t, &hits1)
+	c2 := countingOTPServer(t, &hits2)
+	withWindowImage(t, func(uintptr) (uint32, string, error) { return 7, "MapleStory.exe", nil })
+	origFind, origInject := findGameWindowFn, injectFn
+	findGameWindowFn = func() uintptr { return 1 }
+	injectFn = func(uintptr, []byte, []byte) error { return nil }
+	t.Cleanup(func() { findGameWindowFn, injectFn = origFind, origInject })
+
+	login := fakeLoginSnapshotter{
+		byID:    map[string]*beanfun.BeanfunClient{"1": c1, "2": c2},
+		session: &beanfun.Session{ServiceCode: "610074", ServiceRegion: "T9", WebToken: "z"},
+	}
+	svc := NewLauncherService(login, bgtask.New(), &fakeGamePathStore{})
+
+	res, err := svc.Launch("2", testAccount)
+	if err != nil || !res.AutoFilled {
+		t.Fatalf("Launch = %+v, %v, want AutoFilled", res, err)
+	}
+	if hits1.Load() != 0 || hits2.Load() == 0 {
+		t.Errorf("hits login1 = %d, login2 = %d, want 0 and >0", hits1.Load(), hits2.Load())
 	}
 }
