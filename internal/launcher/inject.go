@@ -17,3 +17,6 @@ var injectFn func(hwnd uintptr, account, otp []byte) error
 // windowImagePathFn returns the owning process ID and executable path of the
 // process behind hwnd.
 var windowImagePathFn func(hwnd uintptr) (pid uint32, path string, err error)
+
+// windowImageVerdictFn returns a non-nil error when it cannot confirm that the file at hwnd's process image path is the running image, and otherwise that file's signature verdict.
+var windowImageVerdictFn func(hwnd uintptr) (pid uint32, path string, v signatureVerdict, err error)

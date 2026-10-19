@@ -11,12 +11,19 @@ import (
 
 type windowImageFn = func(hwnd uintptr) (uint32, string, error)
 
-// withWindowImage swaps windowImagePathFn and accepts any signature, restoring both via t.Cleanup.
+// withWindowImage drives both window seams from fn, checking the path with verifyGameSignatureFn (set to accept any signature), and restores them via t.Cleanup.
 func withWindowImage(t *testing.T, fn windowImageFn) {
 	t.Helper()
-	orig := windowImagePathFn
+	origPath, origVerdict := windowImagePathFn, windowImageVerdictFn
 	windowImagePathFn = fn
-	t.Cleanup(func() { windowImagePathFn = orig })
+	windowImageVerdictFn = func(hwnd uintptr) (uint32, string, signatureVerdict, error) {
+		pid, path, err := fn(hwnd)
+		if err != nil {
+			return 0, "", signatureVerdict{}, err
+		}
+		return pid, path, verifyGameSignatureFn(path), nil
+	}
+	t.Cleanup(func() { windowImagePathFn, windowImageVerdictFn = origPath, origVerdict })
 	withSignature(t, signatureOK)
 }
 
@@ -147,6 +154,20 @@ func TestLauncherService_Launch_VerifiesTheWindowImagePath(t *testing.T) {
 				t.Errorf("otp hits = %d, injects = %d, want 0, 0", h.otpHits.Load(), h.injects)
 			}
 		})
+	}
+}
+
+// A window whose running image is not the file at its image path must be refused before any OTP is fetched.
+func TestLauncherService_Launch_ImageMismatch_NeverFetchesOTPOrInjects(t *testing.T) {
+	h := newLaunchHarness(t, func(uintptr) (uint32, string, error) { return 7, "MapleStory.exe", nil })
+	windowImageVerdictFn = func(uintptr) (uint32, string, signatureVerdict, error) {
+		return 7, "MapleStory.exe", signatureVerdict{Reason: "image mismatch"}, nil
+	}
+
+	res, err := h.svc.Launch("1", testAccount)
+	requireUntrusted(t, res, err)
+	if h.otpHits.Load() != 0 || h.injects != 0 {
+		t.Errorf("otp hits = %d, injects = %d, want 0, 0", h.otpHits.Load(), h.injects)
 	}
 }
 

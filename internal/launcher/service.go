@@ -521,12 +521,12 @@ func (s *LauncherService) Launch(loginID string, account beanfun.Account) (Launc
 		return LaunchResult{NoWindow: true}, nil
 	}
 
-	pid, imagePath, err := windowImagePathFn(hwnd)
+	pid, imagePath, v, err := windowImageVerdictFn(hwnd)
 	if err != nil {
 		slog.Error("Launch: cannot read the game window's executable", "err", err)
 		return LaunchResult{}, ErrGameWindowUnreadable()
 	}
-	if v := verifyGameSignatureFn(imagePath); !v.OK {
+	if !v.OK {
 		slog.Error("Launch: game window's executable rejected", "path", imagePath, "reason", v.Reason)
 		return LaunchResult{}, ErrUntrustedGameWindow()
 	}
