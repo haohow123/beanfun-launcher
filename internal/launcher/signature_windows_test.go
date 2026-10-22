@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"golang.org/x/sys/windows"
 )
 
 func TestVerifySignature_Unsigned(t *testing.T) {
@@ -47,7 +49,7 @@ func embeddedSignedFile(t *testing.T) (path, org string) {
 			tried = append(tried, c+": "+err.Error())
 			continue
 		}
-		o, _, err := signerSubject(c)
+		o, err := signerOrgOf(c)
 		if err != nil {
 			tried = append(tried, c+": "+err.Error())
 			continue
@@ -60,6 +62,16 @@ func embeddedSignedFile(t *testing.T) (path, org string) {
 	}
 	skipOrFailOnCI(t, "no embedded-signed candidate found: "+strings.Join(tried, "; "))
 	return "", ""
+}
+
+func signerOrgOf(path string) (string, error) {
+	h, err := openForVerify(path)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = windows.CloseHandle(h) }()
+	org, _, err := signerSubject(h)
+	return org, err
 }
 
 func TestSignerSubject_EmbeddedSigned(t *testing.T) {

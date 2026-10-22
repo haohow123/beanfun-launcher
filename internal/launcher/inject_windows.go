@@ -3,6 +3,7 @@
 package launcher
 
 import (
+	"errors"
 	"fmt"
 	"time"
 	"unsafe"
@@ -14,6 +15,7 @@ func init() {
 	findGameWindowFn = findGameWindow
 	injectFn = injectCredentials
 	windowImagePathFn = windowImagePath
+	windowImageVerdictFn = windowImageVerdict
 }
 
 // Win32 procs we need but aren't exported by golang.org/x/sys/windows.
@@ -156,10 +158,57 @@ func windowImagePath(hwnd uintptr) (uint32, string, error) {
 	}
 	defer func() { _ = windows.CloseHandle(h) }()
 
+	path, err := processImagePath(h, pid)
+	if err != nil {
+		return 0, "", err
+	}
+	return pid, path, nil
+}
+
+func processImagePath(h windows.Handle, pid uint32) (string, error) {
 	buf := make([]uint16, windows.MAX_LONG_PATH)
 	n := uint32(len(buf))
 	if err := windows.QueryFullProcessImageName(h, 0, &buf[0], &n); err != nil {
-		return 0, "", fmt.Errorf("QueryFullProcessImageName(pid=%d): %w", pid, err)
+		return "", fmt.Errorf("QueryFullProcessImageName(pid=%d): %w", pid, err)
 	}
-	return pid, windows.UTF16ToString(buf[:n]), nil
+	return windows.UTF16ToString(buf[:n]), nil
+}
+
+func windowImageVerdict(hwnd uintptr) (uint32, string, signatureVerdict, error) {
+	pid, err := getWindowPID(hwnd)
+	if err != nil {
+		return 0, "", signatureVerdict{}, err
+	}
+	path, v, err := processImageVerdict(pid)
+	return pid, path, v, err
+}
+
+// processImageVerdict verifies the file at pid's image path only after the kernel confirms that file is the one pid was created from.
+func processImageVerdict(pid uint32) (string, signatureVerdict, error) {
+	hProc, err := windows.OpenProcess(windows.PROCESS_QUERY_INFORMATION, false, pid)
+	if err != nil {
+		return "", signatureVerdict{}, fmt.Errorf("OpenProcess(pid=%d): %w", pid, err)
+	}
+	defer func() { _ = windows.CloseHandle(hProc) }()
+
+	path, err := processImagePath(hProc, pid)
+	if err != nil {
+		return "", signatureVerdict{}, err
+	}
+	hFile, err := openForVerify(path)
+	if err != nil {
+		return path, signatureVerdict{}, err
+	}
+	defer func() { _ = windows.CloseHandle(hFile) }()
+
+	// ProcessImageFileMapping takes a file handle as input and succeeds only if that file backs the process image.
+	err = windows.NtQueryInformationProcess(hProc, windows.ProcessImageFileMapping,
+		unsafe.Pointer(&hFile), uint32(unsafe.Sizeof(hFile)), nil)
+	if errors.Is(err, windows.STATUS_UNSUCCESSFUL) {
+		return path, signatureVerdict{Reason: "image mismatch"}, nil
+	}
+	if err != nil {
+		return path, signatureVerdict{}, fmt.Errorf("NtQueryInformationProcess(pid=%d, ProcessImageFileMapping): %w", pid, err)
+	}
+	return path, verifySignatureHandle(hFile, path), nil
 }

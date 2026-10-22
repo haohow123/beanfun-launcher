@@ -9,7 +9,7 @@ const (
 // signatureVerdict is the outcome of verifying a game executable's code signature.
 type signatureVerdict struct {
 	OK     bool
-	Reason string // log-only: "unsigned", "invalid", "wrong signer", "unreadable"
+	Reason string // log-only: "unsigned", "invalid", "wrong signer", "unreadable", "image mismatch"
 	Org    string
 	Serial string
 }
