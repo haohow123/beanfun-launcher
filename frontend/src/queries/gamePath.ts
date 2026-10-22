@@ -2,6 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { LauncherService } from "@bindings/launcher";
 
+import { settingsStatusQueryKey } from "@/queries/settings";
+
 export const gamePathQueryKey = ["gamePath"] as const;
 const setGamePathMutationKey = ["gamePath", "set"] as const;
 const testGamePathMutationKey = ["gamePath", "test"] as const;
@@ -27,6 +29,7 @@ export function useSetGamePathMutation(opts?: MutationErrorOptions) {
     onSuccess: () => {
       return qc.invalidateQueries({ queryKey: gamePathQueryKey });
     },
+    onSettled: () => qc.invalidateQueries({ queryKey: settingsStatusQueryKey }),
   });
 }
 

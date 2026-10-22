@@ -23,7 +23,7 @@ type Prefs struct {
 }
 
 type PrefsStore interface {
-	LoadPrefs() Prefs
+	LoadPrefs() (Prefs, error)
 	SavePrefs(Prefs) error
 }
 
@@ -49,11 +49,28 @@ type Service struct {
 	mu    sync.Mutex
 	store PrefsStore
 	prefs Prefs
+	// stale means the last LoadPrefs failed, so prefs is a placeholder to be reloaded before use.
+	stale bool
 }
 
 // NewService loads the initial Prefs from store.
 func NewService(store PrefsStore) *Service {
-	return &Service{store: store, prefs: sanitizePrefs(store.LoadPrefs())}
+	p, err := store.LoadPrefs()
+	return &Service{store: store, prefs: sanitizePrefs(p), stale: err != nil}
+}
+
+// Callers must hold s.mu.
+func (s *Service) refreshLocked() error {
+	if !s.stale {
+		return nil
+	}
+	p, err := s.store.LoadPrefs()
+	if err != nil {
+		return err
+	}
+	s.prefs = sanitizePrefs(p)
+	s.stale = false
+	return nil
 }
 
 // The sanitized prefs stay in memory until the next Select, AddCustom or RemoveCustom saves them.
@@ -109,6 +126,7 @@ func (s *Service) Options() ([]Option, error) {
 	}
 	opts = append(opts, sortedBuiltinOptions(names)...)
 	s.mu.Lock()
+	_ = s.refreshLocked()
 	custom := append([]string(nil), s.prefs.Custom...)
 	s.mu.Unlock()
 	for _, path := range custom {
@@ -131,6 +149,7 @@ func builtinLabel(name string) string {
 func (s *Service) Selected() Selection {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	_ = s.refreshLocked()
 	return Selection{Sound: s.prefs.Selected, Missing: !playable(s.prefs.Selected)}
 }
 
@@ -151,6 +170,9 @@ func (s *Service) Select(snd Sound) error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.refreshLocked(); err != nil {
+		return err
+	}
 	canonical, err := s.checkSelectableLocked(snd, builtinNames)
 	if err != nil {
 		return err
@@ -211,6 +233,9 @@ func (s *Service) AddCustom(path string) (Sound, error) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.refreshLocked(); err != nil {
+		return Sound{}, err
+	}
 	next := s.prefs
 	if !containsPathFold(next.Custom, clean) {
 		next.Custom = append(append([]string(nil), next.Custom...), clean)
@@ -228,6 +253,9 @@ func (s *Service) RemoveCustom(path string) error {
 	clean := filepath.Clean(path)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.refreshLocked(); err != nil {
+		return err
+	}
 	next := s.prefs
 	next.Custom = removePathFold(next.Custom, clean)
 	if next.Selected.Kind == KindCustom && strings.EqualFold(next.Selected.Path, clean) {

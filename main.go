@@ -113,6 +113,7 @@ func main() {
 			application.NewService(mapleSvc),
 			application.NewService(notifSvc),
 			application.NewService(alertSvc),
+			application.NewService(settings.NewService(settingsFile)),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),

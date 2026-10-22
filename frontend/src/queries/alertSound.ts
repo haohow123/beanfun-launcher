@@ -2,6 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Service as AlertSoundService, type Sound } from "@bindings/alertsound";
 
+import { settingsStatusQueryKey } from "@/queries/settings";
+
 /** noteDialogCancelled records a file-dialog cancel in the backend log; a failure to log is ignored. */
 export function noteDialogCancelled(detail: string): void {
   AlertSoundService.NoteDialogCancelled(detail).catch(() => undefined);
@@ -54,6 +56,7 @@ export function useSelectAlertSoundMutation(opts?: MutationErrorOptions) {
       qc.invalidateQueries({ queryKey: alertSoundOptionsQueryKey });
       qc.invalidateQueries({ queryKey: alertSoundSelectedQueryKey });
     },
+    onSettled: () => qc.invalidateQueries({ queryKey: settingsStatusQueryKey }),
   });
 }
 
@@ -77,6 +80,7 @@ export function useAddCustomAlertSoundMutation(opts?: MutationErrorOptions) {
       qc.invalidateQueries({ queryKey: alertSoundOptionsQueryKey });
       qc.invalidateQueries({ queryKey: alertSoundSelectedQueryKey });
     },
+    onSettled: () => qc.invalidateQueries({ queryKey: settingsStatusQueryKey }),
   });
 }
 
@@ -91,5 +95,6 @@ export function useRemoveCustomAlertSoundMutation(opts?: MutationErrorOptions) {
       qc.invalidateQueries({ queryKey: alertSoundOptionsQueryKey });
       qc.invalidateQueries({ queryKey: alertSoundSelectedQueryKey });
     },
+    onSettled: () => qc.invalidateQueries({ queryKey: settingsStatusQueryKey }),
   });
 }

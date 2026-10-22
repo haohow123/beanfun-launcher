@@ -2,6 +2,8 @@
 // counterpart is named on every entry because nothing enforces this
 // contract — changing the Go message silently breaks the Chinese one.
 const FRIENDLY: ReadonlyArray<readonly [string, string]> = [
+  // internal/settings/settings.go ErrUnreadable, listed first so it wins over wrappers such as "login name not saved".
+  ["settings: file unreadable", "設定檔目前讀不到，這次沒有存檔，請稍後再試"],
   // internal/beanfun/errors.go ErrIPBlocked
   ["ip temporarily blocked", "beanfun 暫時鎖定此 IP，請稍後再試"],
   // internal/launcher/service.go errGameAlreadyRunning
