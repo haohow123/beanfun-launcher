@@ -56,7 +56,7 @@ Use `task` (go-task) as the canonical entry point — it wraps `wails3` with thi
 - `task windows:build` — cross-compile Windows binary (the deploy target)
 - All Go code passes `gofmt` and `golangci-lint run`
 - Tests are table-driven; use `httptest` for HTTP, mocks for keyring
-- This project tracks the latest Wails. Before starting a task, check for an open `升級 Wails 到 …` issue (`gh issue list --search 'in:title "升級 Wails 到"'`) and mention it to me if one exists. `.github/workflows/wails-version-watch.yml` opens or updates that issue every Monday. Bump the Go module and `@wailsio/runtime` together, to the same version.
+- This project tracks the latest Wails. Before starting a task, check for an open `升級 Wails 到 …` issue (`gh issue list --search 'in:title "升級 Wails 到"'`) and mention it to me if one exists. `.github/workflows/wails-version-watch.yml` opens or updates that issue every Monday. Bump the Go module, `@wailsio/runtime` and the `wails3` CLI in `.github/workflows/release.yml` together, to the same version. If the new Wails raises the `go` directive, check that the golangci-lint pinned in `.github/workflows/ci.yml` was built with at least that Go.
 
 ## Git workflow
 
