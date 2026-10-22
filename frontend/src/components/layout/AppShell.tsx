@@ -1,5 +1,6 @@
 import { type ReactNode } from "react";
 
+import { SettingsStatusBanner } from "@/components/layout/SettingsStatusBanner";
 import { cn } from "@/lib/utils";
 
 // macOS-only: the 50 px header band hosts the frameless window's
@@ -41,6 +42,7 @@ export function AppShell({
           </span>
         </header>
       )}
+      <SettingsStatusBanner />
       <main className={cn("flex flex-1", mainClassName)}>{children}</main>
     </div>
   );

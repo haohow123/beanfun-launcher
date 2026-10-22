@@ -5,11 +5,13 @@ package settings
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/haohow123/beanfun-launcher/internal/alertsound"
 )
@@ -17,6 +19,24 @@ import (
 // errNoConfigDir is returned by Save when NewFile was given an empty path
 // (DefaultPath could not resolve os.UserConfigDir()).
 var errNoConfigDir = errors.New("settings: no config directory available")
+
+// ErrUnreadable means the settings file exists but could not be read, so nothing is written over it.
+var ErrUnreadable = errors.New("settings: file unreadable")
+
+var errCorrupt = errors.New("settings: file corrupt")
+
+// Problem values reported by Status.
+const (
+	ProblemNone       = ""
+	ProblemUnreadable = "unreadable"
+	ProblemCorrupt    = "corrupt"
+)
+
+// Status describes the settings file's current health for the UI.
+type Status struct {
+	Problem    string `json:"problem"`
+	BackupPath string `json:"backupPath"`
+}
 
 // appDirName is the subdirectory under os.UserConfigDir() (%APPDATA% on
 // Windows, ~/Library/Application Support on macOS).
@@ -49,8 +69,10 @@ func isValidKind(k alertsound.Kind) bool {
 // File is a settings document backed by one JSON file on disk, guarded by a
 // mutex so Load/Save from concurrent Wails calls don't race.
 type File struct {
-	mu   sync.Mutex
-	path string
+	mu         sync.Mutex
+	path       string
+	readFile   func(string) ([]byte, error)
+	backupPath string
 }
 
 // An empty path makes Load return Defaults() and Save fail, so the app runs on in-memory defaults.
@@ -74,24 +96,49 @@ func DefaultPath() (string, error) {
 func (f *File) Load() Settings {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.loadLocked()
+	s, _ := f.loadLocked()
+	return s
 }
 
-func (f *File) loadLocked() Settings {
-	if f.path == "" {
-		return Defaults()
+// Status re-reads the file and reports whether it is unreadable or corrupt.
+func (f *File) Status() Status {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	_, err := f.loadLocked()
+	st := Status{BackupPath: f.backupPath}
+	switch {
+	case errors.Is(err, ErrUnreadable):
+		st.Problem = ProblemUnreadable
+	case errors.Is(err, errCorrupt):
+		st.Problem = ProblemCorrupt
 	}
-	b, err := os.ReadFile(f.path)
+	return st
+}
+
+func (f *File) read() ([]byte, error) {
+	if f.readFile != nil {
+		return f.readFile(f.path)
+	}
+	return os.ReadFile(f.path)
+}
+
+// loadLocked returns Defaults() alongside ErrUnreadable or errCorrupt when the file can't be used.
+func (f *File) loadLocked() (Settings, error) {
+	if f.path == "" {
+		return Defaults(), nil
+	}
+	b, err := f.read()
 	if err != nil {
-		if !os.IsNotExist(err) {
-			slog.Warn("settings: read failed, using defaults", "path", f.path, "err", err)
+		if os.IsNotExist(err) {
+			return Defaults(), nil
 		}
-		return Defaults()
+		slog.Warn("settings: read failed, using defaults", "path", f.path, "err", err)
+		return Defaults(), fmt.Errorf("%w: %v", ErrUnreadable, err)
 	}
 	var s Settings
 	if err := json.Unmarshal(b, &s); err != nil {
 		slog.Warn("settings: corrupt file, using defaults", "path", f.path, "err", err)
-		return Defaults()
+		return Defaults(), fmt.Errorf("%w: %v", errCorrupt, err)
 	}
 	if !isValidKind(s.AlertSound.Selected.Kind) {
 		slog.Warn("settings: unknown sound kind, resetting it to defaults", "path", f.path, "kind", s.AlertSound.Selected.Kind)
@@ -99,7 +146,25 @@ func (f *File) loadLocked() Settings {
 	}
 	s.GameExePath = strings.TrimSpace(s.GameExePath)
 	s.LoginNames = cleanLoginNames(s.LoginNames)
-	return s
+	return s, nil
+}
+
+// loadForWriteLocked refuses to proceed on an unreadable file and moves a corrupt one aside before returning Defaults().
+func (f *File) loadForWriteLocked() (Settings, error) {
+	s, err := f.loadLocked()
+	switch {
+	case err == nil:
+		return s, nil
+	case errors.Is(err, ErrUnreadable):
+		return Settings{}, err
+	}
+	backup := f.path + ".corrupt-" + time.Now().Format("20060102-150405")
+	if err := os.Rename(f.path, backup); err != nil {
+		return Settings{}, err
+	}
+	f.backupPath = backup
+	slog.Warn("settings: backed up corrupt file", "backup", backup)
+	return s, nil
 }
 
 func cleanLoginNames(names map[string]string) map[string]string {
@@ -170,8 +235,14 @@ func writeAndClose(f *os.File, b []byte) error {
 }
 
 // LoadPrefs implements alertsound.PrefsStore.
-func (f *File) LoadPrefs() alertsound.Prefs {
-	return f.Load().AlertSound
+func (f *File) LoadPrefs() (alertsound.Prefs, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	s, err := f.loadLocked()
+	if errors.Is(err, ErrUnreadable) {
+		return s.AlertSound, err
+	}
+	return s.AlertSound, nil
 }
 
 // SavePrefs implements alertsound.PrefsStore: it merges p into the on-disk
@@ -179,7 +250,10 @@ func (f *File) LoadPrefs() alertsound.Prefs {
 func (f *File) SavePrefs(p alertsound.Prefs) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	s := f.loadLocked()
+	s, err := f.loadForWriteLocked()
+	if err != nil {
+		return err
+	}
 	s.AlertSound = p
 	return f.saveLocked(s)
 }
@@ -194,7 +268,10 @@ func (f *File) LoadGameExePath() string {
 func (f *File) SaveGameExePath(p string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	s := f.loadLocked()
+	s, err := f.loadForWriteLocked()
+	if err != nil {
+		return err
+	}
 	s.GameExePath = p
 	return f.saveLocked(s)
 }
@@ -211,7 +288,10 @@ func (f *File) LoadLoginName(mainID string) string {
 func (f *File) SaveLoginName(mainID, name string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	s := f.loadLocked()
+	s, err := f.loadForWriteLocked()
+	if err != nil {
+		return err
+	}
 	if s.LoginNames == nil {
 		s.LoginNames = map[string]string{}
 	}

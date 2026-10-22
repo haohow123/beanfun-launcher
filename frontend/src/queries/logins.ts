@@ -6,6 +6,7 @@ import { useEffect } from "react";
 import { LoginService } from "@bindings/beanfun";
 import { accountsQueryKey, accountsQueryPrefix } from "@/queries/accounts";
 import { resetQRQueries } from "@/queries/qrLogin";
+import { settingsStatusQueryKey } from "@/queries/settings";
 import { sessionEndNoticeAtom } from "@/state/auth";
 
 export const loginsQueryKey = ["logins"] as const;
@@ -57,6 +58,7 @@ export function useRenameLoginMutation() {
     mutationFn: ({ loginId, name }: { loginId: string; name: string }) =>
       LoginService.RenameLogin(loginId, name),
     onSuccess: () => qc.invalidateQueries({ queryKey: loginsQueryKey }),
+    onSettled: () => qc.invalidateQueries({ queryKey: settingsStatusQueryKey }),
   });
 }
 

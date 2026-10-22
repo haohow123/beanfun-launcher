@@ -16,7 +16,7 @@ type fakeStore struct {
 	saved   int
 }
 
-func (f *fakeStore) LoadPrefs() Prefs { return f.prefs }
+func (f *fakeStore) LoadPrefs() (Prefs, error) { return f.prefs, nil }
 
 func (f *fakeStore) SavePrefs(p Prefs) error {
 	if f.saveErr != nil {
