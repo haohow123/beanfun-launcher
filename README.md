@@ -114,6 +114,19 @@ Linux and macOS as launch targets are out of scope.
 
 ## Build
 
+Prerequisites (versions follow the repo, so they move with each upgrade):
+
+- Go at the version in `go.mod`'s `go` line (with the default `GOTOOLCHAIN=auto`, an older Go downloads it)
+- Node at the `node-version` in `.github/workflows/ci.yml`
+- [Task](https://taskfile.dev)
+- The `wails3` CLI at the same version as the Wails module in `go.mod`:
+
+  ```
+  go install github.com/wailsapp/wails/v3/cmd/wails3@$(go list -m -f '{{.Version}}' github.com/wailsapp/wails/v3)
+  ```
+
+- For linting, `golangci-lint` at the version pinned in `.github/workflows/ci.yml`
+
 Uses [Task](https://taskfile.dev) as the canonical entry point (wraps `wails3` with
 the project's `build/config.yml` and pinned Vite port):
 
